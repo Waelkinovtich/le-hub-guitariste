@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "DM Sans", system-ui, sans-serif;
+  --font-display: "Instrument Serif", Georgia, serif;
+
+  --color-void: #060608;
+  --color-surface: #0c0c0f;
+  --color-surface-raised: #141418;
+  --color-surface-overlay: #1c1c22;
+  --color-border: #2a2a32;
+  --color-border-subtle: #1f1f26;
+
+  --color-guitar-400: #f87171;
+  --color-guitar-500: #ef4444;
+  --color-guitar-600: #dc2626;
+  --color-guitar-700: #b91c1c;
+  --color-guitar-glow: #dc262633;
+
+  --color-muted: #71717a;
+  --color-muted-foreground: #a1a1aa;
+  --color-foreground: #fafafa;
+}
+
+@layer base {
+  html {
+    @apply antialiased scroll-smooth;
+  }
+
+  body {
+    @apply bg-void text-foreground font-sans min-h-screen;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, var(--color-guitar-glow), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 100%, #1a050533, transparent);
+  }
+
+  ::selection {
+    @apply bg-guitar-600/40 text-foreground;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-surface-raised/80 backdrop-blur-xl border border-border-subtle;
+  }
+
+  .guitar-gradient {
+    background: linear-gradient(135deg, var(--color-guitar-600) 0%, var(--color-guitar-700) 100%);
+  }
+
+  .text-gradient-guitar {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #fca5a5 0%, #dc2626 50%, #991b1b 100%);
+  }
+}
