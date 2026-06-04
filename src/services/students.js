@@ -64,3 +64,32 @@ export async function createStudent(teacherId, input) {
   if (error) throw new Error(error.message)
   return mapStudent(data)
 }
+
+export async function updateStudent(studentId, input) {
+  const { data, error } = await supabase
+    .from(TABLES.students)
+    .update({
+      first_name: input.firstName.trim(),
+      last_name: input.lastName.trim(),
+      email: input.email?.trim() || null,
+      phone: input.phone?.trim() || null,
+      level: input.level?.trim() || null,
+      instrument: input.instrument?.trim() || null,
+      progress: input.progress ?? 0,
+    })
+    .eq('id', studentId)
+    .select(STUDENT_COLUMNS)
+    .single()
+
+  if (error) throw new Error(error.message)
+  return mapStudent(data)
+}
+
+export async function deleteStudent(studentId) {
+  const { error } = await supabase
+    .from(TABLES.students)
+    .delete()
+    .eq('id', studentId)
+
+  if (error) throw new Error(error.message)
+}
