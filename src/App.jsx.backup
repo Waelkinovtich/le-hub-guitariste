@@ -18,7 +18,7 @@ function ConfigWarning() {
   if (isSupabaseConfigured && !authError) return null
   return (
     <div className="bg-guitar-600/20 border-b border-guitar-600/40 px-4 py-2 text-center text-sm text-guitar-300">
-      {authError || 'Supabase non configure'}
+      {authError || 'Supabase non configuré — vérifiez .env.local et redémarrez le serveur.'}
     </div>
   )
 }
@@ -29,7 +29,7 @@ function AppShell() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-void text-muted-foreground">
         <div className="w-8 h-8 border-2 border-guitar-600 border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm">Chargement</p>
+        <p className="text-sm">Chargement…</p>
       </div>
     )
   }
@@ -37,7 +37,7 @@ function AppShell() {
     <>
       <ConfigWarning />
       <Routes>
-        <Route path="/" element={<LoginPage />} />
+        path="/" element={<LoginPage />} />
         <Route path="/professeur" element={<ProtectedRoute requiredRole="teacher"><Layout /></ProtectedRoute>}>
           <Route index element={<TeacherDashboard />} />
           <Route path="eleves" element={<StudentsPage />} />
