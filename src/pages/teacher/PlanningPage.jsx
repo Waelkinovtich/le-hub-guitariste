@@ -1,15 +1,18 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import { Plus } from 'lucide-react'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import { fetchLessonsInRange } from '../../services/lessons'
 import { endOfWeek, formatWeekRange, startOfWeek, toISODate } from '../../utils/format'
+import AddLessonModal from '../../components/AddLessonModal'
 
 const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 
 export default function PlanningPage() {
   const { user } = useAuth()
   const weekStart = useMemo(() => startOfWeek(), [])
+  const [showAddForm, setShowAddForm] = useState(false)
 
   const load = useCallback(() => {
     const start = startOfWeek()
@@ -34,34 +37,38 @@ export default function PlanningPage() {
     })
   }, [weekStart, lessons])
 
-  if (loading) return <LoadingBlock label="Chargement du planning…" />
+  if (loading) return <LoadingBlock label="Chargement du planning" />
   if (error) return <ErrorBlock message={error} onRetry={reload} />
 
   const weekLessons = lessons ?? []
 
   return (
     <div className="p-6 sm:p-8 max-w-7xl">
-      <header className="mb-8">
-        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Planning</h1>
-        <p className="text-muted-foreground mt-1">{formatWeekRange()}</p>
+      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Planning</h1>
+          <p className="text-muted-foreground mt-1">{formatWeekRange()}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowAddForm(true)}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity"
+        >
+          <Plus className="w-4 h-4" />
+          Ajouter un cours
+        </button>
       </header>
 
       <div className="grid grid-cols-7 gap-2 mb-8">
         {weekDays.map(({ label, dayNum, isToday, count }) => (
           <div
             key={label}
-            className={`text-center py-3 rounded-xl text-sm font-medium ${
-              isToday ? 'guitar-gradient text-white' : 'glass-panel text-muted-foreground'
-            }`}
+            className={'text-center py-3 rounded-xl text-sm font-medium ' + (isToday ? 'guitar-gradient text-white' : 'glass-panel text-muted-foreground')}
           >
             {label}
             <span className="block text-lg mt-0.5 font-semibold">{dayNum}</span>
             {count > 0 && (
-              <span
-                className={`inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded-full ${
-                  isToday ? 'bg-white/20' : 'bg-guitar-600/20 text-guitar-400'
-                }`}
-              >
+              <span className={'inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded-full ' + (isToday ? 'bg-white/20' : 'bg-guitar-600/20 text-guitar-400')}>
                 {count} cours
               </span>
             )}
@@ -70,7 +77,7 @@ export default function PlanningPage() {
       </div>
 
       {weekLessons.length === 0 ? (
-        <EmptyBlock message="Aucun cours cette semaine dans Supabase." />
+        <EmptyBlock message="Aucun cours cette semaine. Cliquez sur Ajouter un cours pour commencer." />
       ) : (
         <div className="space-y-3">
           {weekLessons.map((lesson) => (
@@ -83,7 +90,7 @@ export default function PlanningPage() {
                 <p className="text-2xl font-semibold">{lesson.timeLabel}</p>
               </div>
               <div className="flex-1">
-                <h3 className="font-semibold text-lg">{lesson.studentName || 'Élève'}</h3>
+                <h3 className="font-semibold text-lg">{lesson.studentName || 'Eleve'}</h3>
                 <p className="text-muted-foreground mt-1">{lesson.topic}</p>
               </div>
               <span className="inline-flex self-start sm:self-center px-3 py-1 rounded-full text-xs font-medium bg-guitar-600/15 text-guitar-400 border border-guitar-600/25">
@@ -92,6 +99,14 @@ export default function PlanningPage() {
             </article>
           ))}
         </div>
+      )}
+
+      {showAddForm && (
+        <AddLessonModal
+          teacherId={user.id}
+          onClose={() => setShowAddForm(false)}
+          onCreated={() => reload()}
+        />
       )}
     </div>
   )

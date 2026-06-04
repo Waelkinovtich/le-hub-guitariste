@@ -109,3 +109,22 @@ export function formatNextLessonLabel(lesson) {
   if (!lesson) return '—'
   return `${lesson.dateLabel} ${lesson.timeLabel}`
 }
+
+export async function createLesson(teacherId, input) {
+  const { data, error } = await supabase
+    .from(TABLES.lessons)
+    .insert({
+      teacher_id: teacherId,
+      student_id: input.studentId,
+      lesson_date: input.lessonDate,
+      lesson_time: input.lessonTime,
+      duration_minutes: input.durationMinutes ?? 45,
+      topic: input.topic,
+      notes: input.notes ?? null,
+    })
+    .select(LESSON_SELECT)
+    .single()
+
+  if (error) throw new Error(error.message)
+  return mapLesson(data)
+}
