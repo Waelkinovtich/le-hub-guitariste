@@ -3,29 +3,13 @@ import { TABLES } from '../lib/tables'
 import { fullName, formatLessonDateLabel, formatTime } from '../utils/format'
 
 const LESSON_SELECT = `
-  id,
-  teacher_id,
-  student_id,
-  lesson_date,
-  lesson_time,
-  duration_minutes,
-  topic,
-  notes,
-  student:${TABLES.students} (
-    id,
-    first_name,
-    last_name,
-    level,
-    instrument
-  )
+  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason,
+  student:${TABLES.students} (id, first_name, last_name, level, instrument)
 `
 
 function mapLesson(row) {
   const student = row.student
-  const studentName = student
-    ? fullName(student.first_name, student.last_name)
-    : ''
-
+  const studentName = student ? fullName(student.first_name, student.last_name) : ''
   return {
     id: row.id,
     teacherId: row.teacher_id,
@@ -35,6 +19,8 @@ function mapLesson(row) {
     durationMinutes: row.duration_minutes,
     topic: row.topic,
     notes: row.notes,
+    status: row.status ?? 'planifie',
+    absenceReason: row.absence_reason ?? null,
     studentName,
     dateLabel: formatLessonDateLabel(row.lesson_date),
     timeLabel: formatTime(row.lesson_time),
@@ -44,17 +30,10 @@ function mapLesson(row) {
 
 export async function fetchUpcomingLessons({ teacherId, studentId, limit = 20 } = {}) {
   const today = new Date().toISOString().slice(0, 10)
-  let query = supabase
-    .from(TABLES.lessons)
-    .select(LESSON_SELECT)
-    .gte('lesson_date', today)
-    .order('lesson_date')
-    .order('lesson_time')
-
+  let query = supabase.from(TABLES.lessons).select(LESSON_SELECT).gte('lesson_date', today).order('lesson_date').order('lesson_time')
   if (teacherId) query = query.eq('teacher_id', teacherId)
   if (studentId) query = query.eq('student_id', studentId)
   if (limit) query = query.limit(limit)
-
   const { data, error } = await query
   if (error) throw new Error(error.message)
   return (data ?? []).map(mapLesson)
@@ -62,69 +41,54 @@ export async function fetchUpcomingLessons({ teacherId, studentId, limit = 20 } 
 
 export async function fetchPastLessons({ teacherId, studentId, limit = 20 } = {}) {
   const today = new Date().toISOString().slice(0, 10)
-  let query = supabase
-    .from(TABLES.lessons)
-    .select(LESSON_SELECT)
-    .lt('lesson_date', today)
-    .order('lesson_date', { ascending: false })
-    .order('lesson_time', { ascending: false })
-
+  let query = supabase.from(TABLES.lessons).select(LESSON_SELECT).lt('lesson_date', today).order('lesson_date', { ascending: false }).order('lesson_time', { ascending: false })
   if (teacherId) query = query.eq('teacher_id', teacherId)
   if (studentId) query = query.eq('student_id', studentId)
   if (limit) query = query.limit(limit)
-
   const { data, error } = await query
   if (error) throw new Error(error.message)
   return (data ?? []).map(mapLesson)
 }
 
 export async function fetchLessonsInRange({ teacherId, from, to }) {
-  let query = supabase
-    .from(TABLES.lessons)
-    .select(LESSON_SELECT)
-    .gte('lesson_date', from)
-    .lte('lesson_date', to)
-    .order('lesson_date')
-    .order('lesson_time')
-
+  let query = supabase.from(TABLES.lessons).select(LESSON_SELECT).gte('lesson_date', from).lte('lesson_date', to).order('lesson_date').order('lesson_time')
   if (teacherId) query = query.eq('teacher_id', teacherId)
-
   const { data, error } = await query
   if (error) throw new Error(error.message)
   return (data ?? []).map(mapLesson)
 }
 
-/** Prochain cours par élève (une requête groupée côté client) */
 export function buildNextLessonByStudent(lessons) {
   const map = new Map()
   for (const lesson of lessons) {
-    if (!map.has(lesson.studentId)) {
-      map.set(lesson.studentId, lesson)
-    }
+    if (!map.has(lesson.studentId)) map.set(lesson.studentId, lesson)
   }
   return map
 }
 
 export function formatNextLessonLabel(lesson) {
-  if (!lesson) return '—'
-  return `${lesson.dateLabel} ${lesson.timeLabel}`
+  if (!lesson) return '--'
+  return lesson.dateLabel + ' ' + lesson.timeLabel
 }
 
 export async function createLesson(teacherId, input) {
-  const { data, error } = await supabase
-    .from(TABLES.lessons)
-    .insert({
-      teacher_id: teacherId,
-      student_id: input.studentId,
-      lesson_date: input.lessonDate,
-      lesson_time: input.lessonTime,
-      duration_minutes: input.durationMinutes ?? 45,
-      topic: input.topic,
-      notes: input.notes ?? null,
-    })
-    .select(LESSON_SELECT)
-    .single()
-
+  const { data, error } = await supabase.from(TABLES.lessons).insert({ teacher_id: teacherId, student_id: input.studentId, lesson_date: input.lessonDate, lesson_time: input.lessonTime, duration_minutes: input.durationMinutes ?? 45, topic: input.topic, notes: input.notes ?? null, status: 'planifie' }).select(LESSON_SELECT).single()
   if (error) throw new Error(error.message)
   return mapLesson(data)
+}
+
+export async function updateLesson(lessonId, input) {
+  const { data, error } = await supabase.from(TABLES.lessons).update({ student_id: input.studentId, lesson_date: input.lessonDate, lesson_time: input.lessonTime, duration_minutes: Number(input.durationMinutes), topic: input.topic, notes: input.notes ?? null }).eq('id', lessonId).select(LESSON_SELECT).single()
+  if (error) throw new Error(error.message)
+  return mapLesson(data)
+}
+
+export async function deleteLesson(lessonId) {
+  const { error } = await supabase.from(TABLES.lessons).delete().eq('id', lessonId)
+  if (error) throw new Error(error.message)
+}
+
+export async function updateLessonStatus(lessonId, status, absenceReason) {
+  const { error } = await supabase.from(TABLES.lessons).update({ status, absence_reason: absenceReason ?? null }).eq('id', lessonId)
+  if (error) throw new Error(error.message)
 }
