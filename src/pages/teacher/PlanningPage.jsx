@@ -10,10 +10,11 @@ import AddLessonModal from '../../components/AddLessonModal'
 import LessonStatusModal from '../../components/LessonStatusModal'
 import { getStatusInfo } from '../../utils/lessonStatus'
 import DeleteLessonModal from '../../components/DeleteLessonModal'
+import WeekGridView from "../../components/WeekGridView"
 import MonthView from '../../components/MonthView'
 
 const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
-const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: 'Mois' }, { value: 'periode', label: 'Periode scolaire' }, { value: 'annee', label: 'Annee' }]
+const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: 'Mois' }, { value: 'periode', label: 'Periode scolaire' }, { value: 'annee', label: 'Année' }]
 
 export default function PlanningPage() {
   const { user } = useAuth()
@@ -87,7 +88,7 @@ export default function PlanningPage() {
   const headerLabel = useMemo(() => {
     if (view === 'mois') return monthLabel
     if (view === 'periode') return (periodes[periodeIndex] ?? periodes[0]).nom
-    if (view === 'annee') return 'Annee scolaire 2025-2026'
+    if (view === 'annee') return 'Année scolaire 2025-2026'
     return weekLabel
   }, [view, monthLabel, periodes, periodeIndex, weekLabel])
 
