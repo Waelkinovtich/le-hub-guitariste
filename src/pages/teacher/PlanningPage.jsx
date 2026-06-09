@@ -198,7 +198,7 @@ export default function PlanningPage() {
 
       {view === 'mois' && !selectedDay ? (
         loading ? <LoadingBlock label="Chargement" /> : error ? <ErrorBlock message={error} onRetry={reload} /> : (
-          <MonthView monthDate={monthDate} lessons={lessons ?? []} onSelectDay={(iso) => setSelectedDay(iso)} onSelectLesson={(l) => setStatusLesson(l)} />
+          <MonthView monthDate={monthDate} lessons={lessons ?? []} zone={zone} onSelectDay={(iso) => setSelectedDay(iso)} onSelectLesson={(l) => setStatusLesson(l)} />
         )
       ) : (
         <>

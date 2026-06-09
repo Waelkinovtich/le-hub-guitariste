@@ -5,7 +5,7 @@ import { fullName } from '../utils/format'
 export async function fetchProfile(userId) {
   const { data, error } = await supabase
     .from(TABLES.profiles)
-    .select('id, role, first_name, last_name, email, phone, created_at')
+    .select('id, role, first_name, last_name, email, phone, school_zone, created_at')
     .eq('id', userId)
     .maybeSingle()
 
@@ -26,6 +26,7 @@ export function mapProfileToUser(profile) {
     name: fullName(firstName, lastName) || profile.email || 'Utilisateur',
     phone: profile.phone ?? profile.telephone,
     createdAt: profile.created_at,
+    schoolZone: profile.school_zone ?? 'B',
   }
 }
 
