@@ -3,7 +3,7 @@ import { TABLES } from '../lib/tables'
 import { fullName, formatLessonDateLabel, formatTime } from '../utils/format'
 
 const LESSON_SELECT = `
-  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason,
+  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, recurrence_group,
   student:${TABLES.students} (id, first_name, last_name, level, instrument)
 `
 
@@ -21,6 +21,7 @@ function mapLesson(row) {
     notes: row.notes,
     status: row.status ?? 'planifie',
     absenceReason: row.absence_reason ?? null,
+    recurrenceGroup: row.recurrence_group ?? null,
     studentName,
     dateLabel: formatLessonDateLabel(row.lesson_date),
     timeLabel: formatTime(row.lesson_time),
@@ -91,4 +92,45 @@ export async function deleteLesson(lessonId) {
 export async function updateLessonStatus(lessonId, status, absenceReason) {
   const { error } = await supabase.from(TABLES.lessons).update({ status, absence_reason: absenceReason ?? null }).eq('id', lessonId)
   if (error) throw new Error(error.message)
+}
+
+export async function createRecurringLessons(teacherId, input, untilDate) {
+  const groupId = crypto.randomUUID()
+  const rows = []
+  let current = new Date(input.lessonDate + 'T00:00:00')
+  const end = new Date(untilDate + 'T00:00:00')
+  while (current <= end) {
+    const pad = (n) => String(n).padStart(2, '0')
+    const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
+    rows.push({
+      teacher_id: teacherId,
+      student_id: input.studentId,
+      lesson_date: iso,
+      lesson_time: input.lessonTime,
+      duration_minutes: input.durationMinutes ?? 45,
+      topic: input.topic,
+      notes: input.notes ?? null,
+      status: 'planifie',
+      recurrence_group: groupId,
+    })
+    current.setDate(current.getDate() + 7)
+  }
+  const { error } = await supabase.from(TABLES.lessons).insert(rows)
+  if (error) throw new Error(error.message)
+  return rows.length
+}
+
+export async function deleteRecurrenceGroup(groupId, fromDate) {
+  let query = supabase.from(TABLES.lessons).delete().eq('recurrence_group', groupId)
+  if (fromDate) query = query.gte('lesson_date', fromDate)
+  const { error } = await query
+  if (error) throw new Error(error.message)
+}
+
+export async function countRecurrenceGroup(groupId, fromDate) {
+  let query = supabase.from(TABLES.lessons).select('id', { count: 'exact', head: true }).eq('recurrence_group', groupId)
+  if (fromDate) query = query.gte('lesson_date', fromDate)
+  const { count, error } = await query
+  if (error) throw new Error(error.message)
+  return count ?? 0
 }
