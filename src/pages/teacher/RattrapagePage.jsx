@@ -22,8 +22,9 @@ export default function RattrapagePage() {
 
   const { global: globalStats, parEcole, parEleve } = useMemo(() => {
     const all = lessons ?? []
-    const annules = all.filter((l) => l.status === 'annule_prof')
-    const rattrapes = all.filter((l) => l.status === 'rattrape')
+    const annules = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu')
+    const rattrapes = all.filter((l) => l.status === 'rattrape' && l.lessonType !== 'cesu')
+    const annulesCesu = all.filter((l) => l.status === 'annule_prof' && l.lessonType === 'cesu')
 
     let totalAnnule = 0
     let totalRattrape = 0
@@ -32,7 +33,7 @@ export default function RattrapagePage() {
 
     annules.forEach((l) => {
       totalAnnule += l.durationMinutes ?? 0
-      const ecole = l.student?.schoolName || 'Cours particuliers'
+      const ecole = l.lessonType === 'cesu' ? 'Cours particuliers (CESU)' : (l.schoolName || 'Ecole de musique')
       if (!ecoles[ecole]) ecoles[ecole] = { annule: 0, rattrape: 0 }
       ecoles[ecole].annule += l.durationMinutes ?? 0
       const nom = l.studentName || 'Eleve'

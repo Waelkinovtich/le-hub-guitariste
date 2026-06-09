@@ -4,7 +4,7 @@ import { fullName, formatLessonDateLabel, formatTime } from '../utils/format'
 
 const LESSON_SELECT = `
   id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group,
-  student:${TABLES.students} (id, first_name, last_name, level, instrument)
+  student:${TABLES.students} (id, first_name, last_name, level, instrument, lesson_type, school_name)
 `
 
 function mapLesson(row) {
@@ -26,6 +26,8 @@ function mapLesson(row) {
     studentName,
     dateLabel: formatLessonDateLabel(row.lesson_date),
     timeLabel: formatTime(row.lesson_time),
+    lessonType: student?.lesson_type ?? null,
+    schoolName: student?.school_name ?? null,
     student,
   }
 }
