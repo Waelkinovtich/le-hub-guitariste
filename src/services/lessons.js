@@ -3,7 +3,7 @@ import { TABLES } from '../lib/tables'
 import { fullName, formatLessonDateLabel, formatTime } from '../utils/format'
 
 const LESSON_SELECT = `
-  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, recurrence_group,
+  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group,
   student:${TABLES.students} (id, first_name, last_name, level, instrument)
 `
 
@@ -21,6 +21,7 @@ function mapLesson(row) {
     notes: row.notes,
     status: row.status ?? 'planifie',
     absenceReason: row.absence_reason ?? null,
+    cancelReason: row.cancel_reason ?? null,
     recurrenceGroup: row.recurrence_group ?? null,
     studentName,
     dateLabel: formatLessonDateLabel(row.lesson_date),
@@ -89,9 +90,15 @@ export async function deleteLesson(lessonId) {
   if (error) throw new Error(error.message)
 }
 
-export async function updateLessonStatus(lessonId, status, absenceReason) {
-  const { error } = await supabase.from(TABLES.lessons).update({ status, absence_reason: absenceReason ?? null }).eq('id', lessonId)
+export async function updateLessonStatus(lessonId, status, absenceReason, cancelReason) {
+  const { error } = await supabase.from(TABLES.lessons).update({ status, absence_reason: absenceReason ?? null, cancel_reason: cancelReason ?? null }).eq('id', lessonId)
   if (error) throw new Error(error.message)
+}
+
+export async function fetchCancelledLessons({ teacherId } = {}) {
+  const { data, error } = await supabase.from(TABLES.lessons).select(LESSON_SELECT).eq('status', 'annule_prof').eq('teacher_id', teacherId).order('lesson_date', { ascending: false })
+  if (error) throw new Error(error.message)
+  return (data ?? []).map(mapLesson)
 }
 
 export async function createRecurringLessons(teacherId, input, untilDate) {

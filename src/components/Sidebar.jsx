@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Users, Calendar, BookOpen, LogOut, Guitar, ClipboardList, TrendingUp, ClipboardCheck, Settings } from 'lucide-react'
+import { LayoutDashboard, Users, Calendar, BookOpen, LogOut, Guitar, ClipboardList, TrendingUp, ClipboardCheck, Settings, RotateCcw } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 const teacherLinks = [
@@ -8,6 +8,7 @@ const teacherLinks = [
   { to: '/professeur/planning', icon: Calendar, label: 'Planning' },
   { to: '/professeur/emargement', icon: ClipboardCheck, label: '\u00c9margement' },
   { to: '/professeur/exercices', icon: BookOpen, label: 'Exercices' },
+  { to: '/professeur/rattrapage', icon: RotateCcw, label: 'Rattrapage' },
   { to: '/professeur/reglages', icon: Settings, label: 'Réglages' },
 ]
 
