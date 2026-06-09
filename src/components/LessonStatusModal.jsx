@@ -1,18 +1,7 @@
 import { useState } from 'react'
 import { X, Loader2 } from 'lucide-react'
 import { updateLessonStatus } from '../services/lessons'
-
-const STATUSES = [
-  { value: 'present', label: 'Pr\u00e9sent', color: '#27ae60', emoji: '\u2705' },
-  { value: 'absent', label: 'Absent (non excus\u00e9)', color: '#e74c3c', emoji: '\u274c' },
-  { value: 'excuse', label: 'Absent excus\u00e9', color: '#e67e22', emoji: '\u26a0\ufe0f' },
-  { value: 'annule_prof', label: 'Annul\u00e9 par le prof', color: '#9b59b6', emoji: '\ud83d\udd35' },
-  { value: 'planifie', label: 'Planifi\u00e9', color: '#7f8c8d', emoji: '\ud83d\udcc5' },
-]
-
-export function getStatusInfo(status) {
-  return STATUSES.find((s) => s.value === status) ?? STATUSES[4]
-}
+import { LESSON_STATUSES } from '../utils/lessonStatus'
 
 export default function LessonStatusModal({ lesson, onClose, onUpdated }) {
   const [status, setStatus] = useState(lesson.status ?? 'planifie')
@@ -44,10 +33,10 @@ export default function LessonStatusModal({ lesson, onClose, onUpdated }) {
             <X className="w-5 h-5" />
           </button>
         </div>
-        <p className="text-sm text-muted-foreground mb-6">{lesson.studentName} \u2014 {lesson.dateLabel} {lesson.timeLabel}</p>
+        <p className="text-sm text-muted-foreground mb-6">{lesson.studentName} — {lesson.dateLabel} {lesson.timeLabel}</p>
 
         <div className="space-y-2 mb-4">
-          {STATUSES.map((s) => (
+          {LESSON_STATUSES.map((s) => (
             <button key={s.value} type="button" onClick={() => setStatus(s.value)}
               className={'w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-sm font-medium transition-colors text-left ' + (status === s.value ? 'border-transparent text-white' : 'border-border-subtle hover:bg-surface-overlay')}
               style={status === s.value ? { backgroundColor: s.color } : {}}>
@@ -60,7 +49,7 @@ export default function LessonStatusModal({ lesson, onClose, onUpdated }) {
         {needsReason && (
           <div className="mb-4">
             <label className="block text-sm text-muted-foreground mb-1.5">Motif (optionnel)</label>
-            <input value={absenceReason} onChange={(e) => setAbsenceReason(e.target.value)} placeholder="Ex\u00a0: Maladie, voyage..." className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
+            <input value={absenceReason} onChange={(e) => setAbsenceReason(e.target.value)} placeholder="Ex : Maladie, voyage..." className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
           </div>
         )}
 

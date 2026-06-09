@@ -6,14 +6,19 @@ import { useFetch } from '../../hooks/useFetch'
 import { fetchLessonsInRange } from '../../services/lessons'
 import { startOfWeek, toISODate } from '../../utils/format'
 import AddLessonModal from '../../components/AddLessonModal'
-import LessonStatusModal, { getStatusInfo } from '../../components/LessonStatusModal'
+import LessonStatusModal from '../../components/LessonStatusModal'
+import { getStatusInfo } from '../../utils/lessonStatus'
 import DeleteLessonModal from '../../components/DeleteLessonModal'
+import MonthView from '../../components/MonthView'
 
 const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
+const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: 'Mois' }]
 
 export default function PlanningPage() {
   const { user } = useAuth()
+  const [view, setView] = useState('semaine')
   const [weekOffset, setWeekOffset] = useState(0)
+  const [monthOffset, setMonthOffset] = useState(0)
   const [selectedDay, setSelectedDay] = useState(null)
   const [showAddForm, setShowAddForm] = useState(false)
   const [editLesson, setEditLesson] = useState(null)
@@ -32,16 +37,40 @@ export default function PlanningPage() {
     return e
   }, [weekStart])
 
-  const load = useCallback(() => {
-    return fetchLessonsInRange({ teacherId: user.id, from: toISODate(weekStart), to: toISODate(weekEnd) })
-  }, [user.id, weekStart, weekEnd])
+  const monthDate = useMemo(() => {
+    const d = new Date()
+    d.setDate(1)
+    d.setMonth(d.getMonth() + monthOffset)
+    return d
+  }, [monthOffset])
 
-  const { data: lessons, loading, error, reload } = useFetch(load, [user.id, weekOffset])
+  const range = useMemo(() => {
+    if (view === 'mois') {
+      const year = monthDate.getFullYear()
+      const month = monthDate.getMonth()
+      const from = new Date(year, month, 1)
+      from.setDate(from.getDate() - 7)
+      const to = new Date(year, month + 1, 0)
+      to.setDate(to.getDate() + 7)
+      return { from: toISODate(from), to: toISODate(to) }
+    }
+    return { from: toISODate(weekStart), to: toISODate(weekEnd) }
+  }, [view, monthDate, weekStart, weekEnd])
+
+  const load = useCallback(() => {
+    return fetchLessonsInRange({ teacherId: user.id, from: range.from, to: range.to })
+  }, [user.id, range.from, range.to])
+
+  const { data: lessons, loading, error, reload } = useFetch(load, [user.id, range.from, range.to])
 
   const weekLabel = useMemo(() => {
     const opts = { day: 'numeric', month: 'long' }
     return 'Semaine du ' + weekStart.toLocaleDateString('fr-FR', opts) + ' au ' + weekEnd.toLocaleDateString('fr-FR', { ...opts, year: 'numeric' })
   }, [weekStart, weekEnd])
+
+  const monthLabel = useMemo(() => {
+    return monthDate.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+  }, [monthDate])
 
   const weekDays = useMemo(() => {
     return days.map((label, i) => {
@@ -57,15 +86,19 @@ export default function PlanningPage() {
   const displayedLessons = useMemo(() => {
     const all = lessons ?? []
     if (selectedDay) return all.filter((l) => l.lessonDate === selectedDay)
+    if (view === 'semaine') {
+      const from = toISODate(weekStart), to = toISODate(weekEnd)
+      return all.filter((l) => l.lessonDate >= from && l.lessonDate <= to)
+    }
     return all
-  }, [lessons, selectedDay])
+  }, [lessons, selectedDay, view, weekStart, weekEnd])
 
   return (
     <div className="p-6 sm:p-8 max-w-7xl">
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Planning</h1>
-          <p className="text-muted-foreground mt-1">{weekLabel}</p>
+          <p className="text-muted-foreground mt-1">{view === 'mois' ? monthLabel : weekLabel}</p>
         </div>
         <button type="button" onClick={() => setShowAddForm(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity">
           <Plus className="w-4 h-4" />
@@ -73,86 +106,110 @@ export default function PlanningPage() {
         </button>
       </header>
 
+      <div className="flex gap-2 mb-4">
+        {VIEWS.map((v) => (
+          <button key={v.value} onClick={() => { setView(v.value); setSelectedDay(null) }}
+            className={'px-4 py-2 rounded-xl border text-sm font-medium transition-colors ' + (view === v.value ? 'guitar-gradient text-white border-transparent' : 'border-border-subtle hover:bg-surface-overlay')}>
+            {v.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex items-center justify-between mb-6">
-        <button onClick={() => { setWeekOffset((w) => w - 1); setSelectedDay(null) }} className="flex items-center gap-1 px-3 py-2 rounded-xl border border-border-subtle text-sm hover:bg-surface-overlay transition-colors">
+        <button onClick={() => { view === 'mois' ? setMonthOffset((m) => m - 1) : setWeekOffset((w) => w - 1); setSelectedDay(null) }} className="flex items-center gap-1 px-3 py-2 rounded-xl border border-border-subtle text-sm hover:bg-surface-overlay transition-colors">
           <ChevronLeft className="w-4 h-4" />
-          Precedente
+          Precedent
         </button>
-        {(weekOffset !== 0 || selectedDay) && (
-          <button onClick={() => { setWeekOffset(0); setSelectedDay(null) }} className="px-3 py-2 rounded-xl border border-guitar-600/40 text-guitar-400 text-sm hover:bg-guitar-600/10 transition-colors">
-            Cette semaine
+        {(weekOffset !== 0 || monthOffset !== 0 || selectedDay) && (
+          <button onClick={() => { setWeekOffset(0); setMonthOffset(0); setSelectedDay(null) }} className="px-3 py-2 rounded-xl border border-guitar-600/40 text-guitar-400 text-sm hover:bg-guitar-600/10 transition-colors">
+            Aujourd'hui
           </button>
         )}
-        <button onClick={() => { setWeekOffset((w) => w + 1); setSelectedDay(null) }} className="flex items-center gap-1 px-3 py-2 rounded-xl border border-border-subtle text-sm hover:bg-surface-overlay transition-colors">
-          Suivante
+        <button onClick={() => { view === 'mois' ? setMonthOffset((m) => m + 1) : setWeekOffset((w) => w + 1); setSelectedDay(null) }} className="flex items-center gap-1 px-3 py-2 rounded-xl border border-border-subtle text-sm hover:bg-surface-overlay transition-colors">
+          Suivant
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
 
-      <div className="grid grid-cols-7 gap-2 mb-8">
-        {weekDays.map(({ label, dayNum, iso, isToday, count }) => {
-          const isSelected = selectedDay === iso
-          return (
-            <button key={label} onClick={() => setSelectedDay(isSelected ? null : iso)}
-              className={'text-center py-3 rounded-xl text-sm font-medium transition-colors ' + (isSelected ? 'ring-2 ring-guitar-400 ' : '') + (isToday ? 'guitar-gradient text-white' : 'glass-panel text-muted-foreground hover:bg-surface-overlay')}>
-              {label}
-              <span className="block text-lg mt-0.5 font-semibold">{dayNum}</span>
-              {count > 0 && (
-                <span className={'inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded-full ' + (isToday ? 'bg-white/20' : 'bg-guitar-600/20 text-guitar-400')}>
-                  {count} cours
-                </span>
-              )}
-            </button>
-          )
-        })}
-      </div>
-
-      {loading ? <LoadingBlock label="Chargement du planning" /> : error ? <ErrorBlock message={error} onRetry={reload} /> : displayedLessons.length === 0 ? (
-        <EmptyBlock message={selectedDay ? "Aucun cours ce jour." : "Aucun cours cette semaine."} />
-      ) : (
-        <div className="space-y-3">
-          {displayedLessons.map((lesson) => {
-            const statusInfo = getStatusInfo(lesson.status)
+      {view === 'semaine' && (
+        <div className="grid grid-cols-7 gap-2 mb-8">
+          {weekDays.map(({ label, dayNum, iso, isToday, count }) => {
+            const isSelected = selectedDay === iso
             return (
-              <article key={lesson.id} className="glass-panel rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center gap-4" style={{ borderLeft: '4px solid ' + statusInfo.color }}>
-                <div className="sm:w-32 shrink-0">
-                  <p className="font-medium" style={{ color: statusInfo.color }}>{lesson.dateLabel}</p>
-                  <p className="text-2xl font-semibold">{lesson.timeLabel}</p>
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-lg">{lesson.studentName || 'Eleve'}</h3>
-                  <p className="text-muted-foreground mt-1">{lesson.topic}</p>
-                  {lesson.notes && <p className="text-xs text-muted-foreground mt-1 italic">{lesson.notes}</p>}
-                  {lesson.absenceReason && <p className="text-xs mt-1 italic" style={{ color: statusInfo.color }}>Motif : {lesson.absenceReason}</p>}
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border" style={{ backgroundColor: statusInfo.color + '20', borderColor: statusInfo.color + '50', color: statusInfo.color }}>
-                    {statusInfo.emoji} {statusInfo.label}
+              <button key={label} onClick={() => setSelectedDay(isSelected ? null : iso)}
+                className={'text-center py-3 rounded-xl text-sm font-medium transition-colors ' + (isSelected ? 'ring-2 ring-guitar-400 ' : '') + (isToday ? 'guitar-gradient text-white' : 'glass-panel text-muted-foreground hover:bg-surface-overlay')}>
+                {label}
+                <span className="block text-lg mt-0.5 font-semibold">{dayNum}</span>
+                {count > 0 && (
+                  <span className={'inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded-full ' + (isToday ? 'bg-white/20' : 'bg-guitar-600/20 text-guitar-400')}>
+                    {count} cours
                   </span>
-                  <span className="inline-flex px-3 py-1 rounded-full text-xs font-medium bg-guitar-600/15 text-guitar-400 border border-guitar-600/25">
-                    {lesson.durationMinutes} min
-                  </span>
-                  {lesson.recurrenceGroup && (
-                    <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-blue-500/15 text-blue-400 border border-blue-500/25">
-                      Recurrent
-                    </span>
-                  )}
-                </div>
-                <div className="flex gap-2 self-start sm:self-center">
-                  <button onClick={() => setStatusLesson(lesson)} title="Emargement" className="p-2 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors text-guitar-400">
-                    <ClipboardCheck className="w-4 h-4" />
-                  </button>
-                  <button onClick={() => setEditLesson(lesson)} title="Modifier" className="p-2 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors">
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button onClick={() => setDeleteLessonItem(lesson)} title="Supprimer" className="p-2 rounded-lg border border-guitar-600/40 text-guitar-400 hover:bg-guitar-600/10 transition-colors">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </article>
+                )}
+              </button>
             )
           })}
         </div>
+      )}
+
+      {view === 'mois' && !selectedDay ? (
+        loading ? <LoadingBlock label="Chargement" /> : error ? <ErrorBlock message={error} onRetry={reload} /> : (
+          <MonthView monthDate={monthDate} lessons={lessons ?? []} onSelectDay={(iso) => setSelectedDay(iso)} onSelectLesson={(l) => setStatusLesson(l)} />
+        )
+      ) : (
+        <>
+          {selectedDay && (
+            <button onClick={() => setSelectedDay(null)} className="text-sm text-guitar-400 mb-4 hover:underline">
+              ← Retour
+            </button>
+          )}
+          {loading ? <LoadingBlock label="Chargement du planning" /> : error ? <ErrorBlock message={error} onRetry={reload} /> : displayedLessons.length === 0 ? (
+            <EmptyBlock message={selectedDay ? "Aucun cours ce jour." : "Aucun cours cette semaine."} />
+          ) : (
+            <div className="space-y-3">
+              {displayedLessons.map((lesson) => {
+                const statusInfo = getStatusInfo(lesson.status)
+                return (
+                  <article key={lesson.id} className="glass-panel rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center gap-4" style={{ borderLeft: '4px solid ' + statusInfo.color }}>
+                    <div className="sm:w-32 shrink-0">
+                      <p className="font-medium" style={{ color: statusInfo.color }}>{lesson.dateLabel}</p>
+                      <p className="text-2xl font-semibold">{lesson.timeLabel}</p>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-lg">{lesson.studentName || 'Eleve'}</h3>
+                      <p className="text-muted-foreground mt-1">{lesson.topic}</p>
+                      {lesson.notes && <p className="text-xs text-muted-foreground mt-1 italic">{lesson.notes}</p>}
+                      {lesson.absenceReason && <p className="text-xs mt-1 italic" style={{ color: statusInfo.color }}>Motif : {lesson.absenceReason}</p>}
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border" style={{ backgroundColor: statusInfo.color + '20', borderColor: statusInfo.color + '50', color: statusInfo.color }}>
+                        {statusInfo.emoji} {statusInfo.label}
+                      </span>
+                      <span className="inline-flex px-3 py-1 rounded-full text-xs font-medium bg-guitar-600/15 text-guitar-400 border border-guitar-600/25">
+                        {lesson.durationMinutes} min
+                      </span>
+                      {lesson.recurrenceGroup && (
+                        <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-blue-500/15 text-blue-400 border border-blue-500/25">
+                          Recurrent
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex gap-2 self-start sm:self-center">
+                      <button onClick={() => setStatusLesson(lesson)} title="Emargement" className="p-2 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors text-guitar-400">
+                        <ClipboardCheck className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => setEditLesson(lesson)} title="Modifier" className="p-2 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors">
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => setDeleteLessonItem(lesson)} title="Supprimer" className="p-2 rounded-lg border border-guitar-600/40 text-guitar-400 hover:bg-guitar-600/10 transition-colors">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {showAddForm && <AddLessonModal teacherId={user.id} onClose={() => setShowAddForm(false)} onCreated={() => reload()} />}
