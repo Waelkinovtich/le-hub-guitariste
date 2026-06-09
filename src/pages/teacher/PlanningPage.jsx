@@ -10,6 +10,7 @@ import AddLessonModal from '../../components/AddLessonModal'
 import LessonStatusModal from '../../components/LessonStatusModal'
 import { getStatusInfo } from '../../utils/lessonStatus'
 import DeleteLessonModal from '../../components/DeleteLessonModal'
+import YearView from "../../components/YearView"
 import WeekGridView from "../../components/WeekGridView"
 import MonthView from '../../components/MonthView'
 
@@ -184,6 +185,15 @@ export default function PlanningPage() {
             )
           })}
         </div>
+      )}
+
+      {view === 'annee' && !selectedDay && (
+        loading ? null : (
+          <YearView
+            lessons={lessons ?? []}
+            onSelectDay={(iso) => { setSelectedDay(iso); }}
+          />
+        )
       )}
 
       {view === 'mois' && !selectedDay ? (
