@@ -5,11 +5,11 @@ const STATUS_LABELS = {
   present: 'Pr\u00e9sent',
   absent: 'Absent',
   excuse: 'Excus\u00e9',
-  annule_prof: 'Annul\u00e9 prof',
-  planifie: 'Planifi\u00e9',
+  annulé_prof: 'Annul\u00e9 prof',
+  planifié: 'Planifi\u00e9',
 }
 
-export function exportEmargementPDF({ lessons, school, period, teacherName }) {
+export function exportÉmargementPDF({ lessons, school, period, teacherName }) {
   const doc = new jsPDF()
 
   doc.setFontSize(18)
@@ -51,13 +51,13 @@ export function exportEmargementPDF({ lessons, school, period, teacherName }) {
   const presents = lessons.filter((l) => l.status === 'present').length
   const absents = lessons.filter((l) => l.status === 'absent').length
   const excuses = lessons.filter((l) => l.status === 'excuse').length
-  const annules = lessons.filter((l) => l.status === 'annule_prof').length
+  const annulés = lessons.filter((l) => l.status === 'annulé_prof').length
   const taux = total > 0 ? Math.round((presents / total) * 100) : 0
 
   const finalY = doc.lastAutoTable.finalY + 10
   doc.setFontSize(10)
   doc.setTextColor(0, 0, 0)
-  doc.text('R\u00e9capitulatif : ' + total + ' cours — ' + presents + ' pr\u00e9sents — ' + absents + ' absents — ' + excuses + ' excus\u00e9s — ' + annules + ' annul\u00e9s — Taux de pr\u00e9sence : ' + taux + '%', 14, finalY)
+  doc.text('R\u00e9capitulatif : ' + total + ' cours — ' + presents + ' pr\u00e9sents — ' + absents + ' absents — ' + excuses + ' excus\u00e9s — ' + annulés + ' annul\u00e9s — Taux de pr\u00e9sence : ' + taux + '%', 14, finalY)
 
   const filename = 'emargement_' + (school || 'tous').replace(/\s/g, '_') + '_' + period.replace(/\s/g, '_') + '.pdf'
   doc.save(filename)

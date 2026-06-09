@@ -67,19 +67,19 @@ export default function StudentsPage() {
   const hasFilters = search || filterLevel || filterType || filterSchool || filterAge
   const clearFilters = () => { setSearch(''); setFilterLevel(''); setFilterType(''); setFilterSchool(''); setFilterAge('') }
 
-  if (loading) return <LoadingBlock label="Chargement des eleves" />
+  if (loading) return <LoadingBlock label="Chargement des élèves" />
   if (error) return <ErrorBlock message={error} onRetry={reload} />
 
   return (
     <div className="p-6 sm:p-8 max-w-7xl">
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Eleves</h1>
-          <p className="text-muted-foreground mt-1">{filtered.length} / {rows.length} eleve{rows.length !== 1 ? 's' : ''}</p>
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Élèves</h1>
+          <p className="text-muted-foreground mt-1">{filtered.length} / {rows.length} élève{rows.length !== 1 ? 's' : ''}</p>
         </div>
         <button type="button" onClick={() => setShowAddForm(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity">
           <Plus className="w-4 h-4" />
-          Ajouter un eleve
+          Ajouter un élève
         </button>
       </header>
 
@@ -99,11 +99,11 @@ export default function StudentsPage() {
         <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600">
           <option value="">Tous types</option>
           <option value="particulier">CESU</option>
-          <option value="ecole">Ecole</option>
+          <option value="école">École</option>
         </select>
         {schools.length > 0 && (
           <select value={filterSchool} onChange={(e) => setFilterSchool(e.target.value)} className="px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600">
-            <option value="">Toutes ecoles</option>
+            <option value="">Toutes écoles</option>
             {schools.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         )}
@@ -116,13 +116,13 @@ export default function StudentsPage() {
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyBlock message={hasFilters ? "Aucun eleve ne correspond aux filtres." : "Aucun eleve. Cliquez sur Ajouter un eleve pour commencer."} />
+        <EmptyBlock message={hasFilters ? "Aucun élève ne correspond aux filtres." : "Aucun élève. Cliquez sur Ajouter un élève pour commencer."} />
       ) : (
         <div className="glass-panel rounded-2xl overflow-hidden overflow-x-auto">
           <table className="w-full text-sm min-w-[640px]">
             <thead>
               <tr className="border-b border-border-subtle text-left text-muted-foreground">
-                <th className="px-6 py-4 font-medium">Eleve</th>
+                <th className="px-6 py-4 font-medium">Élève</th>
                 <th className="px-6 py-4 font-medium hidden md:table-cell">Type</th>
                 <th className="px-6 py-4 font-medium hidden lg:table-cell">Niveau</th>
                 <th className="px-6 py-4 font-medium hidden lg:table-cell">Instrument</th>
@@ -132,10 +132,10 @@ export default function StudentsPage() {
             </thead>
             <tbody>
               {filtered.map((student) => {
-                const color = student.lessonType === 'ecole' ? getSchoolColor(student.schoolName, schools) : '#dc2626'
-                const label = student.lessonType === 'ecole' ? (student.schoolName || 'Ecole') : 'CESU'
+                const color = student.lessonType === 'école' ? getSchoolColor(student.schoolName, schools) : '#dc2626'
+                const label = student.lessonType === 'école' ? (student.schoolName || 'École') : 'CESU'
                 return (
-                  <tr key={student.id} onClick={() => navigate('/professeur/eleves/' + student.id)} className="border-b border-border-subtle last:border-0 hover:bg-surface-overlay/50 transition-colors cursor-pointer">
+                  <tr key={student.id} onClick={() => navigate('/professeur/élèves/' + student.id)} className="border-b border-border-subtle last:border-0 hover:bg-surface-overlay/50 transition-colors cursor-pointer">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white" style={{ backgroundColor: color }}>

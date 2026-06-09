@@ -27,7 +27,7 @@ export default function AddStudentModal({ teacherId, student, onClose, onCreated
     e.preventDefault()
     setError('')
     if (!form.firstName.trim() || !form.lastName.trim()) { setError('Le prenom et le nom sont obligatoires.'); return }
-    if (form.lessonType === 'ecole' && !form.schoolName.trim()) { setError('Precisez le nom de l ecole.'); return }
+    if (form.lessonType === 'école' && !form.schoolName.trim()) { setError('Precisez le nom de l école.'); return }
     setSubmitting(true)
     try {
       const result = isEdit ? await updateStudent(student.id, form) : await createStudent(teacherId, form)
@@ -45,7 +45,7 @@ export default function AddStudentModal({ teacherId, student, onClose, onCreated
       <button type="button" className="absolute inset-0 bg-void/80 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-lg glass-panel rounded-2xl p-6 shadow-2xl border border-border overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold">{isEdit ? 'Modifier' : 'Ajouter'} un eleve</h2>
+          <h2 className="text-xl font-semibold">{isEdit ? 'Modifier' : 'Ajouter'} un élève</h2>
           <button type="button" onClick={onClose} className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-5">
@@ -63,7 +63,7 @@ export default function AddStudentModal({ teacherId, student, onClose, onCreated
               </div>
             </div>
             <div className="mt-3">
-              <label className="block text-sm text-muted-foreground mb-1.5">Annee de naissance</label>
+              <label className="block text-sm text-muted-foreground mb-1.5">Année de naissance</label>
               <select value={form.birthYear} onChange={update('birthYear')} className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600">
                 <option value="">--</option>
                 {YEARS.map((y) => <option key={y} value={y}>{y} ({currentYear - y} ans)</option>)}
@@ -72,7 +72,7 @@ export default function AddStudentModal({ teacherId, student, onClose, onCreated
           </div>
 
           <div>
-            <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3">Contact eleve</p>
+            <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3">Contact élève</p>
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm text-muted-foreground mb-1.5">Tel personnel</label>
@@ -131,14 +131,14 @@ export default function AddStudentModal({ teacherId, student, onClose, onCreated
               <button type="button" onClick={() => setForm((p) => ({ ...p, lessonType: 'particulier' }))} className={'px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ' + (form.lessonType === 'particulier' ? 'guitar-gradient text-white border-transparent' : 'border-border-subtle hover:bg-surface-overlay')}>
                 Cours particulier (CESU)
               </button>
-              <button type="button" onClick={() => setForm((p) => ({ ...p, lessonType: 'ecole' }))} className={'px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ' + (form.lessonType === 'ecole' ? 'guitar-gradient text-white border-transparent' : 'border-border-subtle hover:bg-surface-overlay')}>
-                Ecole de musique
+              <button type="button" onClick={() => setForm((p) => ({ ...p, lessonType: 'école' }))} className={'px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ' + (form.lessonType === 'école' ? 'guitar-gradient text-white border-transparent' : 'border-border-subtle hover:bg-surface-overlay')}>
+                École de musique
               </button>
             </div>
-            {form.lessonType === 'ecole' && (
+            {form.lessonType === 'école' && (
               <div>
-                <label className="block text-sm text-muted-foreground mb-1.5">Nom de l ecole</label>
-                <input value={form.schoolName} onChange={update('schoolName')} placeholder="Ex: Ecole de musique de Lyon..." list="schools-list" className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
+                <label className="block text-sm text-muted-foreground mb-1.5">Nom de l école</label>
+                <input value={form.schoolName} onChange={update('schoolName')} placeholder="Ex: École de musique de Lyon..." list="schools-list" className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
                 <datalist id="schools-list">{knownSchools.map((s) => <option key={s} value={s} />)}</datalist>
                 {knownSchools.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2">
@@ -173,12 +173,12 @@ export default function AddStudentModal({ teacherId, student, onClose, onCreated
 
           <div>
             <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3">Remarques</p>
-            <textarea value={form.notes} onChange={update('notes')} rows={3} placeholder="Notes privees sur l eleve..." className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600 resize-none" />
+            <textarea value={form.notes} onChange={update('notes')} rows={3} placeholder="Notes privees sur l élève..." className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600 resize-none" />
           </div>
 
           {error && <p className="text-sm text-guitar-400 bg-guitar-600/10 border border-guitar-600/20 rounded-lg px-3 py-2">{error}</p>}
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">Annuler</button>
+            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">Annulér</button>
             <button type="submit" disabled={submitting} className="flex-1 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-60 flex items-center justify-center gap-2">
               {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : (isEdit ? 'Enregistrer' : 'Ajouter')}
             </button>

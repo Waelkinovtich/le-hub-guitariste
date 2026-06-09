@@ -36,7 +36,7 @@ export default function SettingsPage() {
   return (
     <div className="p-6 sm:p-8 max-w-2xl">
       <header className="mb-8">
-        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Reglages</h1>
+        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Réglages</h1>
         <p className="text-muted-foreground mt-1">Personnalisez votre espace professeur</p>
       </header>
 

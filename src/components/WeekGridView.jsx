@@ -101,14 +101,14 @@ export default function WeekGridView({ weekStart, lessons, onStatus, onEdit, onD
                     {lesson.lessonTime?.slice(0,5)}
                   </p>
                   <p className="text-[11px] leading-tight truncate text-foreground font-medium">
-                    {lesson.studentName || 'Eleve'}
+                    {lesson.studentName || 'Élève'}
                   </p>
                   {height >= 60 && (
                     <p className="text-[10px] text-muted-foreground truncate">{lesson.topic}</p>
                   )}
                   {height >= 80 && (
                     <div className="flex gap-1 mt-1">
-                      <button onClick={(e) => { e.stopPropagation(); onStatus(lesson) }} className="p-0.5 rounded hover:bg-white/10" title="Emargement">
+                      <button onClick={(e) => { e.stopPropagation(); onStatus(lesson) }} className="p-0.5 rounded hover:bg-white/10" title="Émargement">
                         <ClipboardCheck className="w-3 h-3" style={{ color: statusInfo.color }} />
                       </button>
                       <button onClick={(e) => { e.stopPropagation(); onEdit(lesson) }} className="p-0.5 rounded hover:bg-white/10" title="Modifier">

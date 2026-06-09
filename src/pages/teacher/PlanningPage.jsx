@@ -5,7 +5,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import { fetchLessonsInRange } from '../../services/lessons'
 import { startOfWeek, toISODate } from '../../utils/format'
-import { getPeriodes, getCurrentPeriode } from '../../utils/vacances'
+import { getPériodes, getCurrentPériode } from '../../utils/vacances'
 import AddLessonModal from '../../components/AddLessonModal'
 import LessonStatusModal from '../../components/LessonStatusModal'
 import { getStatusInfo } from '../../utils/lessonStatus'
@@ -15,7 +15,7 @@ import WeekGridView from "../../components/WeekGridView"
 import MonthView from '../../components/MonthView'
 
 const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
-const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: 'Mois' }, { value: 'periode', label: 'Periode scolaire' }, { value: 'annee', label: 'Année' }]
+const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: 'Mois' }, { value: 'période', label: 'Période scolaire' }, { value: 'année', label: 'Année' }]
 
 export default function PlanningPage() {
   const { user } = useAuth()
@@ -23,10 +23,10 @@ export default function PlanningPage() {
   const [view, setView] = useState('semaine')
   const [weekOffset, setWeekOffset] = useState(0)
   const [monthOffset, setMonthOffset] = useState(0)
-  const [periodeIndex, setPeriodeIndex] = useState(() => {
-    const periodes = getPeriodes(zone)
-    const current = getCurrentPeriode(zone)
-    return periodes.findIndex((p) => p.nom === current.nom)
+  const [périodeIndex, setPériodeIndex] = useState(() => {
+    const périodes = getPériodes(zone)
+    const current = getCurrentPériode(zone)
+    return périodes.findIndex((p) => p.nom === current.nom)
   })
   const [selectedDay, setSelectedDay] = useState(null)
   const [showAddForm, setShowAddForm] = useState(false)
@@ -34,7 +34,7 @@ export default function PlanningPage() {
   const [statusLesson, setStatusLesson] = useState(null)
   const [deleteLessonItem, setDeleteLessonItem] = useState(null)
 
-  const periodes = useMemo(() => getPeriodes(zone), [zone])
+  const périodes = useMemo(() => getPériodes(zone), [zone])
 
   const weekStart = useMemo(() => {
     const base = startOfWeek()
@@ -63,15 +63,15 @@ export default function PlanningPage() {
       const to = new Date(year, month + 1, 0); to.setDate(to.getDate() + 7)
       return { from: toISODate(from), to: toISODate(to) }
     }
-    if (view === 'periode') {
-      const p = periodes[periodeIndex] ?? periodes[0]
+    if (view === 'période') {
+      const p = périodes[périodeIndex] ?? périodes[0]
       return { from: p.debut, to: p.fin }
     }
-    if (view === 'annee') {
-      return { from: periodes[0].debut, to: periodes[periodes.length - 1].fin }
+    if (view === 'année') {
+      return { from: périodes[0].debut, to: périodes[périodes.length - 1].fin }
     }
     return { from: toISODate(weekStart), to: toISODate(weekEnd) }
-  }, [view, monthDate, weekStart, weekEnd, periodes, periodeIndex])
+  }, [view, monthDate, weekStart, weekEnd, périodes, périodeIndex])
 
   const load = useCallback(() => {
     return fetchLessonsInRange({ teacherId: user.id, from: range.from, to: range.to })
@@ -88,10 +88,10 @@ export default function PlanningPage() {
 
   const headerLabel = useMemo(() => {
     if (view === 'mois') return monthLabel
-    if (view === 'periode') return (periodes[periodeIndex] ?? periodes[0]).nom
-    if (view === 'annee') return 'Année scolaire 2025-2026'
+    if (view === 'période') return (périodes[périodeIndex] ?? périodes[0]).nom
+    if (view === 'année') return 'Année scolaire 2025-2026'
     return weekLabel
-  }, [view, monthLabel, periodes, periodeIndex, weekLabel])
+  }, [view, monthLabel, périodes, périodeIndex, weekLabel])
 
   const weekDays = useMemo(() => {
     return days.map((label, i) => {
@@ -138,11 +138,11 @@ export default function PlanningPage() {
         ))}
       </div>
 
-      {view === 'periode' && (
+      {view === 'période' && (
         <div className="flex gap-2 mb-4 flex-wrap">
-          {periodes.map((p, i) => (
-            <button key={p.nom} onClick={() => { setPeriodeIndex(i); setSelectedDay(null) }}
-              className={'px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ' + (periodeIndex === i ? 'bg-guitar-600/20 text-guitar-400 border-guitar-600/40' : 'border-border-subtle hover:bg-surface-overlay text-muted-foreground')}>
+          {périodes.map((p, i) => (
+            <button key={p.nom} onClick={() => { setPériodeIndex(i); setSelectedDay(null) }}
+              className={'px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ' + (périodeIndex === i ? 'bg-guitar-600/20 text-guitar-400 border-guitar-600/40' : 'border-border-subtle hover:bg-surface-overlay text-muted-foreground')}>
               {p.nom}
             </button>
           ))}
@@ -153,7 +153,7 @@ export default function PlanningPage() {
         <div className="flex items-center justify-between mb-6">
           <button onClick={() => { view === 'mois' ? setMonthOffset((m) => m - 1) : setWeekOffset((w) => w - 1); setSelectedDay(null) }} className="flex items-center gap-1 px-3 py-2 rounded-xl border border-border-subtle text-sm hover:bg-surface-overlay transition-colors">
             <ChevronLeft className="w-4 h-4" />
-            Precedent
+            Précédent
           </button>
           {(weekOffset !== 0 || monthOffset !== 0 || selectedDay) && (
             <button onClick={() => { setWeekOffset(0); setMonthOffset(0); setSelectedDay(null) }} className="px-3 py-2 rounded-xl border border-guitar-600/40 text-guitar-400 text-sm hover:bg-guitar-600/10 transition-colors">
@@ -187,7 +187,7 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {view === 'annee' && !selectedDay && (
+      {view === 'année' && !selectedDay && (
         loading ? null : (
           <YearView
             lessons={lessons ?? []}
@@ -208,7 +208,7 @@ export default function PlanningPage() {
             </button>
           )}
           {loading ? <LoadingBlock label="Chargement du planning" /> : error ? <ErrorBlock message={error} onRetry={reload} /> : displayedLessons.length === 0 ? (
-            <EmptyBlock message="Aucun cours sur cette periode." />
+            <EmptyBlock message="Aucun cours sur cette période." />
           ) : (
             <div className="space-y-3">
               {displayedLessons.map((lesson) => {
@@ -220,7 +220,7 @@ export default function PlanningPage() {
                       <p className="text-2xl font-semibold">{lesson.timeLabel}</p>
                     </div>
                     <div className="flex-1">
-                      <h3 className="font-semibold text-lg">{lesson.studentName || 'Eleve'}</h3>
+                      <h3 className="font-semibold text-lg">{lesson.studentName || 'Élève'}</h3>
                       <p className="text-muted-foreground mt-1">{lesson.topic}</p>
                       {lesson.notes && <p className="text-xs text-muted-foreground mt-1 italic">{lesson.notes}</p>}
                       {lesson.absenceReason && <p className="text-xs mt-1 italic" style={{ color: statusInfo.color }}>Motif : {lesson.absenceReason}</p>}
@@ -234,12 +234,12 @@ export default function PlanningPage() {
                       </span>
                       {lesson.recurrenceGroup && (
                         <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-blue-500/15 text-blue-400 border border-blue-500/25">
-                          Recurrent
+                          Récurrent
                         </span>
                       )}
                     </div>
                     <div className="flex gap-2 self-start sm:self-center">
-                      <button onClick={() => setStatusLesson(lesson)} title="Emargement" className="p-2 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors text-guitar-400">
+                      <button onClick={() => setStatusLesson(lesson)} title="Émargement" className="p-2 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors text-guitar-400">
                         <ClipboardCheck className="w-4 h-4" />
                       </button>
                       <button onClick={() => setEditLesson(lesson)} title="Modifier" className="p-2 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors">

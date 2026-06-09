@@ -20,41 +20,41 @@ export default function RattrapagePage() {
   const load = useCallback(() => fetchCancelledLessons({ teacherId: user.id }), [user.id])
   const { data: lessons, loading, error, reload } = useFetch(load, [user.id])
 
-  const { global: globalStats, parEcole, parEleve } = useMemo(() => {
+  const { global: globalStats, parÉcole, parÉlève } = useMemo(() => {
     const all = lessons ?? []
-    const annules = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu')
-    const rattrapes = all.filter((l) => l.status === 'rattrape' && l.lessonType !== 'cesu')
-    const annulesCesu = all.filter((l) => l.status === 'annule_prof' && l.lessonType === 'cesu')
+    const annulés = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu')
+    const rattrapés = all.filter((l) => l.status === 'rattrape' && l.lessonType !== 'cesu')
+    const annulésCesu = all.filter((l) => l.status === 'annule_prof' && l.lessonType === 'cesu')
 
-    let totalAnnule = 0
-    let totalRattrape = 0
-    const ecoles = {}
-    const eleves = {}
+    let totalAnnulé = 0
+    let totalRattrapé = 0
+    const écoles = {}
+    const élèves = {}
 
-    annules.forEach((l) => {
-      totalAnnule += l.durationMinutes ?? 0
-      const ecole = l.lessonType === 'cesu' ? 'Cours particuliers (CESU)' : (l.schoolName || 'Ecole de musique')
-      if (!ecoles[ecole]) ecoles[ecole] = { annule: 0, rattrape: 0 }
-      ecoles[ecole].annule += l.durationMinutes ?? 0
-      const nom = l.studentName || 'Eleve'
-      if (!eleves[nom]) eleves[nom] = { annule: 0, rattrape: 0, studentId: l.studentId }
-      eleves[nom].annule += l.durationMinutes ?? 0
+    annulés.forEach((l) => {
+      totalAnnulé += l.durationMinutes ?? 0
+      const école = l.lessonType === 'cesu' ? 'Cours particuliers (CESU)' : (l.schoolName || 'École de musique')
+      if (!écoles[école]) écoles[école] = { annulé: 0, rattrapé: 0 }
+      écoles[école].annulé += l.durationMinutes ?? 0
+      const nom = l.studentName || 'Élève'
+      if (!élèves[nom]) élèves[nom] = { annulé: 0, rattrapé: 0, studentId: l.studentId }
+      élèves[nom].annulé += l.durationMinutes ?? 0
     })
 
-    rattrapes.forEach((l) => {
-      totalRattrape += l.durationMinutes ?? 0
-      const ecole = l.student?.schoolName || 'Cours particuliers'
-      if (!ecoles[ecole]) ecoles[ecole] = { annule: 0, rattrape: 0 }
-      ecoles[ecole].rattrape += l.durationMinutes ?? 0
-      const nom = l.studentName || 'Eleve'
-      if (!eleves[nom]) eleves[nom] = { annule: 0, rattrape: 0, studentId: l.studentId }
-      eleves[nom].rattrape += l.durationMinutes ?? 0
+    rattrapés.forEach((l) => {
+      totalRattrapé += l.durationMinutes ?? 0
+      const école = l.student?.schoolName || 'Cours particuliers'
+      if (!écoles[école]) écoles[école] = { annulé: 0, rattrapé: 0 }
+      écoles[école].rattrapé += l.durationMinutes ?? 0
+      const nom = l.studentName || 'Élève'
+      if (!élèves[nom]) élèves[nom] = { annulé: 0, rattrapé: 0, studentId: l.studentId }
+      élèves[nom].rattrapé += l.durationMinutes ?? 0
     })
 
     return {
-      global: { annule: totalAnnule, rattrape: totalRattrape, restant: totalAnnule - totalRattrape },
-      parEcole: Object.entries(ecoles).map(([nom, v]) => ({ nom, ...v, restant: v.annule - v.rattrape })),
-      parEleve: Object.entries(eleves).map(([nom, v]) => ({ nom, ...v, restant: v.annule - v.rattrape })),
+      global: { annulé: totalAnnulé, rattrapé: totalRattrapé, restant: totalAnnulé - totalRattrapé },
+      parÉcole: Object.entries(écoles).map(([nom, v]) => ({ nom, ...v, restant: v.annulé - v.rattrapé })),
+      parÉlève: Object.entries(élèves).map(([nom, v]) => ({ nom, ...v, restant: v.annulé - v.rattrapé })),
     }
   }, [lessons])
 
@@ -77,11 +77,11 @@ export default function RattrapagePage() {
           {/* Compteur global */}
           <div className="grid grid-cols-3 gap-4 mb-8">
             <div className="glass-panel rounded-2xl p-5 text-center">
-              <p className="text-3xl font-bold text-guitar-400">{minutesToLabel(globalStats.annule)}</p>
+              <p className="text-3xl font-bold text-guitar-400">{minutesToLabel(globalStats.annulé)}</p>
               <p className="text-sm text-muted-foreground mt-1">Total annulé</p>
             </div>
             <div className="glass-panel rounded-2xl p-5 text-center">
-              <p className="text-3xl font-bold text-green-400">{minutesToLabel(globalStats.rattrape)}</p>
+              <p className="text-3xl font-bold text-green-400">{minutesToLabel(globalStats.rattrapé)}</p>
               <p className="text-sm text-muted-foreground mt-1">Déjà rattrapé</p>
             </div>
             <div className="glass-panel rounded-2xl p-5 text-center">
@@ -91,16 +91,16 @@ export default function RattrapagePage() {
           </div>
 
           {/* Par école */}
-          {parEcole.length > 0 && (
+          {parÉcole.length > 0 && (
             <section className="mb-8">
-              <h2 className="text-lg font-semibold mb-3">Par ecole</h2>
+              <h2 className="text-lg font-semibold mb-3">Par école</h2>
               <div className="space-y-3">
-                {parEcole.map((e) => (
+                {parÉcole.map((e) => (
                   <div key={e.nom} className="glass-panel rounded-xl p-4 flex items-center justify-between gap-4">
                     <p className="font-medium">{e.nom}</p>
                     <div className="flex gap-4 text-sm">
-                      <span className="text-guitar-400">{minutesToLabel(e.annule)} annules</span>
-                      <span className="text-green-400">{minutesToLabel(e.rattrape)} rattrapes</span>
+                      <span className="text-guitar-400">{minutesToLabel(e.annulé)} annulés</span>
+                      <span className="text-green-400">{minutesToLabel(e.rattrapé)} rattrapés</span>
                       <span className="text-amber-400 font-semibold">{minutesToLabel(e.restant)} restants</span>
                     </div>
                   </div>
@@ -110,16 +110,16 @@ export default function RattrapagePage() {
           )}
 
           {/* Par élève */}
-          {parEleve.length > 0 && (
+          {parÉlève.length > 0 && (
             <section className="mb-8">
-              <h2 className="text-lg font-semibold mb-3">Par eleve</h2>
+              <h2 className="text-lg font-semibold mb-3">Par élève</h2>
               <div className="space-y-3">
-                {parEleve.map((e) => (
+                {parÉlève.map((e) => (
                   <div key={e.nom} className="glass-panel rounded-xl p-4 flex items-center justify-between gap-4">
                     <p className="font-medium">{e.nom}</p>
                     <div className="flex gap-4 text-sm">
-                      <span className="text-guitar-400">{minutesToLabel(e.annule)} annules</span>
-                      <span className="text-green-400">{minutesToLabel(e.rattrape)} rattrapes</span>
+                      <span className="text-guitar-400">{minutesToLabel(e.annulé)} annulés</span>
+                      <span className="text-green-400">{minutesToLabel(e.rattrapé)} rattrapés</span>
                       <span className="text-amber-400 font-semibold">{minutesToLabel(e.restant)} restants</span>
                     </div>
                   </div>
@@ -128,12 +128,12 @@ export default function RattrapagePage() {
             </section>
           )}
 
-          {parEleve.length === 0 && <EmptyBlock message="Aucun cours annule pour le moment." />}
+          {parÉlève.length === 0 && <EmptyBlock message="Aucun cours annulé pour le moment." />}
 
           {/* Détail des cours annulés */}
           {(lessons ?? []).length > 0 && (
             <section>
-              <h2 className="text-lg font-semibold mb-3">Detail des cours annules</h2>
+              <h2 className="text-lg font-semibold mb-3">Detail des cours annulés</h2>
               <div className="space-y-2">
                 {(lessons ?? []).map((l) => {
                   const raison = getRaisonLabel(l.cancelReason)

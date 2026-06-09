@@ -4,13 +4,13 @@ import { updateLessonStatus } from '../services/lessons'
 import { LESSON_STATUSES, RAISONS_ANNULATION_PROF } from '../utils/lessonStatus'
 
 export default function LessonStatusModal({ lesson, onClose, onUpdated }) {
-  const [status, setStatus] = useState(lesson.status ?? 'planifie')
+  const [status, setStatus] = useState(lesson.status ?? 'planifié')
   const [absenceReason, setAbsenceReason] = useState(lesson.absenceReason ?? '')
   const [cancelReason, setCancelReason] = useState(lesson.cancelReason ?? '')
   const [submitting, setSubmitting] = useState(false)
 
   const needsAbsenceReason = ['absent', 'excuse'].includes(status)
-  const needsCancelReason = status === 'annule_prof'
+  const needsCancelReason = status === 'annulé_prof'
 
   const handleSubmit = async () => {
     setSubmitting(true)
@@ -35,7 +35,7 @@ export default function LessonStatusModal({ lesson, onClose, onUpdated }) {
       <button type="button" className="absolute inset-0 bg-void/80 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-md glass-panel rounded-2xl p-6 shadow-2xl border border-border">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-xl font-semibold">Emargement</h2>
+          <h2 className="text-xl font-semibold">Émargement</h2>
           <button type="button" onClick={onClose} className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors">
             <X className="w-5 h-5" />
           </button>
@@ -78,7 +78,7 @@ export default function LessonStatusModal({ lesson, onClose, onUpdated }) {
         )}
 
         <div className="flex gap-3">
-          <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">Annuler</button>
+          <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">Annulér</button>
           <button type="button" onClick={handleSubmit} disabled={submitting} className="flex-1 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-60 flex items-center justify-center gap-2">
             {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Enregistrer'}
           </button>

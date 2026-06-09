@@ -5,13 +5,13 @@ import { useFetch } from '../../hooks/useFetch'
 import { fetchLessonsInRange } from '../../services/lessons'
 import { fetchSchoolNames } from '../../services/students'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
-import { exportEmargementPDF } from '../../utils/exportPDF'
+import { exportÉmargementPDF } from '../../utils/exportPDF'
 
 const PERIODS = [
   { value: 'semaine', label: 'Cette semaine' },
   { value: 'mois', label: 'Ce mois' },
   { value: 'trimestre', label: 'Ce trimestre' },
-  { value: 'annee', label: 'Cette année' },
+  { value: 'année', label: 'Cette année' },
 ]
 
 function getRange(period) {
@@ -41,7 +41,7 @@ function getRange(period) {
   return { from: fmt(start), to: fmt(end), label: String(now.getFullYear()) }
 }
 
-export default function EmargementPage() {
+export default function ÉmargementPage() {
   const { user } = useAuth()
   const [period, setPeriod] = useState('mois')
   const [filterSchool, setFilterSchool] = useState('')
@@ -62,7 +62,7 @@ export default function EmargementPage() {
   const schools = data?.schools ?? []
 
   const handleExport = () => {
-    exportEmargementPDF({
+    exportÉmargementPDF({
       lessons,
       school: filterSchool || 'Tous',
       period: range.label,
@@ -73,7 +73,7 @@ export default function EmargementPage() {
   const presents = lessons.filter((l) => l.status === 'present').length
   const absents = lessons.filter((l) => l.status === 'absent').length
   const excuses = lessons.filter((l) => l.status === 'excuse').length
-  const annules = lessons.filter((l) => l.status === 'annule_prof').length
+  const annulés = lessons.filter((l) => l.status === 'annulé_prof').length
   const taux = lessons.length > 0 ? Math.round((presents / lessons.length) * 100) : 0
 
   return (
@@ -139,8 +139,8 @@ export default function EmargementPage() {
                 </thead>
                 <tbody>
                   {lessons.map((lesson) => {
-                    const colors = { present: '#27ae60', absent: '#e74c3c', excuse: '#e67e22', annule_prof: '#9b59b6', planifie: '#7f8c8d' }
-                    const labels = { present: 'Présent', absent: 'Absent', excuse: 'Excusé', annule_prof: 'Annulé', planifie: 'Planifié' }
+                    const colors = { present: '#27ae60', absent: '#e74c3c', excuse: '#e67e22', annulé_prof: '#9b59b6', planifié: '#7f8c8d' }
+                    const labels = { present: 'Présent', absent: 'Absent', excuse: 'Excusé', annulé_prof: 'Annulé', planifié: 'Planifié' }
                     const color = colors[lesson.status] ?? '#7f8c8d'
                     return (
                       <tr key={lesson.id} className="border-b border-border-subtle last:border-0">

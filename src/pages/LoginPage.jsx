@@ -14,7 +14,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (user) {
-      navigate(user.role === 'teacher' ? '/professeur' : '/eleve', { replace: true })
+      navigate(user.role === 'teacher' ? '/professeur' : '/élève', { replace: true })
     }
   }, [user, navigate])
 
@@ -25,7 +25,7 @@ export default function LoginPage() {
     const result = await login(email, password, role)
     setSubmitting(false)
     if (result.success) {
-      navigate(role === 'teacher' ? '/professeur' : '/eleve')
+      navigate(role === 'teacher' ? '/professeur' : '/élève')
     } else {
       setError(result.error)
     }
@@ -60,7 +60,7 @@ export default function LoginPage() {
               Votre studio pédagogique, <span className="text-gradient-guitar italic">en ligne</span>
             </h1>
             <p className="text-muted-foreground text-lg leading-relaxed">
-              Gérez vos élèves, planifiez vos cours et suivez la progression — connecté à Supabase.
+              Gérez vos élèves, planifiéz vos cours et suivez la progression — connecté à Supabase.
             </p>
           </div>
 
