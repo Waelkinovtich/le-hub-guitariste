@@ -39,7 +39,7 @@ export default function LessonStatusModal({ lesson, onClose, onUpdated }) {
       <button type="button" className="absolute inset-0 bg-void/80 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-md glass-panel rounded-2xl p-6 shadow-2xl border border-border">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-xl font-semibold">\u00c9margement</h2>
+          <h2 className="text-xl font-semibold">Émargement</h2>
           <button type="button" onClick={onClose} className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors">
             <X className="w-5 h-5" />
           </button>
