@@ -9,6 +9,7 @@ import PlanningPage from './pages/teacher/PlanningPage'
 import ExercisesPage from './pages/teacher/ExercisesPage'
 import StudentDetailPage from './pages/teacher/StudentDetailPage'
 import EmargementPage from './pages/teacher/EmargementPage'
+import SettingsPage from './pages/teacher/SettingsPage'
 import StudentDashboard from './pages/student/StudentDashboard'
 import StudentExercisesPage from './pages/student/StudentExercisesPage'
 import StudentProgressPage from './pages/student/StudentProgressPage'
@@ -46,6 +47,7 @@ function AppShell() {
           <Route path="planning" element={<PlanningPage />} />
           <Route path="emargement" element={<EmargementPage />} />
           <Route path="exercices" element={<ExercisesPage />} />
+          <Route path="reglages" element={<SettingsPage />} />
         </Route>
         <Route path="/eleve" element={<ProtectedRoute requiredRole="student"><Layout /></ProtectedRoute>}>
           <Route index element={<StudentDashboard />} />

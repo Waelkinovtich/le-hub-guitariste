@@ -140,6 +140,7 @@ export function AuthProvider({ children }) {
         authError,
         login,
         logout,
+        setUser,
         isTeacher: user?.role === 'teacher',
         isSupabaseConfigured,
       }}
