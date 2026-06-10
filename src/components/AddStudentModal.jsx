@@ -27,7 +27,7 @@ export default function AddStudentModal({ teacherId, student, onClose, onCreated
     e.preventDefault()
     setError('')
     if (!form.firstName.trim() || !form.lastName.trim()) { setError('Le prenom et le nom sont obligatoires.'); return }
-    if (form.lessonType === 'école' && !form.schoolName.trim()) { setError('Precisez le nom de l école.'); return }
+    if (form.lessonType === 'ecole' && !form.schoolName.trim()) { setError('Precisez le nom de l école.'); return }
     setSubmitting(true)
     try {
       const result = isEdit ? await updateStudent(student.id, form) : await createStudent(teacherId, form)
@@ -131,11 +131,11 @@ export default function AddStudentModal({ teacherId, student, onClose, onCreated
               <button type="button" onClick={() => setForm((p) => ({ ...p, lessonType: 'particulier' }))} className={'px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ' + (form.lessonType === 'particulier' ? 'guitar-gradient text-white border-transparent' : 'border-border-subtle hover:bg-surface-overlay')}>
                 Cours particulier (CESU)
               </button>
-              <button type="button" onClick={() => setForm((p) => ({ ...p, lessonType: 'école' }))} className={'px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ' + (form.lessonType === 'école' ? 'guitar-gradient text-white border-transparent' : 'border-border-subtle hover:bg-surface-overlay')}>
+              <button type="button" onClick={() => setForm((p) => ({ ...p, lessonType: 'ecole' }))} className={'px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ' + (form.lessonType === 'ecole' ? 'guitar-gradient text-white border-transparent' : 'border-border-subtle hover:bg-surface-overlay')}>
                 École de musique
               </button>
             </div>
-            {form.lessonType === 'école' && (
+            {form.lessonType === 'ecole' && (
               <div>
                 <label className="block text-sm text-muted-foreground mb-1.5">Nom de l école</label>
                 <input value={form.schoolName} onChange={update('schoolName')} placeholder="Ex: École de musique de Lyon..." list="schools-list" className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />

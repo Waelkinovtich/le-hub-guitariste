@@ -4,19 +4,19 @@ import { useAuth } from '../context/AuthContext'
 
 const teacherLinks = [
   { to: '/professeur', icon: LayoutDashboard, label: 'Tableau de bord', end: true },
-  { to: '/professeur/élèves', icon: Users, label: '\u00c9l\u00e8ves' },
+  { to: '/professeur/eleves', icon: Users, label: '\u00c9l\u00e8ves' },
   { to: '/professeur/planning', icon: Calendar, label: 'Planning' },
   { to: '/professeur/emargement', icon: ClipboardCheck, label: '\u00c9margement' },
   { to: '/professeur/exercices', icon: BookOpen, label: 'Exercices' },
   { to: '/professeur/rattrapage', icon: RotateCcw, label: 'Rattrapage' },
-  { to: '/professeur/reglages', icon: Settings, label: 'Réglages' },
+  { to: '/professeur/reglages', icon: Settings, label: 'R\u00e9glages' },
 ]
 
 const studentLinks = [
-  { to: '/élève', icon: LayoutDashboard, label: 'Tableau de bord', end: true },
-  { to: '/élève/exercices', icon: ClipboardList, label: 'Mes exercices' },
-  { to: '/élève/progression', icon: TrendingUp, label: 'Progression' },
-  { to: '/élève/cours', icon: Calendar, label: 'Mes cours' },
+  { to: '/eleve', icon: LayoutDashboard, label: 'Tableau de bord', end: true },
+  { to: '/eleve/exercices', icon: ClipboardList, label: 'Mes exercices' },
+  { to: '/eleve/progression', icon: TrendingUp, label: 'Progression' },
+  { to: '/eleve/cours', icon: Calendar, label: 'Mes cours' },
 ]
 
 function NavItem({ to, icon: Icon, label, end }) {

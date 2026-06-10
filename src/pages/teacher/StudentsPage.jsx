@@ -132,10 +132,10 @@ export default function StudentsPage() {
             </thead>
             <tbody>
               {filtered.map((student) => {
-                const color = student.lessonType === 'école' ? getSchoolColor(student.schoolName, schools) : '#dc2626'
-                const label = student.lessonType === 'école' ? (student.schoolName || 'École') : 'CESU'
+                const color = student.lessonType === 'ecole' ? getSchoolColor(student.schoolName, schools) : '#dc2626'
+                const label = student.lessonType === 'ecole' ? (student.schoolName || 'École') : 'CESU'
                 return (
-                  <tr key={student.id} onClick={() => navigate('/professeur/élèves/' + student.id)} className="border-b border-border-subtle last:border-0 hover:bg-surface-overlay/50 transition-colors cursor-pointer">
+                  <tr key={student.id} onClick={() => navigate('/professeur/eleves/' + student.id)} className="border-b border-border-subtle last:border-0 hover:bg-surface-overlay/50 transition-colors cursor-pointer">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white" style={{ backgroundColor: color }}>

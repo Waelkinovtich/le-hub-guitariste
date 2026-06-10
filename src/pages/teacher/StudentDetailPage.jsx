@@ -49,7 +49,7 @@ export default function StudentDetailPage() {
     setDeleting(true)
     try {
       await deleteStudent(id)
-      navigate('/professeur/élèves')
+      navigate('/professeur/eleves')
     } catch (err) {
       alert('Erreur : ' + err.message)
       setDeleting(false)
@@ -61,14 +61,14 @@ export default function StudentDetailPage() {
   if (!data?.student) return <ErrorBlock message="Élève introuvable." />
 
   const { student, schools } = data
-  const color = student.lessonType === 'école' ? getSchoolColor(student.schoolName, schools) : '#dc2626'
-  const lessonLabel = student.lessonType === 'école' ? (student.schoolName || 'École de musique') : 'Cours particulier (CESU)'
+  const color = student.lessonType === 'ecole' ? getSchoolColor(student.schoolName, schools) : '#dc2626'
+  const lessonLabel = student.lessonType === 'ecole' ? (student.schoolName || 'École de musique') : 'Cours particulier (CESU)'
   const hasParent1 = student.parent1Name || student.parent1Phone || student.parent1Email
   const hasParent2 = student.parent2Name || student.parent2Phone || student.parent2Email
 
   return (
     <div className="p-6 sm:p-8 max-w-3xl space-y-4">
-      <button onClick={() => navigate('/professeur/élèves')} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
+      <button onClick={() => navigate('/professeur/eleves')} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
         <ArrowLeft className="w-4 h-4" />
         Retour aux élèves
       </button>
