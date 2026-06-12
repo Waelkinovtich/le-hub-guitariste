@@ -12,6 +12,7 @@ import EmargementPage from './pages/teacher/EmargementPage'
 import SettingsPage from './pages/teacher/SettingsPage'
 import RattrapagePage from './pages/teacher/RattrapagePage'
 import GroupesPage from './pages/groupes/GroupesPage'
+import GroupDetailPage from './pages/groupes/GroupDetailPage'
 import StudentDashboard from './pages/student/StudentDashboard'
 import StudentExercisesPage from './pages/student/StudentExercisesPage'
 import StudentProgressPage from './pages/student/StudentProgressPage'
@@ -49,6 +50,7 @@ function AppShell() {
           <Route path="planning" element={<PlanningPage />} />
           <Route path="emargement" element={<EmargementPage />} />
           <Route path="groupes" element={<GroupesPage />} />
+          <Route path="groupes/:id" element={<GroupDetailPage />} />
           <Route path="exercices" element={<ExercisesPage />} />
           <Route path="reglages" element={<SettingsPage />} />
           <Route path="rattrapage" element={<RattrapagePage />} />

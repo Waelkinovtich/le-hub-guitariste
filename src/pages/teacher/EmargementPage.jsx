@@ -3,6 +3,7 @@ import { FileDown } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import { fetchLessonsInRange } from '../../services/lessons'
+import { supabase } from '../../lib/supabase'
 import { fetchSchoolNames } from '../../services/students'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
 import { exportÉmargementPDF } from '../../utils/exportPDF'
@@ -41,10 +42,20 @@ function getRange(period) {
   return { from: fmt(start), to: fmt(end), label: String(now.getFullYear()) }
 }
 
+function fmtDuree(min) {
+  if (!min) return ''
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  if (h === 0) return m + ' min'
+  if (m === 0) return h + 'h'
+  return h + 'h' + m
+}
+
 export default function ÉmargementPage() {
   const { user } = useAuth()
   const [period, setPeriod] = useState('mois')
   const [filterSchool, setFilterSchool] = useState('')
+  const [statusOverrides, setStatusOverrides] = useState({})
 
   const range = getRange(period)
 
@@ -58,7 +69,9 @@ export default function ÉmargementPage() {
 
   const { data, loading, error } = useFetch(load, [user.id, period])
 
-  const lessons = (data?.lessons ?? []).filter((l) => !filterSchool || l.student?.school_name === filterSchool || (filterSchool === 'particulier' && !l.student?.school_name))
+  const allItems = (data?.lessons ?? []).filter((l) => !filterSchool || l.schoolName === filterSchool || l.student?.school_name === filterSchool || (filterSchool === 'particulier' && !l.student?.school_name && !l.isGroup))
+  const lessons = allItems.filter((l) => !l.isGroup)
+  const groupSessions = allItems.filter((l) => l.isGroup)
   const schools = data?.schools ?? []
 
   const handleExport = () => {
@@ -148,7 +161,7 @@ export default function ÉmargementPage() {
                         <td className="px-4 py-3">{lesson.timeLabel}</td>
                         <td className="px-4 py-3 font-medium">{lesson.studentName}</td>
                         <td className="px-4 py-3 text-muted-foreground">{lesson.topic}</td>
-                        <td className="px-4 py-3 text-muted-foreground">{lesson.durationMinutes} min</td>
+                        <td className="px-4 py-3 text-muted-foreground">{fmtDuree(lesson.durationMinutes)}</td>
                         <td className="px-4 py-3">
                           <span className="inline-block px-2 py-1 rounded-full text-xs font-medium border" style={{ backgroundColor: color + '20', borderColor: color + '50', color }}>
                             {labels[lesson.status] ?? lesson.status}
@@ -159,6 +172,49 @@ export default function ÉmargementPage() {
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {groupSessions.length > 0 && (
+            <div className="mt-8">
+              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">🎶 Seances de groupe</h2>
+              <div className="glass-panel rounded-2xl overflow-hidden overflow-x-auto">
+                <table className="w-full text-sm min-w-[600px]">
+                  <thead>
+                    <tr className="border-b border-border-subtle text-left text-muted-foreground">
+                      <th className="px-4 py-3 font-medium">Date</th>
+                      <th className="px-4 py-3 font-medium">Heure</th>
+                      <th className="px-4 py-3 font-medium">Groupe</th>
+                      <th className="px-4 py-3 font-medium">Duree</th>
+                      <th className="px-4 py-3 fonmedium">Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupSessions.map((g) => {
+                      const gColors = { prevue: '#7f8c8d', effectuee: '#27ae60', annulee: '#9b59b6' }
+                      const gLabels = { prevue: 'Prevue', effectuee: 'Effectuee', annulee: 'Annulee' }
+                      const gStatus = statusOverrides[g.sessionId] || g.sessionStatus || 'prevue'
+                      const color = gColors[gStatus] ?? '#7f8c8d'
+                      return (
+                        <tr key={g.id} className="border-b border-border-subtle last:border-0">
+                          <td className="px-4 py-3">{g.dateLabel}</td>
+                          <td className="px-4 py-3">{g.timeLabel}</td>
+                          <td className="px-4 py-3 font-medium">{g.topic}</td>
+                          <td className="px-4 py-3 text-muted-foreground">{fmtDuree(g.durationMinutes)}</td>
+                          <td className="px-4 py-3">
+                            <select value={gStatus} onChange={async (e) => { const v = e.target.value; setStatusOverrides((prev) => ({ ...prev, [g.sessionId]: v })); await supabase.from('group_sessions').update({ status: v }).eq('id', g.sessionId) }}
+                              className="px-2 py-1 rounded-lg text-xs font-medium border bg-surface-raised outline-none" style={{ borderColor: color + '50', color }}>
+                              <option value="prevue">Prevue</option>
+                              <option value="effectuee">Effectuee</option>
+                              <option value="annulee">Annulee</option>
+                            </select>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </>

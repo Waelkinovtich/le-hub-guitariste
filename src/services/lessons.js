@@ -59,7 +59,14 @@ export async function fetchLessonsInRange({ teacherId, from, to }) {
   if (teacherId) query = query.eq('teacher_id', teacherId)
   const { data, error } = await query
   if (error) throw new Error(error.message)
-  return (data ?? []).map(mapLesson)
+  const lessons = (data ?? []).map(mapLesson)
+  let groupSessions = []
+  try {
+    groupSessions = await fetchGroupSessionsInRange({ teacherId, from, to })
+  } catch (e) {
+    console.error('Erreur seances groupe:', e)
+  }
+  return [...lessons, ...groupSessions]
 }
 
 export function buildNextLessonByStudent(lessons) {
@@ -142,4 +149,47 @@ export async function countRecurrenceGroup(groupId, fromDate) {
   const { count, error } = await query
   if (error) throw new Error(error.message)
   return count ?? 0
+}
+
+export async function fetchGroupSessionsInRange({ teacherId, from, to }) {
+  const { data: groups, error: gErr } = await supabase
+    .from('music_groups')
+    .select('id, name, type, duration_minutes, school_name')
+    .eq('teacher_id', teacherId)
+  if (gErr) throw new Error(gErr.message)
+  if (!groups || groups.length === 0) return []
+
+  const groupMap = {}
+  groups.forEach(g => { groupMap[g.id] = g })
+  const groupIds = groups.map(g => g.id)
+
+  const { data: sessions, error: sErr } = await supabase
+    .from('group_sessions')
+    .select('id, group_id, session_date, session_time, duration_minutes, status')
+    .in('group_id', groupIds)
+    .gte('session_date', from)
+    .lte('session_date', to)
+    .order('session_date')
+  if (sErr) throw new Error(sErr.message)
+
+  return (sessions ?? []).map(s => {
+    const g = groupMap[s.group_id] || {}
+    return {
+      id: 'group-' + s.id,
+      isGroup: true,
+      groupId: s.group_id,
+      sessionId: s.id,
+      lessonDate: s.session_date,
+      lessonTime: s.session_time,
+      durationMinutes: s.duration_minutes || g.duration_minutes,
+      topic: g.name,
+      status: 'planifie',
+      studentName: g.name,
+      groupType: g.type,
+      sessionStatus: s.status || 'prevue',
+      schoolName: g.school_name ?? null,
+      dateLabel: formatLessonDateLabel(s.session_date),
+      timeLabel: formatTime(s.session_time),
+    }
+  })
 }
