@@ -17,6 +17,7 @@ export default function GroupesPage() {
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
+  const [counts, setCounts] = useState({})
 
   useEffect(() => { fetchGroups() }, [])
 
@@ -26,7 +27,16 @@ export default function GroupesPage() {
       .select('*')
       .eq('teacher_id', user.id)
       .order('created_at', { ascending: false })
-    if (!error) setGroups(data || [])
+    if (!error) {
+      setGroups(data || [])
+      const ids = (data || []).map(g => g.id)
+      if (ids.length > 0) {
+        const { data: mem } = await supabase.from('group_members').select('group_id').in('group_id', ids)
+        const c = {}
+        ;(mem || []).forEach(m => { c[m.group_id] = (c[m.group_id] || 0) + 1 })
+        setCounts(c)
+      }
+    }
     setLoading(false)
   }
 
@@ -71,7 +81,11 @@ export default function GroupesPage() {
                   <span className="text-2xl">{t.icon}</span>
                   <div>
                     <p className="font-medium">{group.name}</p>
-                    <span className={"text-xs px-2 py-0.5 rounded-full " + t.color}>{t.label}</span>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className={"text-xs px-2 py-0.5 rounded-full " + t.color}>{t.label}</span>
+                      {group.school_name ? <span className="text-xs text-muted">🏫 {group.school_name}</span> : null}
+                      <span className="text-xs text-muted">👥 {counts[group.id] || 0} participant{(counts[group.id] || 0) > 1 ? 's' : ''}</span>
+                    </div>
                   </div>
                 </div>
                 <button

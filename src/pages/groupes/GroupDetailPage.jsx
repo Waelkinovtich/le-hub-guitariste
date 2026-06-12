@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import { ArrowLeft, Users, Plus, Trash2, Calendar } from 'lucide-react'
+import { ArrowLeft, Users, Plus, Trash2, Calendar, Pencil } from 'lucide-react'
+import CreateGroupModal from './CreateGroupModal'
 import AddMemberModal from './AddMemberModal'
 import AddSessionModal from './AddSessionModal'
 import GroupAttendanceModal from './GroupAttendanceModal'
@@ -33,6 +34,7 @@ export default function GroupDetailPage() {
   const [showMember, setShowMember] = useState(false)
   const [showSession, setShowSession] = useState(false)
   const [attendanceSession, setAttendanceSession] = useState(null)
+  const [showEdit, setShowEdit] = useState(false)
 
   useEffect(() => {
     if (id) loadData()
@@ -78,15 +80,20 @@ export default function GroupDetailPage() {
               Chaque {DAYS[group.recurrence_day]} a {group.recurrence_time} - {fmt(group.duration_minutes)}
             </p>
           )}
+          {group.school_name ? <p className="text-sm text-muted mt-1">🏫 {group.school_name}</p> : null}
           {group.description ? <p className="text-sm text-muted mt-1">{group.description}</p> : null}
         </div>
+        <button onClick={() => setShowEdit(true)}
+          className="flex items-center gap-1 text-xs px-3 py-2 rounded-xl border border-border-subtle text-muted hover:text-foreground hover:bg-surface-overlay transition-all">
+          <Pencil className="w-3 h-3" /> Modifier
+        </button>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div className="rounded-xl border border-border-subtle bg-surface/50 p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-medium flex items-center gap-2">
-              <Users className="w-4 h-4" /> Membres ({members.length})
+              <Users className="w-4 h-4" /> Participants ({members.length})
             </h2>
             <button onClick={() => setShowMember(true)}
               className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-guitar-600 text-white hover:bg-guitar-700 transition-all">
@@ -94,7 +101,7 @@ export default function GroupDetailPage() {
             </button>
           </div>
           <div className="space-y-2">
-            {members.length === 0 && <p className="text-xs text-muted">Aucun membre</p>}
+            {members.length === 0 && <p className="text-xs text-muted">Aucun participant</p>}
             {members.map(m => (
               <div key={m.id} className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-surface-overlay">
                 <div>
@@ -138,6 +145,7 @@ export default function GroupDetailPage() {
       {showMember && <AddMemberModal groupId={id} onClose={() => setShowMember(false)} onAdded={loadData} />}
       {showSession && <AddSessionModal groupId={id} defaultDuration={group.duration_minutes} onClose={() => setShowSession(false)} onAdded={loadData} />}
       {attendanceSession && <GroupAttendanceModal session={attendanceSession} members={members} onClose={() => setAttendanceSession(null)} />}
+      {showEdit && <CreateGroupModal editGroup={group} onClose={() => setShowEdit(false)} onCreated={loadData} />}
     </div>
   )
 }

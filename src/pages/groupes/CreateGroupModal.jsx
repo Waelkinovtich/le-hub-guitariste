@@ -27,17 +27,17 @@ function getRecurringDates(dayOfWeek, startDate, endDate) {
   return dates
 }
 
-export default function CreateGroupModal({ onClose, onCreated, userId }) {
+export default function CreateGroupModal({ onClose, onCreated, userId, editGroup }) {
   const [form, setForm] = useState({
-    name: '',
-    type: 'cours_collectif',
-    description: '',
-    recurrence_day: '',
-    recurrence_time: '',
-    duration_minutes: 60,
-    start_date: '',
-    end_date: '',
-    school_name: '',
+    name: editGroup?.name || '',
+    type: editGroup?.type || 'cours_collectif',
+    description: editGroup?.description || '',
+    recurrence_day: editGroup?.recurrence_day !== null && editGroup?.recurrence_day !== undefined ? String(editGroup.recurrence_day) : '',
+    recurrence_time: editGroup?.recurrence_time || '',
+    duration_minutes: editGroup?.duration_minutes || 60,
+    start_date: editGroup?.start_date || '',
+    end_date: editGroup?.end_date || '',
+    school_name: editGroup?.school_name || '',
   })
   const [saving, setSaving] = useState(false)
   const [schools, setSchools] = useState([])
@@ -58,17 +58,28 @@ export default function CreateGroupModal({ onClose, onCreated, userId }) {
     if (!form.name.trim()) return
     setSaving(true)
 
-    const { data: group, error } = await supabase.from('music_groups').insert({
+    const payload = {
       name: form.name,
       type: form.type,
       description: form.description,
-      teacher_id: userId,
       recurrence_day: form.recurrence_day !== '' ? parseInt(form.recurrence_day) : null,
       recurrence_time: form.recurrence_time || null,
       duration_minutes: parseInt(form.duration_minutes),
       start_date: form.start_date || null,
       end_date: form.end_date || null,
       school_name: form.school_name || null,
+    }
+
+    if (editGroup) {
+      const { error: updErr } = await supabase.from('music_groups').update(payload).eq('id', editGroup.id)
+      setSaving(false)
+      if (!updErr) { onCreated(); onClose() }
+      return
+    }
+
+    const { data: group, error } = await supabase.from('music_groups').insert({
+      ...payload,
+      teacher_id: userId,
     }).select().single()
 
     if (!error && group && form.recurrence_day !== '' && form.start_date && form.end_date) {
@@ -94,7 +105,7 @@ export default function CreateGroupModal({ onClose, onCreated, userId }) {
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-surface rounded-2xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-display">Nouveau groupe</h2>
+          <h2 className="text-lg font-display">{editGroup ? "Modifier le groupe" : "Nouveau groupe"}</h2>
           <button onClick={onClose}><X className="w-5 h-5 text-muted" /></button>
         </div>
 
@@ -181,7 +192,7 @@ export default function CreateGroupModal({ onClose, onCreated, userId }) {
           </button>
           <button onClick={save} disabled={saving || !form.name.trim()}
             className="flex-1 px-4 py-2 rounded-xl bg-guitar-600 text-white text-sm font-medium hover:bg-guitar-700 disabled:opacity-50 transition-all">
-            {saving ? 'Enregistrement...' : 'Creer le groupe'}
+            {saving ? 'Enregistrement...' : (editGroup ? 'Enregistrer' : 'Creer le groupe')}
           </button>
         </div>
       </div>
