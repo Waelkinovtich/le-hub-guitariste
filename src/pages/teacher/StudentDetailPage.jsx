@@ -7,6 +7,7 @@ import { fetchTeacherStudents, deleteStudent, fetchSchoolNames } from '../../ser
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
 import AddStudentModal from '../../components/AddStudentModal'
 import { getSchoolColor } from '../../utils/schoolColors'
+import StudentGroupHistory from '../groupes/StudentGroupHistory'
 
 function ContactLine({ icon: Icon, value }) {
   if (!value) return null
@@ -119,6 +120,9 @@ export default function StudentDetailPage() {
             <span className="text-sm font-medium">{student.progress}%</span>
           </div>
         </div>
+      </Section>
+      <Section title="Participations aux groupes">
+        <StudentGroupHistory studentId={student.id} />
       </Section>
       <Section title="Contact élève">
         <div className="space-y-2">
