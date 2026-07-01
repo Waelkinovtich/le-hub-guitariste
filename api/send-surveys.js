@@ -74,18 +74,15 @@ function templateNouvelEleve(surveyUrl) {
 // ─── Email builder ────────────────────────────────────────────────────────────
 
 function buildRawEmail({ to, subject, html }) {
-  // RFC 2045 : le corps base64 doit être découpé en lignes de 76 chars max
-  const bodyB64 = Buffer.from(html, 'utf8').toString('base64').match(/.{1,76}/g).join('\r\n')
-
+  // Approche Google-style : HTML inline dans le body, enveloppe encodée en base64url
   const message = [
     `From: ${FROM_EMAIL}`,
     `To: ${to}`,
     `Subject: =?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`,
     'MIME-Version: 1.0',
-    'Content-Type: text/html; charset=UTF-8',
-    'Content-Transfer-Encoding: base64',
+    'Content-Type: text/html; charset=utf-8',
     '',
-    bodyB64,
+    html,
   ].join('\r\n')
 
   return Buffer.from(message, 'utf8').toString('base64url')
@@ -136,7 +133,8 @@ export default async function handler(req, res) {
 
       sent++
     } catch (e) {
-      errors.push({ tokenId, email, error: e.message })
+      const detail = e.response?.data?.error?.message ?? e.response?.data ?? e.message
+      errors.push({ tokenId, email, error: typeof detail === 'string' ? detail : JSON.stringify(detail) })
     }
   }
 
