@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const VERCEL_URL = 'https://hub-guitariste.vercel.app'
+const VERCEL_URL = 'https://le-hub-guitariste.vercel.app'
 const FROM_EMAIL = 'waelkens.f@gmail.com'
 
 // ─── Supabase (service role pour bypasser RLS sur update) ────────────────────
