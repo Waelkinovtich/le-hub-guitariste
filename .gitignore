@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+gmail-credentials.json
+gmail-token.json
+test-rls.mjs
+send-surveys.mjs

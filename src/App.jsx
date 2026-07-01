@@ -17,6 +17,10 @@ import StudentDashboard from './pages/student/StudentDashboard'
 import StudentExercisesPage from './pages/student/StudentExercisesPage'
 import StudentProgressPage from './pages/student/StudentProgressPage'
 import StudentLessonsPage from './pages/student/StudentLessonsPage'
+import SondagePage from './pages/SondagePage'
+import SchoolSchedulePage from './pages/SchoolSchedulePage'
+import SurveyResultsPage from './pages/SurveyResultsPage'
+import SendSurveyPage from './pages/SendSurveyPage'
 
 function ConfigWarning() {
   const { isSupabaseConfigured, authError } = useAuth()
@@ -55,12 +59,18 @@ function AppShell() {
           <Route path="reglages" element={<SettingsPage />} />
           <Route path="rattrapage" element={<RattrapagePage />} />
         </Route>
+        <Route path="/admin" element={<ProtectedRoute requiredRole="teacher"><Layout /></ProtectedRoute>}>
+          <Route path="ecoles" element={<SchoolSchedulePage />} />
+          <Route path="sondages" element={<SurveyResultsPage />} />
+          <Route path="envoyer-sondage" element={<SendSurveyPage />} />
+        </Route>
         <Route path="/eleve" element={<ProtectedRoute requiredRole="student"><Layout /></ProtectedRoute>}>
           <Route index element={<StudentDashboard />} />
           <Route path="exercices" element={<StudentExercisesPage />} />
           <Route path="progression" element={<StudentProgressPage />} />
           <Route path="cours" element={<StudentLessonsPage />} />
         </Route>
+        <Route path="/sondage/:token" element={<SondagePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>

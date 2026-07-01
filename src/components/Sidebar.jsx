@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Users, Calendar, BookOpen, LogOut, Guitar, ClipboardList, TrendingUp, ClipboardCheck, Settings, RotateCcw, Music2 } from 'lucide-react'
+import { LayoutDashboard, Users, Calendar, BookOpen, LogOut, Guitar, ClipboardList, TrendingUp, ClipboardCheck, Settings, RotateCcw, Music2, Send, FileText, School } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 const teacherLinks = [
@@ -11,6 +11,12 @@ const teacherLinks = [
   { to: '/professeur/exercices', icon: BookOpen, label: 'Exercices' },
   { to: '/professeur/rattrapage', icon: RotateCcw, label: 'Rattrapage' },
   { to: '/professeur/reglages', icon: Settings, label: 'R\u00e9glages' },
+]
+
+const adminLinks = [
+  { to: '/admin/envoyer-sondage', icon: Send, label: 'Envoyer sondage' },
+  { to: '/admin/sondages', icon: FileText, label: 'R\u00e9ponses sondage' },
+  { to: '/admin/ecoles', icon: School, label: 'Config \u00e9coles' },
 ]
 
 const studentLinks = [
@@ -47,8 +53,16 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 p-4 space-y-1">
+      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
         {links.map((link) => <NavItem key={link.to} {...link} />)}
+        {isTeacher && (
+          <>
+            <div className="pt-3 pb-1">
+              <p className="px-3 text-xs font-semibold text-muted uppercase tracking-wider">Sondages</p>
+            </div>
+            {adminLinks.map((link) => <NavItem key={link.to} {...link} />)}
+          </>
+        )}
       </nav>
 
       <div className="p-4 border-t border-border-subtle">

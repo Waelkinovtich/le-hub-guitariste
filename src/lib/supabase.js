@@ -30,3 +30,17 @@ export const supabase = createClient(
     },
   },
 )
+
+// Client sans session pour les pages publiques (sondage, etc.)
+// Toujours authentifié en tant que rôle anon, indépendamment de toute session utilisateur.
+export const supabasePublic = createClient(
+  supabaseUrl || 'https://placeholder.supabase.co',
+  supabaseAnonKey || 'placeholder-key',
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  },
+)
