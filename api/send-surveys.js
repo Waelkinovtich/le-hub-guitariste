@@ -1,4 +1,4 @@
-import { google } from 'googleapis'
+import nodemailer from 'nodemailer'
 import { createClient } from '@supabase/supabase-js'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -15,16 +15,23 @@ function getSupabase() {
   return createClient(url, key)
 }
 
-// ─── OAuth2 ───────────────────────────────────────────────────────────────────
+// ─── Transport nodemailer OAuth2 ──────────────────────────────────────────────
 
-function getGmailClient() {
+function getTransport() {
   const { GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN } = process.env
   if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) {
     throw new Error('Variables Gmail manquantes : GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN.')
   }
-  const oAuth2 = new google.auth.OAuth2(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET)
-  oAuth2.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN })
-  return google.gmail({ version: 'v1', auth: oAuth2 })
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      type: 'OAuth2',
+      user: FROM_EMAIL,
+      clientId: GMAIL_CLIENT_ID,
+      clientSecret: GMAIL_CLIENT_SECRET,
+      refreshToken: GMAIL_REFRESH_TOKEN,
+    },
+  })
 }
 
 // ─── Templates ────────────────────────────────────────────────────────────────
@@ -71,23 +78,6 @@ function templateNouvelEleve(surveyUrl) {
   }
 }
 
-// ─── Email builder ────────────────────────────────────────────────────────────
-
-function buildRawEmail({ to, subject, html }) {
-  // Approche Google-style : HTML inline dans le body, enveloppe encodée en base64url
-  const message = [
-    `From: ${FROM_EMAIL}`,
-    `To: ${to}`,
-    `Subject: =?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`,
-    'MIME-Version: 1.0',
-    'Content-Type: text/html; charset=utf-8',
-    '',
-    html,
-  ].join('\r\n')
-
-  return Buffer.from(message, 'utf8').toString('base64url')
-}
-
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
@@ -100,9 +90,9 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'tokens[] requis dans le body.' })
   }
 
-  let gmail, supabase
+  let transporter, supabase
   try {
-    gmail = getGmailClient()
+    transporter = getTransport()
     supabase = getSupabase()
   } catch (e) {
     return res.status(500).json({ error: e.message })
@@ -123,8 +113,12 @@ export default async function handler(req, res) {
       : templateNouvelEleve(surveyUrl)
 
     try {
-      const raw = buildRawEmail({ to: email, subject, html })
-      await gmail.users.messages.send({ userId: 'me', requestBody: { raw } })
+      await transporter.sendMail({
+        from: `Florent Waelkens <${FROM_EMAIL}>`,
+        to: email,
+        subject,
+        html,
+      })
 
       await supabase
         .from('survey_tokens')
@@ -133,8 +127,7 @@ export default async function handler(req, res) {
 
       sent++
     } catch (e) {
-      const detail = e.response?.data?.error?.message ?? e.response?.data ?? e.message
-      errors.push({ tokenId, email, error: typeof detail === 'string' ? detail : JSON.stringify(detail) })
+      errors.push({ tokenId, email, error: e.message })
     }
   }
 
