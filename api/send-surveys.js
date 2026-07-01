@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer'
+import { google } from 'googleapis'
 import { createClient } from '@supabase/supabase-js'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -17,11 +18,19 @@ function getSupabase() {
 
 // ─── Transport nodemailer OAuth2 ──────────────────────────────────────────────
 
-function getTransport() {
+async function getTransport() {
   const { GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN } = process.env
   if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) {
     throw new Error('Variables Gmail manquantes : GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN.')
   }
+  const oauth2Client = new google.auth.OAuth2(
+    GMAIL_CLIENT_ID,
+    GMAIL_CLIENT_SECRET,
+    'https://developers.google.com/oauthplayground'
+  )
+  oauth2Client.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN })
+  const { token: accessToken } = await oauth2Client.getAccessToken()
+
   return nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -30,6 +39,7 @@ function getTransport() {
       clientId: GMAIL_CLIENT_ID,
       clientSecret: GMAIL_CLIENT_SECRET,
       refreshToken: GMAIL_REFRESH_TOKEN,
+      accessToken,
     },
   })
 }
@@ -92,7 +102,7 @@ export default async function handler(req, res) {
 
   let transporter, supabase
   try {
-    transporter = getTransport()
+    transporter = await getTransport()
     supabase = getSupabase()
   } catch (e) {
     return res.status(500).json({ error: e.message })
