@@ -21,6 +21,8 @@ import SondagePage from './pages/SondagePage'
 import SchoolSchedulePage from './pages/SchoolSchedulePage'
 import SurveyResultsPage from './pages/SurveyResultsPage'
 import SendSurveyPage from './pages/SendSurveyPage'
+import QuickSurveyPage from './pages/QuickSurveyPage'
+import ManageSurveysPage from './pages/ManageSurveysPage'
 
 function ConfigWarning() {
   const { isSupabaseConfigured, authError } = useAuth()
@@ -62,6 +64,7 @@ function AppShell() {
         <Route path="/admin" element={<ProtectedRoute requiredRole="teacher"><Layout /></ProtectedRoute>}>
           <Route path="ecoles" element={<SchoolSchedulePage />} />
           <Route path="sondages" element={<SurveyResultsPage />} />
+          <Route path="sondages/gerer" element={<ManageSurveysPage />} />
           <Route path="envoyer-sondage" element={<SendSurveyPage />} />
         </Route>
         <Route path="/eleve" element={<ProtectedRoute requiredRole="student"><Layout /></ProtectedRoute>}>
@@ -71,6 +74,7 @@ function AppShell() {
           <Route path="cours" element={<StudentLessonsPage />} />
         </Route>
         <Route path="/sondage/:token" element={<SondagePage />} />
+        <Route path="/sondage-rapide/:token" element={<QuickSurveyPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>

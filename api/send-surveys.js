@@ -48,6 +48,23 @@ function templateNouvelEleve(surveyUrl) {
   }
 }
 
+function templateSondageRapide(surveyUrl, surveyTitle) {
+  const titre = surveyTitle ?? 'Sondage rapide'
+  return {
+    subject: `Sondage rapide — Hub du Guitariste`,
+    html: `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"></head>
+<body><div style="${BASE_STYLE}">
+  <p>Bonjour,</p>
+  <p>Voici un sondage rapide : <strong>${titre}</strong>.</p>
+  <p>Merci de répondre en cliquant sur le lien ci-dessous — cela ne prend que quelques secondes.</p>
+  <p style="margin:28px 0;"><a href="${surveyUrl}" style="${BUTTON_STYLE}">Répondre au sondage →</a></p>
+  <p style="font-size:13px;color:#666;">Ce lien est personnel. Ne le partagez pas.<br>
+  Lien direct&nbsp;: <a href="${surveyUrl}" style="color:#dc2626;">${surveyUrl}</a></p>
+  <div style="${FOOTER_STYLE}"><p><strong>Florent Waelkens</strong><br>Professeur de guitare</p></div>
+</div></body></html>`,
+  }
+}
+
 // ─── Email builder (même logique que gmail-send.mjs) ─────────────────────────
 
 function buildRawEmail({ to, subject, html }) {
@@ -76,7 +93,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const { tokens } = req.body ?? {}
+  const { tokens, surveyType = 'inscription', surveyTitle } = req.body ?? {}
   if (!Array.isArray(tokens) || tokens.length === 0) {
     return res.status(400).json({ error: 'tokens[] requis dans le body.' })
   }
@@ -108,10 +125,14 @@ export default async function handler(req, res) {
       continue
     }
 
-    const surveyUrl = `${VERCEL_URL}/sondage/${token}`
-    const { subject, html } = studentId
-      ? templateReinscription(surveyUrl)
-      : templateNouvelEleve(surveyUrl)
+    const surveyUrl = surveyType === 'rapide'
+      ? `${VERCEL_URL}/sondage-rapide/${token}`
+      : `${VERCEL_URL}/sondage/${token}`
+    const { subject, html } = surveyType === 'rapide'
+      ? templateSondageRapide(surveyUrl, surveyTitle)
+      : studentId
+        ? templateReinscription(surveyUrl)
+        : templateNouvelEleve(surveyUrl)
 
     try {
       const raw = buildRawEmail({ to: email, subject, html })
