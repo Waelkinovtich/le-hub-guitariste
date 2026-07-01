@@ -38,6 +38,8 @@ export default function SendSurveyPage() {
   const [generating, setGenerating] = useState(false)
   const [generatedLinks, setGeneratedLinks] = useState([])
   const [genError, setGenError] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendResult, setSendResult] = useState(null)
 
   // ── Load students ──────────────────────────────────────────────────────────
 
@@ -135,6 +137,8 @@ export default function SendSurveyPage() {
       const links = inserted.map(row => {
         const student = row.student_id ? selectedStudents.find(s => s.id === row.student_id) : null
         return {
+          id: row.id,
+          studentId: row.student_id,
           email: row.email,
           token: row.token,
           url: `${baseUrl}/sondage/${row.token}`,
@@ -147,6 +151,32 @@ export default function SendSurveyPage() {
       setGenError(e.message)
     } finally {
       setGenerating(false)
+    }
+  }
+
+  // ── Send emails ───────────────────────────────────────────────────────────
+
+  const sendEmails = async () => {
+    setSending(true)
+    setSendResult(null)
+    try {
+      const payload = generatedLinks.map(l => ({
+        tokenId: l.id,
+        email: l.email,
+        studentId: l.studentId ?? null,
+        token: l.token,
+      }))
+      const res = await fetch('/api/send-surveys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tokens: payload }),
+      })
+      const json = await res.json()
+      setSendResult(json)
+    } catch (e) {
+      setSendResult({ sent: 0, errors: [{ error: e.message }] })
+    } finally {
+      setSending(false)
     }
   }
 
@@ -329,15 +359,27 @@ export default function SendSurveyPage() {
             ))}
           </div>
 
-          <div className="rounded-xl border border-border-subtle bg-surface-raised px-4 py-3">
-            <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Étape suivante</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              Lancez le script depuis Claude chat pour envoyer les emails via Gmail :
-            </p>
-            <pre className="mt-2 text-xs font-mono text-foreground bg-surface rounded-lg px-3 py-2 overflow-x-auto">
-              node send-surveys.mjs
-            </pre>
-          </div>
+          {!sendResult ? (
+            <button
+              onClick={sendEmails}
+              disabled={sending}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity shadow-lg shadow-guitar-600/25 disabled:opacity-40"
+            >
+              {sending
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Envoi en cours…</>
+                : <><Send className="w-4 h-4" /> Envoyer les emails ({generatedLinks.length})</>}
+            </button>
+          ) : (
+            <div className={`rounded-xl border px-4 py-3 text-sm ${sendResult.errors?.length ? 'border-guitar-600/30 bg-guitar-600/8' : 'border-green-600/30 bg-green-600/8'}`}>
+              <p className={`font-medium mb-1 ${sendResult.errors?.length ? 'text-guitar-400' : 'text-green-400'}`}>
+                {sendResult.sent} email{sendResult.sent !== 1 ? 's' : ''} envoyé{sendResult.sent !== 1 ? 's' : ''}
+                {sendResult.errors?.length ? ` · ${sendResult.errors.length} erreur(s)` : ''}
+              </p>
+              {sendResult.errors?.map((e, i) => (
+                <p key={i} className="text-xs text-muted-foreground">{e.email ?? e.tokenId} — {e.error}</p>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
