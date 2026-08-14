@@ -82,6 +82,10 @@ const TAUX_CHARGES_PATRONALES = 0.40   // part patronale : brut → coût employ
  * Estime le taux brut et le coût employeur (net social) à partir d'un taux net connu.
  * Précision indicative : ±5 % selon les cas particuliers — vérifier sur le bulletin réel.
  * Retourne null pour chaque champ si le net est absent ou invalide.
+ *
+ * Fonction pure : pas d'effet de bord, testable indépendamment du JSX.
+ * Règle d'utilisation : n'appeler l'estimation QUE si le champ cible est vide ;
+ * une saisie manuelle prévaut TOUJOURS (voir estimBrut / estimNetSocial dans HourlyRateForm).
  */
 function estimerBrutNetSocial(net) {
   const netNum = net !== '' && net != null ? parseFloat(net) : null
@@ -794,6 +798,9 @@ export default function SchoolDetailPage() {
           </Field>
         )}
 
+        {/* Dates : une seule paire contract_start_date / contract_end_date.
+            contract_first_date (premier cours historique) reste en base mais n'est pas affiché
+            ici — voir le commentaire dans schools.js PROFILE_COLUMNS pour la justification. */}
         <div className="grid sm:grid-cols-2 gap-3">
           <Field label="Début de contrat">
             {editing

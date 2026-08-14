@@ -66,7 +66,12 @@ const PROFILE_COLUMNS = [
   // Priorité & nouvelles notes v2
   'manual_priority_rating', 'equipment_rating', 'growth_perspective_rating',
   'tags', 'notes',
-  // Historique de collaboration
+  // Historique de collaboration.
+  // contract_first_date = date du tout premier cours (peut précéder le contrat actuel),
+  // conservée en base pour l'historique mais NON affichée dans SchoolDetailPage car
+  // redondante avec contract_start_date côté UI — choix délibéré de simplification :
+  // un professeur seul n'a pas besoin de distinguer "premier cours" et "début de contrat".
+  // À ré-exposer si le produit évolue vers un multi-utilisateur avec historique complet.
   'contract_first_date', 'contract_end_date',
   'created_at',
 ].join(', ')

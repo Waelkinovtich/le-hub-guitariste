@@ -201,6 +201,40 @@ export async function fetchSchoolNames(teacherId) {
 }
 
 /**
+ * Retourne, pour une liste de school_ids, le nombre d'élèves rattachés via
+ * student_contexts, groupé par school_id.
+ *
+ * Une seule requête SQL puis répartition en mémoire — évite N requêtes par carte
+ * dans SchoolsPage (chaque école ferait sinon sa propre requête COUNT).
+ *
+ * @param {string}   teacherId
+ * @param {string[]} schoolIds         — liste des ids d'écoles/employeurs à compter
+ * @param {Object}   contextTypeBySchool — map schoolId → 'ecole'|'cesu'
+ *                   (le type attendu pour cette fiche ; une ligne de mauvais type n'est pas comptée)
+ * @returns {Object} map schoolId → nombre d'élèves rattachés (0 par défaut)
+ */
+export async function fetchContextCountsBySchool(teacherId, schoolIds, contextTypeBySchool) {
+  if (!schoolIds.length) return {}
+  const { data, error } = await supabase
+    .from('student_contexts')
+    .select('school_id, context_type')
+    .eq('teacher_id', teacherId)
+    .in('school_id', schoolIds)
+    .not('school_id', 'is', null)
+  if (error) throw new Error(error.message)
+  // Initialiser chaque école à 0 pour éviter des undefined dans la carte
+  const counts = {}
+  schoolIds.forEach((id) => { counts[id] = 0 })
+  ;(data ?? []).forEach((row) => {
+    // Ne compter que les contextes du bon type (ecole pour une école, cesu pour un employeur)
+    if (row.context_type === contextTypeBySchool[row.school_id]) {
+      counts[row.school_id] = (counts[row.school_id] ?? 0) + 1
+    }
+  })
+  return counts
+}
+
+/**
  * Retourne les élèves rattachés à une école via student_contexts (context_type = 'ecole').
  * Même pattern que fetchStudentsPaidBySchool, mais pour les contextes d'école de musique.
  */

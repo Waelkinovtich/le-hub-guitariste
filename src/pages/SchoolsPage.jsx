@@ -3,6 +3,7 @@ import { School, Plus, Trash2, Loader2, AlertCircle, Users, ChevronRight, AlertT
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { fetchTeacherSchools, createSchool, deleteSchool, currentSchoolYear, computePriorityScore, isScoreIncomplete } from '../services/schools'
+import { fetchContextCountsBySchool } from '../services/students'
 import { getSchoolColor } from '../utils/schoolColors'
 
 export default function SchoolsPage() {
@@ -33,14 +34,18 @@ export default function SchoolsPage() {
         setSchools(list)
         if (list.length > 0) {
           const ids = list.map((s) => s.id)
-          const [countsRes, ratesRes] = await Promise.all([
-            supabase.from('students').select('school_id').eq('teacher_id', user.id).in('school_id', ids),
+          // Map school_id → context_type attendu selon le type de structure.
+          // Permet à fetchContextCountsBySchool de ne compter que les bons contextes
+          // (ecole pour une école de musique, cesu pour un employeur CESU).
+          const contextTypeBySchool = {}
+          list.forEach((s) => {
+            contextTypeBySchool[s.id] = s.structure_type === 'particulier_cesu' ? 'cesu' : 'ecole'
+          })
+          const [contextCounts, ratesRes] = await Promise.all([
+            fetchContextCountsBySchool(user.id, ids, contextTypeBySchool),
             supabase.from('schools_hourly_rates').select('school_id, school_year, net_hourly_rate, gross_hourly_rate').eq('school_year', curYear).in('school_id', ids),
           ])
-          const map = {}
-          list.forEach((s) => { map[s.id] = 0 })
-          ;(countsRes.data ?? []).forEach((r) => { if (r.school_id) map[r.school_id] = (map[r.school_id] ?? 0) + 1 })
-          setStudentCounts(map)
+          setStudentCounts(contextCounts)
 
           const withRate = new Set((ratesRes.data ?? []).filter((r) => r.net_hourly_rate != null || r.gross_hourly_rate != null).map((r) => r.school_id))
           setMissingRates(new Set(ids.filter((id) => !withRate.has(id))))
@@ -248,7 +253,9 @@ export default function SchoolsPage() {
                     <div className="flex items-center gap-3 mt-0.5">
                       <p className="text-xs text-muted-foreground flex items-center gap-1">
                         <Users className="w-3 h-3" />
-                        {count} élève{count !== 1 ? 's' : ''}
+                        {count === 0
+                          ? 'Aucun élève rattaché'
+                          : `${count} élève${count !== 1 ? 's' : ''}`}
                       </p>
                       {score != null ? (
                         <p className="text-xs text-guitar-400 flex items-center gap-0.5">
