@@ -1,15 +1,16 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import { ArrowLeft, Users, Plus, Trash2, Calendar, Pencil } from 'lucide-react'
+import { ArrowLeft, Users, Plus, Trash2, Calendar, Pencil, CalendarDays } from 'lucide-react'
 import CreateGroupModal from './CreateGroupModal'
 import AddMemberModal from './AddMemberModal'
 import AddSessionModal from './AddSessionModal'
 import GroupAttendanceModal from './GroupAttendanceModal'
+import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
 
 const TYPES = {
   cours_collectif: { label: 'Cours collectif', icon: '🎸', color: 'bg-blue-500/15 text-blue-400' },
-  repetition: { label: 'Repetition', icon: '🎵', color: 'bg-purple-500/15 text-purple-400' },
+  repetition: { label: 'Répétition', icon: '🎵', color: 'bg-purple-500/15 text-purple-400' },
   ensemble: { label: 'Ensemble', icon: '🎶', color: 'bg-green-500/15 text-green-400' },
 }
 
@@ -27,9 +28,10 @@ function fmt(min) {
 export default function GroupDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { period: periodCtx } = usePeriod()
   const [group, setGroup] = useState(null)
   const [members, setMembers] = useState([])
-  const [sessions, setSessions] = useState([])
+  const [rawSessions, setRawSessions] = useState([])
   const [loading, setLoading] = useState(true)
   const [showMember, setShowMember] = useState(false)
   const [showSession, setShowSession] = useState(false)
@@ -47,7 +49,7 @@ export default function GroupDetailPage() {
     const s = await supabase.from('group_sessions').select('*').eq('group_id', id).order('session_date', { ascending: true })
     if (g.data) setGroup(g.data)
     setMembers(m.data || [])
-    setSessions(s.data || [])
+    setRawSessions(s.data || [])
     setLoading(false)
   }
 
@@ -57,7 +59,10 @@ export default function GroupDetailPage() {
     loadData()
   }
 
-  if (loading) return <div className="p-6 text-muted text-sm">Chargement...</div>
+  // Filtrage des séances par période globale (session_date utilisée comme date de référence)
+  const sessions = useMemo(() => filterLessonsByPeriod(rawSessions, periodCtx), [rawSessions, periodCtx])
+
+  if (loading) return <div className="p-6 text-muted text-sm">Chargement…</div>
   if (!group) return <div className="p-6 text-muted text-sm">Groupe introuvable</div>
 
   const t = TYPES[group.type] || TYPES.cours_collectif
@@ -110,7 +115,7 @@ export default function GroupDetailPage() {
                   </p>
                   <p className="text-xs text-muted">
                     {m.is_external ? m.free_instrument : (m.students ? m.students.instrument : '')}
-                    {m.is_external ? ' - exterieur' : ''}
+                    {m.is_external ? ' - extérieur' : ''}
                   </p>
                 </div>
                 <button onClick={() => removeMember(m.id)} className="p-1 hover:text-red-400 text-muted transition-all">
@@ -124,14 +129,20 @@ export default function GroupDetailPage() {
         <div className="rounded-xl border border-border-subtle bg-surface/50 p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-medium flex items-center gap-2">
-              <Calendar className="w-4 h-4" /> Seances ({sessions.length})
+              <Calendar className="w-4 h-4" /> Séances ({sessions.length}{rawSessions.length !== sessions.length ? `/${rawSessions.length}` : ''})
             </h2>
             <button onClick={() => setShowSession(true)} className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-guitar-600 text-white hover:bg-guitar-700 transition-all">
-              <Plus className="w-3 h-3" /> Nouvelle seance
+              <Plus className="w-3 h-3" /> Nouvelle séance
             </button>
           </div>
+          {periodCtx.mode !== 'toutes' && (
+            <div className="flex items-center gap-1 mb-2 text-xs text-guitar-400">
+              <CalendarDays className="w-3 h-3 shrink-0" />
+              Filtre temporel actif
+            </div>
+          )}
           <div className="space-y-2">
-            {sessions.length === 0 && <p className="text-xs text-muted">Aucune seance</p>}
+            {sessions.length === 0 && <p className="text-xs text-muted">Aucune séance sur cette période</p>}
             {sessions.map(s => (
               <div key={s.id} onClick={() => setAttendanceSession(s)} className="py-1.5 px-2 rounded-lg hover:bg-surface-overlay cursor-pointer">
                 <p className="text-sm font-medium">{new Date(s.session_date + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p>

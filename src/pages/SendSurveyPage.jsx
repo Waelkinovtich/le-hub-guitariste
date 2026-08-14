@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
-import { Users, Mail, Plus, Trash2, CheckSquare, Square, Send, Loader2, Check, AlertCircle } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { Users, Mail, Plus, Trash2, CheckSquare, Square, Send, Loader2, Check, AlertCircle, School, UserCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../context/AuthContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -26,15 +27,28 @@ function SectionHeader({ icon: Icon, title, subtitle }) {
 
 // ─── Page principale ──────────────────────────────────────────────────────────
 
+const MODES = [
+  { id: 'tous',    icon: Users,      label: 'Tous les élèves' },
+  { id: 'ecole',   icon: School,     label: 'Par école' },
+  { id: 'manuel',  icon: UserCheck,  label: 'Sélection manuelle' },
+]
+
 export default function SendSurveyPage() {
+  const { user } = useAuth()
   const [students, setStudents] = useState([])
   const [loadingStudents, setLoadingStudents] = useState(true)
-  const [selected, setSelected] = useState(new Set())
 
+  // ── Mode sélection ─────────────────────────────────────────────────────────
+  const [mode, setMode] = useState('tous')
+  const [selectedSchool, setSelectedSchool] = useState(null)
+  const [manualSelected, setManualSelected] = useState(new Set())
+
+  // ── Emails ad-hoc ──────────────────────────────────────────────────────────
   const [newEmail, setNewEmail] = useState('')
   const [newEmails, setNewEmails] = useState([])
   const [emailError, setEmailError] = useState('')
 
+  // ── Génération / envoi ─────────────────────────────────────────────────────
   const [generating, setGenerating] = useState(false)
   const [generatedLinks, setGeneratedLinks] = useState([])
   const [genError, setGenError] = useState('')
@@ -55,63 +69,71 @@ export default function SendSurveyPage() {
     load()
   }, [])
 
-  // ── Select/deselect ────────────────────────────────────────────────────────
+  const withEmail = useMemo(() => students.filter(s => s.email), [students])
+  const schools   = useMemo(() => [...new Set(students.map(s => s.school_name).filter(Boolean))].sort(), [students])
 
-  const withEmail = students.filter(s => s.email)
-  const allSelected = withEmail.length > 0 && withEmail.every(s => selected.has(s.id))
+  // ── Calcul des destinataires selon le mode ─────────────────────────────────
 
-  const toggleAll = () => {
-    if (allSelected) {
-      setSelected(new Set())
-    } else {
-      setSelected(new Set(withEmail.map(s => s.id)))
+  const selectedStudents = useMemo(() => {
+    if (mode === 'tous') return withEmail
+    if (mode === 'ecole') {
+      if (!selectedSchool) return []
+      return withEmail.filter(s => s.school_name === selectedSchool)
     }
-  }
+    if (mode === 'manuel') return withEmail.filter(s => manualSelected.has(s.id))
+    return []
+  }, [mode, withEmail, selectedSchool, manualSelected])
 
-  const toggleOne = (id) => {
-    setSelected(prev => {
+  const toggleManual = (id) => {
+    setManualSelected(prev => {
       const next = new Set(prev)
       next.has(id) ? next.delete(id) : next.add(id)
       return next
     })
   }
 
-  // ── New emails ─────────────────────────────────────────────────────────────
+  const toggleAllManual = () => {
+    const allSelected = withEmail.every(s => manualSelected.has(s.id))
+    setManualSelected(allSelected ? new Set() : new Set(withEmail.map(s => s.id)))
+  }
+
+  // Réinitialise la sélection manuelle quand on change de mode
+  const changeMode = (m) => {
+    setMode(m)
+    setSelectedSchool(null)
+    setManualSelected(new Set())
+    setGeneratedLinks([])
+    setSendResult(null)
+    setGenError('')
+  }
+
+  // ── Emails ad-hoc ──────────────────────────────────────────────────────────
 
   const addEmail = () => {
     const email = newEmail.trim()
     setEmailError('')
-    if (!isValidEmail(email)) {
-      setEmailError('Adresse email invalide.')
-      return
-    }
+    if (!isValidEmail(email)) { setEmailError('Adresse email invalide.'); return }
     const alreadyInStudents = students.some(s => s.email?.toLowerCase() === email.toLowerCase())
-    const alreadyAdded = newEmails.some(e => e.email.toLowerCase() === email.toLowerCase())
-    if (alreadyInStudents || alreadyAdded) {
-      setEmailError('Cet email est déjà dans la liste.')
-      return
-    }
+    const alreadyAdded      = newEmails.some(e => e.email.toLowerCase() === email.toLowerCase())
+    if (alreadyInStudents || alreadyAdded) { setEmailError('Cet email est déjà dans la liste.'); return }
     setNewEmails(prev => [...prev, { email }])
     setNewEmail('')
   }
 
-  const removeEmail = (email) => {
-    setNewEmails(prev => prev.filter(e => e.email !== email))
-  }
+  const removeEmail = (email) => setNewEmails(prev => prev.filter(e => e.email !== email))
 
-  // ── Generate tokens ────────────────────────────────────────────────────────
+  // ── Génération des tokens ──────────────────────────────────────────────────
 
-  const totalRecipients = selected.size + newEmails.length
+  const totalRecipients = selectedStudents.length + newEmails.length
 
   const generate = async () => {
     if (totalRecipients === 0) return
     setGenerating(true)
     setGenError('')
     setGeneratedLinks([])
+    setSendResult(null)
 
     try {
-      const selectedStudents = students.filter(s => selected.has(s.id))
-
       const rows = [
         ...selectedStudents.map(s => ({
           student_id: s.id,
@@ -127,13 +149,12 @@ export default function SendSurveyPage() {
 
       const { data: inserted, error } = await supabase
         .from('survey_tokens')
-        .insert(rows.map(r => ({ student_id: r.student_id, email: r.email, token: r.token })))
+        .insert(rows.map(r => ({ student_id: r.student_id, email: r.email, token: r.token, teacher_id: user.id })))
         .select('id, student_id, email, token')
 
       if (error) throw new Error(error.message)
 
       const baseUrl = window.location.origin
-
       const links = inserted.map(row => {
         const student = row.student_id ? selectedStudents.find(s => s.id === row.student_id) : null
         return {
@@ -145,7 +166,6 @@ export default function SendSurveyPage() {
           name: student ? `${student.first_name} ${student.last_name}`.trim() : null,
         }
       })
-
       setGeneratedLinks(links)
     } catch (e) {
       setGenError(e.message)
@@ -154,25 +174,21 @@ export default function SendSurveyPage() {
     }
   }
 
-  // ── Send emails ───────────────────────────────────────────────────────────
+  // ── Envoi emails ───────────────────────────────────────────────────────────
 
   const sendEmails = async () => {
     setSending(true)
     setSendResult(null)
     try {
       const payload = generatedLinks.map(l => ({
-        tokenId: l.id,
-        email: l.email,
-        studentId: l.studentId ?? null,
-        token: l.token,
+        tokenId: l.id, email: l.email, studentId: l.studentId ?? null, token: l.token,
       }))
       const res = await fetch('/api/send-surveys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tokens: payload }),
       })
-      const json = await res.json()
-      setSendResult(json)
+      setSendResult(await res.json())
     } catch (e) {
       setSendResult({ sent: 0, errors: [{ error: e.message }] })
     } finally {
@@ -191,80 +207,180 @@ export default function SendSurveyPage() {
         </p>
       </div>
 
-      {/* ── Élèves existants ── */}
+      {/* ── Sélecteur de mode ── */}
       <div className="glass-panel rounded-2xl p-5 mb-4">
         <SectionHeader
           icon={Users}
-          title="Élèves existants"
-          subtitle="Sélectionnez les élèves auxquels envoyer le sondage."
+          title="Destinataires"
+          subtitle="Choisissez comment sélectionner les élèves à contacter."
         />
 
+        {/* Boutons de mode */}
+        <div className="flex gap-2 mb-5">
+          {MODES.map(m => (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => changeMode(m.id)}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl border text-xs font-medium transition-all ${
+                mode === m.id
+                  ? 'border-guitar-600/40 bg-guitar-600/15 text-guitar-400'
+                  : 'border-border-subtle bg-surface text-muted-foreground hover:border-border hover:text-foreground'
+              }`}
+            >
+              <m.icon className="w-3.5 h-3.5 shrink-0" />
+              {m.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Contenu selon le mode */}
         {loadingStudents ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
             <div className="w-4 h-4 border-2 border-guitar-600 border-t-transparent rounded-full animate-spin" />
-            Chargement…
+            Chargement des élèves…
           </div>
-        ) : students.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4">Aucun élève enregistré.</p>
         ) : (
           <>
-            <button
-              onClick={toggleAll}
-              className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground mb-3 transition-colors"
-            >
-              {allSelected
-                ? <CheckSquare className="w-4 h-4 text-guitar-400" />
-                : <Square className="w-4 h-4" />}
-              {allSelected ? 'Tout désélectionner' : 'Tout sélectionner'}
-              <span className="text-muted/60">({withEmail.length} avec email)</span>
-            </button>
+            {/* Mode : tous les élèves */}
+            {mode === 'tous' && (
+              <div className="rounded-xl border border-border-subtle bg-surface px-4 py-3">
+                {withEmail.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Aucun élève avec email enregistré.</p>
+                ) : (
+                  <p className="text-sm text-foreground">
+                    <span className="font-medium text-guitar-400">{withEmail.length} élève{withEmail.length > 1 ? 's' : ''}</span>
+                    {' '}avec email seront inclus.
+                    {students.length - withEmail.length > 0 && (
+                      <span className="text-xs text-muted-foreground ml-2">
+                        ({students.length - withEmail.length} sans email, ignorés)
+                      </span>
+                    )}
+                  </p>
+                )}
+              </div>
+            )}
 
-            <div className="space-y-1.5">
-              {students.map(s => {
-                const hasEmail = Boolean(s.email)
-                const isSelected = selected.has(s.id)
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    disabled={!hasEmail}
-                    onClick={() => hasEmail && toggleOne(s.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all ${
-                      !hasEmail
-                        ? 'border-border-subtle bg-surface opacity-40 cursor-not-allowed'
-                        : isSelected
-                          ? 'border-guitar-600/40 bg-guitar-600/8'
-                          : 'border-border-subtle bg-surface hover:border-border'
-                    }`}
-                  >
-                    <div className="flex-shrink-0">
-                      {isSelected
+            {/* Mode : par école */}
+            {mode === 'ecole' && (
+              <div className="space-y-3">
+                {schools.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Aucune école trouvée dans les fiches élèves.</p>
+                ) : (
+                  <>
+                    <p className="text-xs text-muted-foreground">Sélectionnez une école :</p>
+                    <div className="flex flex-wrap gap-2">
+                      {schools.map(school => {
+                        const count = withEmail.filter(s => s.school_name === school).length
+                        const active = selectedSchool === school
+                        return (
+                          <button
+                            key={school}
+                            type="button"
+                            onClick={() => setSelectedSchool(active ? null : school)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-sm font-medium transition-all ${
+                              active
+                                ? 'border-guitar-600/40 bg-guitar-600/15 text-guitar-400'
+                                : 'border-border-subtle bg-surface text-muted-foreground hover:border-border hover:text-foreground'
+                            }`}
+                          >
+                            <School className="w-3.5 h-3.5 shrink-0" />
+                            {school}
+                            <span className={`text-xs ${active ? 'text-guitar-400/70' : 'text-muted/60'}`}>
+                              ({count})
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {selectedSchool && selectedStudents.length === 0 && (
+                      <p className="text-xs text-muted-foreground">Aucun élève avec email dans cette école.</p>
+                    )}
+                    {selectedSchool && selectedStudents.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">{selectedStudents.length} élève{selectedStudents.length > 1 ? 's' : ''}</span>
+                        {' '}de <span className="font-medium">{selectedSchool}</span> sélectionné{selectedStudents.length > 1 ? 's' : ''}.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Mode : sélection manuelle */}
+            {mode === 'manuel' && (
+              <div className="space-y-2">
+                {students.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Aucun élève enregistré.</p>
+                ) : (
+                  <>
+                    <button
+                      onClick={toggleAllManual}
+                      className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground mb-2 transition-colors"
+                    >
+                      {withEmail.every(s => manualSelected.has(s.id)) && withEmail.length > 0
                         ? <CheckSquare className="w-4 h-4 text-guitar-400" />
-                        : <Square className="w-4 h-4 text-muted" />}
+                        : <Square className="w-4 h-4" />}
+                      {withEmail.every(s => manualSelected.has(s.id)) && withEmail.length > 0
+                        ? 'Tout désélectionner' : 'Tout sélectionner'}
+                      <span className="text-muted/60">({withEmail.length} avec email)</span>
+                    </button>
+
+                    <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+                      {students.map(s => {
+                        const hasEmail  = Boolean(s.email)
+                        const isChecked = manualSelected.has(s.id)
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            disabled={!hasEmail}
+                            onClick={() => hasEmail && toggleManual(s.id)}
+                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all ${
+                              !hasEmail
+                                ? 'border-border-subtle bg-surface opacity-40 cursor-not-allowed'
+                                : isChecked
+                                  ? 'border-guitar-600/40 bg-guitar-600/8'
+                                  : 'border-border-subtle bg-surface hover:border-border'
+                            }`}
+                          >
+                            <div className="flex-shrink-0">
+                              {isChecked
+                                ? <CheckSquare className="w-4 h-4 text-guitar-400" />
+                                : <Square className="w-4 h-4 text-muted" />}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-foreground truncate">
+                                {s.first_name} {s.last_name}
+                              </p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                {s.email ?? <span className="italic">Pas d'email</span>}
+                                {s.school_name && <span className="ml-2 text-muted/60">· {s.school_name}</span>}
+                              </p>
+                            </div>
+                          </button>
+                        )
+                      })}
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-foreground truncate">
-                        {s.first_name} {s.last_name}
+                    {manualSelected.size > 0 && (
+                      <p className="text-xs text-muted-foreground pt-1">
+                        <span className="font-medium text-foreground">{manualSelected.size} élève{manualSelected.size > 1 ? 's' : ''}</span> sélectionné{manualSelected.size > 1 ? 's' : ''}.
                       </p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {s.email ?? <span className="italic">Pas d'email</span>}
-                        {s.school_name && <span className="ml-2 text-muted/60">· {s.school_name}</span>}
-                      </p>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
 
-      {/* ── Nouveaux destinataires ── */}
+      {/* ── Emails ad-hoc ── */}
       <div className="glass-panel rounded-2xl p-5 mb-6">
         <SectionHeader
           icon={Mail}
-          title="Nouveaux destinataires"
-          subtitle="Ajoutez des adresses email pour des élèves non encore enregistrés."
+          title="Destinataires supplémentaires"
+          subtitle="Ajoutez des adresses email pour des familles non encore enregistrées."
         />
 
         <div className="flex gap-2">
@@ -313,7 +429,15 @@ export default function SendSurveyPage() {
         )}
       </div>
 
-      {/* ── Bouton générer ── */}
+      {/* ── Récapitulatif + bouton générer ── */}
+      {totalRecipients > 0 && (
+        <div className="mb-3 px-4 py-2 rounded-xl bg-surface border border-border-subtle text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{totalRecipients} destinataire{totalRecipients > 1 ? 's' : ''}</span>
+          {selectedStudents.length > 0 && <span> · {selectedStudents.length} élève{selectedStudents.length > 1 ? 's' : ''}</span>}
+          {newEmails.length > 0 && <span> · {newEmails.length} email{newEmails.length > 1 ? 's' : ''} ad-hoc</span>}
+        </div>
+      )}
+
       <button
         onClick={generate}
         disabled={totalRecipients === 0 || generating}
@@ -331,7 +455,7 @@ export default function SendSurveyPage() {
         </div>
       )}
 
-      {/* ── Tokens générés — prêt pour le script ── */}
+      {/* ── Tokens générés ── */}
       {generatedLinks.length > 0 && (
         <div className="glass-panel rounded-2xl p-5 space-y-4">
           <div className="flex items-center gap-3">

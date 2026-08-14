@@ -68,7 +68,7 @@ function templateSondageRapide(surveyUrl, surveyTitle) {
 // ─── Email builder (même logique que gmail-send.mjs) ─────────────────────────
 
 function buildRawEmail({ to, subject, html }) {
-  const boundary = `----=_Part_${Date.now()}`
+  const boundary = `----Part${Date.now()}_${Math.random().toString(36).slice(2)}`
   const message = [
     `From: ${FROM_EMAIL}`,
     `To: ${to}`,

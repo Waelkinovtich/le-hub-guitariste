@@ -191,7 +191,7 @@ function templateNouvelEleve(surveyUrl) {
 // ─── Envoi Gmail ──────────────────────────────────────────────────────────────
 
 function buildRawEmail({ to, from, subject, html }) {
-  const boundary = `----=_Part_${Date.now()}`
+  const boundary = `----Part${Date.now()}_${Math.random().toString(36).slice(2)}`
   const message = [
     `From: ${from}`,
     `To: ${to}`,

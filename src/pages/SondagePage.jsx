@@ -40,6 +40,7 @@ const STEPS = [
   { id: 'disponibilites', label: 'Disponibilités' },
   { id: 'logistique',     label: 'Pratique' },
   { id: 'attentes',       label: 'Attentes' },
+  { id: 'inscriptions',   label: 'Inscriptions' },
 ]
 
 // ─── Helpers UI ───────────────────────────────────────────────────────────────
@@ -357,6 +358,132 @@ function StepAttentes({ data, onChange }) {
   )
 }
 
+function StepInscriptions({ data, onChange, schools }) {
+  const inscrits = data.inscriptions_supplementaires ?? []
+
+  const add = () => onChange({
+    ...data,
+    inscriptions_supplementaires: [
+      ...inscrits,
+      { prenom: '', nom: '', email: '', telephone: '', choix_structure: '', school_name: '' },
+    ],
+  })
+
+  const remove = (i) => onChange({
+    ...data,
+    inscriptions_supplementaires: inscrits.filter((_, idx) => idx !== i),
+  })
+
+  const setField = (i, k) => (value) => {
+    const updated = inscrits.map((p, idx) => idx === i ? { ...p, [k]: value } : p)
+    onChange({ ...data, inscriptions_supplementaires: updated })
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Récapitulatif du répondant principal */}
+      <div className="rounded-xl border border-guitar-600/30 bg-guitar-600/5 px-4 py-3 flex items-start gap-3">
+        <div className="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full bg-guitar-600/20 border border-guitar-600/40 flex items-center justify-center">
+          <Check className="w-3 h-3 text-guitar-400" />
+        </div>
+        <div>
+          <p className="text-sm font-medium text-foreground">
+            {data.first_name || '—'} {data.last_name || ''}
+            <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-guitar-600/15 text-guitar-400 border border-guitar-600/25">
+              Répondant principal
+            </span>
+          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {data.school_name || 'École non précisée'}
+            {data.email && <> · {data.email}</>}
+          </p>
+        </div>
+      </div>
+
+      <p className="text-sm text-muted-foreground">
+        Souhaitez-vous inscrire d'autres personnes en même temps ? Ajoutez leurs coordonnées ci-dessous — chacune choisit son propre mode (école ou cours particulier CESU).
+      </p>
+
+      {inscrits.map((p, i) => (
+        <div key={i} className="glass-panel rounded-2xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold text-foreground">Personne {i + 1}</span>
+            <button type="button" onClick={() => remove(i)}
+              className="p-1.5 rounded-lg hover:bg-guitar-600/10 text-muted hover:text-guitar-400 transition-colors">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field label="Prénom" required>
+              <input className={inputCls} value={p.prenom}
+                onChange={(e) => setField(i, 'prenom')(e.target.value)}
+                placeholder="Prénom" />
+            </Field>
+            <Field label="Nom" required>
+              <input className={inputCls} value={p.nom}
+                onChange={(e) => setField(i, 'nom')(e.target.value)}
+                placeholder="Nom" />
+            </Field>
+            <Field label="Email">
+              <input className={inputCls} type="email" value={p.email}
+                onChange={(e) => setField(i, 'email')(e.target.value)}
+                placeholder="email@exemple.fr" />
+            </Field>
+            <Field label="Téléphone">
+              <input className={inputCls} type="tel" value={p.telephone}
+                onChange={(e) => setField(i, 'telephone')(e.target.value)}
+                placeholder="06 00 00 00 00" />
+            </Field>
+            <div className="sm:col-span-2">
+              <Field label="Inscription souhaitée" required>
+                <div className="flex gap-3">
+                  {[
+                    { value: 'ecole', label: 'École de musique' },
+                    { value: 'cesu',  label: 'Cours particulier (CESU)' },
+                  ].map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => {
+                        setField(i, 'choix_structure')(value)
+                        if (value === 'cesu') setField(i, 'school_name')('')
+                      }}
+                      className={`flex-1 py-3 rounded-xl border text-sm font-medium transition-all ${
+                        p.choix_structure === value
+                          ? 'border-guitar-600 bg-guitar-600/10 text-guitar-400'
+                          : 'border-border-subtle bg-surface-raised text-muted-foreground hover:border-border'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            </div>
+            {p.choix_structure === 'ecole' && (
+              <div className="sm:col-span-2">
+                <Field label="École">
+                  <select className={selectCls} value={p.school_name}
+                    onChange={(e) => setField(i, 'school_name')(e.target.value)}>
+                    <option value="">Choisir une école…</option>
+                    {schools.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </Field>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+
+      <button type="button" onClick={add}
+        className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-dashed border-border hover:border-guitar-600/60 hover:bg-guitar-600/5 text-muted-foreground hover:text-guitar-400 transition-all text-sm">
+        <Plus className="w-4 h-4" />
+        Ajouter une autre personne à inscrire
+      </button>
+    </div>
+  )
+}
+
 // ─── État initial ─────────────────────────────────────────────────────────────
 
 const defaultForm = {
@@ -367,6 +494,7 @@ const defaultForm = {
   availabilities: {},
   address: '', instrument: '', open_to_group: null,
   expectations: '',
+  inscriptions_supplementaires: [],
 }
 
 // ─── Page principale ──────────────────────────────────────────────────────────
@@ -487,6 +615,36 @@ export default function SondagePage() {
       }
       const { error: insertError } = await supabase.from('survey_responses').insert(payload)
       if (insertError) throw insertError
+
+      // ── Inscriptions individuelles ────────────────────────────────────────
+      // Répondant principal (is_respondent = true) + personnes supplémentaires
+      const regsToInsert = [
+        {
+          token_id: tokenRow.id,
+          is_respondent: true,
+          prenom: form.first_name || null,
+          nom: form.last_name || null,
+          email: form.email || null,
+          telephone: form.phone || null,
+          choix_structure: form.school_name === 'CESU' ? 'cesu' : (form.school_name ? 'ecole' : null),
+          school_name: form.school_name && form.school_name !== 'CESU' ? form.school_name : null,
+          school_id: null,
+        },
+        ...(form.inscriptions_supplementaires ?? []).map((p) => ({
+          token_id: tokenRow.id,
+          is_respondent: false,
+          prenom: p.prenom || null,
+          nom: p.nom || null,
+          email: p.email || null,
+          telephone: p.telephone || null,
+          choix_structure: p.choix_structure || null,
+          school_name: p.choix_structure === 'ecole' ? (p.school_name || null) : null,
+          school_id: null,
+        })),
+      ]
+      const { error: regError } = await supabase.from('survey_registrations').insert(regsToInsert)
+      if (regError) throw regError
+
       const { error: updateError } = await supabase
         .from('survey_tokens')
         .update({ used_at: new Date().toISOString() })
@@ -565,6 +723,7 @@ export default function SondagePage() {
       schoolSchedules={schoolSchedules} loadingSchedules={loadingSchedules} />,
     <StepLogistique     key="l" data={form} onChange={setForm} />,
     <StepAttentes       key="a" data={form} onChange={setForm} />,
+    <StepInscriptions   key="r" data={form} onChange={setForm} schools={schools} />,
   ]
 
   return (

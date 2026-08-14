@@ -4,7 +4,8 @@ import { useFetch } from '../../hooks/useFetch'
 import { fetchCancelledLessons } from '../../services/lessons'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
 import { getRaisonLabel } from '../../utils/lessonStatus'
-import { RotateCcw } from 'lucide-react'
+import { RotateCcw, CalendarDays } from 'lucide-react'
+import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
 
 function minutesToLabel(min) {
   const h = Math.floor(min / 60)
@@ -16,9 +17,12 @@ function minutesToLabel(min) {
 
 export default function RattrapagePage() {
   const { user } = useAuth()
+  const { period: periodCtx } = usePeriod()
 
   const load = useCallback(() => fetchCancelledLessons({ teacherId: user.id }), [user.id])
-  const { data: lessons, loading, error, reload } = useFetch(load, [user.id])
+  const { data: rawLessons, loading, error, reload } = useFetch(load, [user.id])
+
+  const lessons = filterLessonsByPeriod(rawLessons ?? [], periodCtx)
 
   const { global: globalStats, parÉcole, parÉlève } = useMemo(() => {
     const all = lessons ?? []
@@ -71,6 +75,13 @@ export default function RattrapagePage() {
           </div>
         </div>
       </header>
+
+      {periodCtx.mode !== 'toutes' && (
+        <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/20 text-xs text-guitar-400">
+          <CalendarDays className="w-3.5 h-3.5 shrink-0" />
+          Filtre temporel global actif — seuls les cours correspondant à la période sélectionnée dans la barre latérale sont affichés.
+        </div>
+      )}
 
       {loading ? <LoadingBlock label="Chargement" /> : error ? <ErrorBlock message={error} onRetry={reload} /> : (
         <>

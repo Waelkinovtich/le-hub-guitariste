@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { FileDown } from 'lucide-react'
+import { FileDown, CalendarDays, ClipboardCheck, Pencil, Trash2 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import { fetchLessonsInRange } from '../../services/lessons'
@@ -7,19 +7,32 @@ import { supabase } from '../../lib/supabase'
 import { fetchSchoolNames } from '../../services/students'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
 import { exportÉmargementPDF } from '../../utils/exportPDF'
+import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
+import LessonStatusModal from '../../components/LessonStatusModal'
+import AddLessonModal from '../../components/AddLessonModal'
+import DeleteLessonModal from '../../components/DeleteLessonModal'
 
 const PERIODS = [
+  { value: 'aujourd_hui', label: "Aujourd'hui" },
   { value: 'semaine', label: 'Cette semaine' },
   { value: 'mois', label: 'Ce mois' },
   { value: 'trimestre', label: 'Ce trimestre' },
   { value: 'année', label: 'Cette année' },
 ]
 
+// Palettes de statut — valeurs canoniques sans accents (cohérentes avec LESSON_STATUSES)
+const STATUS_COLORS = { present: '#27ae60', absent: '#e74c3c', excuse: '#e67e22', annule_prof: '#9b59b6', rattrape: '#2980b9', planifie: '#7f8c8d' }
+const STATUS_LABELS = { present: 'Présent', absent: 'Absent', excuse: 'Excusé', annule_prof: 'Annulé', rattrape: 'Rattrapé', planifie: 'Planifié' }
+
 function getRange(period) {
   const now = new Date()
   const pad = (n) => String(n).padStart(2, '0')
   const fmt = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
 
+  if (period === 'aujourd_hui') {
+    const today = fmt(now)
+    return { from: today, to: today, label: "Aujourd'hui — " + now.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) }
+  }
   if (period === 'semaine') {
     const day = now.getDay() === 0 ? 6 : now.getDay() - 1
     const start = new Date(now); start.setDate(now.getDate() - day)
@@ -53,9 +66,13 @@ function fmtDuree(min) {
 
 export default function ÉmargementPage() {
   const { user } = useAuth()
+  const { period: periodCtx } = usePeriod()
   const [period, setPeriod] = useState('mois')
   const [filterSchool, setFilterSchool] = useState('')
   const [statusOverrides, setStatusOverrides] = useState({})
+  const [statusLesson, setStatusLesson] = useState(null)
+  const [editLesson, setEditLesson]     = useState(null)
+  const [deleteLesson, setDeleteLesson] = useState(null)
 
   const range = getRange(period)
 
@@ -67,9 +84,10 @@ export default function ÉmargementPage() {
     return { lessons, schools }
   }, [user.id, range.from, range.to])
 
-  const { data, loading, error } = useFetch(load, [user.id, period])
+  const { data, loading, error, reload } = useFetch(load, [user.id, period])
 
-  const allItems = (data?.lessons ?? []).filter((l) => !filterSchool || l.schoolName === filterSchool || l.student?.school_name === filterSchool || (filterSchool === 'particulier' && !l.student?.school_name && !l.isGroup))
+  const periodFiltered = filterLessonsByPeriod(data?.lessons ?? [], periodCtx)
+  const allItems = periodFiltered.filter((l) => !filterSchool || l.schoolName === filterSchool || l.student?.school_name === filterSchool || (filterSchool === 'particulier' && !l.student?.school_name && !l.isGroup))
   const lessons = allItems.filter((l) => !l.isGroup)
   const groupSessions = allItems.filter((l) => l.isGroup)
   const schools = data?.schools ?? []
@@ -86,10 +104,11 @@ export default function ÉmargementPage() {
   const presents = lessons.filter((l) => l.status === 'present').length
   const absents = lessons.filter((l) => l.status === 'absent').length
   const excuses = lessons.filter((l) => l.status === 'excuse').length
-  const annulés = lessons.filter((l) => l.status === 'annulé_prof').length
+  const annulés = lessons.filter((l) => l.status === 'annule_prof').length
   const taux = lessons.length > 0 ? Math.round((presents / lessons.length) * 100) : 0
 
   return (
+    <>
     <div className="p-6 sm:p-8 max-w-5xl">
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
@@ -101,6 +120,13 @@ export default function ÉmargementPage() {
           Exporter en PDF
         </button>
       </header>
+
+      {periodCtx.mode !== 'toutes' && (
+        <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/20 text-xs text-guitar-400">
+          <CalendarDays className="w-3.5 h-3.5 shrink-0" />
+          Filtre temporel global actif — seuls les cours correspondant à la période sélectionnée dans la barre latérale sont affichés.
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-3 mb-6">
         <div className="flex gap-2">
@@ -148,13 +174,12 @@ export default function ÉmargementPage() {
                     <th className="px-4 py-3 font-medium">Thème</th>
                     <th className="px-4 py-3 font-medium">Durée</th>
                     <th className="px-4 py-3 font-medium">Statut</th>
+                    <th className="px-4 py-3 font-medium sr-only">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {lessons.map((lesson) => {
-                    const colors = { present: '#27ae60', absent: '#e74c3c', excuse: '#e67e22', annulé_prof: '#9b59b6', planifié: '#7f8c8d' }
-                    const labels = { present: 'Présent', absent: 'Absent', excuse: 'Excusé', annulé_prof: 'Annulé', planifié: 'Planifié' }
-                    const color = colors[lesson.status] ?? '#7f8c8d'
+                    const color = STATUS_COLORS[lesson.status] ?? '#7f8c8d'
                     return (
                       <tr key={lesson.id} className="border-b border-border-subtle last:border-0">
                         <td className="px-4 py-3">{lesson.dateLabel}</td>
@@ -163,9 +188,36 @@ export default function ÉmargementPage() {
                         <td className="px-4 py-3 text-muted-foreground">{lesson.topic}</td>
                         <td className="px-4 py-3 text-muted-foreground">{fmtDuree(lesson.durationMinutes)}</td>
                         <td className="px-4 py-3">
-                          <span className="inline-block px-2 py-1 rounded-full text-xs font-medium border" style={{ backgroundColor: color + '20', borderColor: color + '50', color }}>
-                            {labels[lesson.status] ?? lesson.status}
-                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setStatusLesson(lesson)}
+                            title="Modifier le statut de présence"
+                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium border hover:opacity-80 transition-opacity cursor-pointer"
+                            style={{ backgroundColor: color + '20', borderColor: color + '50', color }}
+                          >
+                            <ClipboardCheck className="w-3 h-3" />
+                            {STATUS_LABELS[lesson.status] ?? lesson.status}
+                          </button>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setEditLesson(lesson)}
+                              title="Modifier ce cours"
+                              className="p-1.5 rounded-lg text-muted hover:text-foreground hover:bg-surface-overlay transition-colors"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteLesson(lesson)}
+                              title="Supprimer ce cours"
+                              className="p-1.5 rounded-lg text-muted hover:text-guitar-400 hover:bg-guitar-600/10 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )
@@ -177,7 +229,7 @@ export default function ÉmargementPage() {
 
           {groupSessions.length > 0 && (
             <div className="mt-8">
-              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">🎶 Seances de groupe</h2>
+              <h2 className="text-lg font-semibold mb-3">Séances de groupe</h2>
               <div className="glass-panel rounded-2xl overflow-hidden overflow-x-auto">
                 <table className="w-full text-sm min-w-[600px]">
                   <thead>
@@ -185,14 +237,14 @@ export default function ÉmargementPage() {
                       <th className="px-4 py-3 font-medium">Date</th>
                       <th className="px-4 py-3 font-medium">Heure</th>
                       <th className="px-4 py-3 font-medium">Groupe</th>
-                      <th className="px-4 py-3 font-medium">Duree</th>
-                      <th className="px-4 py-3 fonmedium">Statut</th>
+                      <th className="px-4 py-3 font-medium">Durée</th>
+                      <th className="px-4 py-3 font-medium">Statut</th>
                     </tr>
                   </thead>
                   <tbody>
                     {groupSessions.map((g) => {
                       const gColors = { prevue: '#7f8c8d', effectuee: '#27ae60', annulee: '#9b59b6' }
-                      const gLabels = { prevue: 'Prevue', effectuee: 'Effectuee', annulee: 'Annulee' }
+                      const gLabels = { prevue: 'Prévue', effectuee: 'Effectuée', annulee: 'Annulée' }
                       const gStatus = statusOverrides[g.sessionId] || g.sessionStatus || 'prevue'
                       const color = gColors[gStatus] ?? '#7f8c8d'
                       return (
@@ -204,9 +256,9 @@ export default function ÉmargementPage() {
                           <td className="px-4 py-3">
                             <select value={gStatus} onChange={async (e) => { const v = e.target.value; setStatusOverrides((prev) => ({ ...prev, [g.sessionId]: v })); await supabase.from('group_sessions').update({ status: v }).eq('id', g.sessionId) }}
                               className="px-2 py-1 rounded-lg text-xs font-medium border bg-surface-raised outline-none" style={{ borderColor: color + '50', color }}>
-                              <option value="prevue">Prevue</option>
-                              <option value="effectuee">Effectuee</option>
-                              <option value="annulee">Annulee</option>
+                              <option value="prevue">Prévue</option>
+                              <option value="effectuee">Effectuée</option>
+                              <option value="annulee">Annulée</option>
                             </select>
                           </td>
                         </tr>
@@ -220,5 +272,29 @@ export default function ÉmargementPage() {
         </>
       )}
     </div>
+
+    {statusLesson && (
+      <LessonStatusModal
+        lesson={statusLesson}
+        onClose={() => setStatusLesson(null)}
+        onUpdated={() => { reload(); setStatusLesson(null) }}
+      />
+    )}
+    {editLesson && (
+      <AddLessonModal
+        teacherId={user.id}
+        lesson={editLesson}
+        onClose={() => setEditLesson(null)}
+        onCreated={() => { reload(); setEditLesson(null) }}
+      />
+    )}
+    {deleteLesson && (
+      <DeleteLessonModal
+        lesson={deleteLesson}
+        onClose={() => setDeleteLesson(null)}
+        onDeleted={() => { reload(); setDeleteLesson(null) }}
+      />
+    )}
+    </>
   )
 }

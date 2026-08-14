@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Search, Plus, X } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
+import { usePeriod, filterStudentsByPeriod } from '../../context/PeriodContext'
 import AddStudentModal from '../../components/AddStudentModal'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
-import { fetchTeacherStudents, fetchSchoolNames } from '../../services/students'
+import { fetchTeacherStudents, fetchSchoolNames, fetchAllContextsByStudent } from '../../services/students'
 import { fetchUpcomingLessons, buildNextLessonByStudent, formatNextLessonLabel } from '../../services/lessons'
 import { initials } from '../../utils/format'
 import { getSchoolColor } from '../../utils/schoolColors'
@@ -20,22 +21,25 @@ const AGE_GROUPS = [
 export default function StudentsPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [showAddForm, setShowAddForm] = useState(false)
   const [search, setSearch] = useState('')
   const [filterLevel, setFilterLevel] = useState('')
   const [filterType, setFilterType] = useState('')
-  const [filterSchool, setFilterSchool] = useState('')
+  const [filterSchool, setFilterSchool] = useState(location.state?.filterSchool ?? '')
   const [filterAge, setFilterAge] = useState('')
 
   const load = useCallback(async () => {
-    const [students, upcoming, schools] = await Promise.all([
+    const [students, upcoming, schools, contextsByStudent] = await Promise.all([
       fetchTeacherStudents(user.id),
       fetchUpcomingLessons({ teacherId: user.id, limit: 100 }),
       fetchSchoolNames(user.id),
+      fetchAllContextsByStudent(user.id),
     ])
-    return { students, nextByStudent: buildNextLessonByStudent(upcoming), schools }
+    return { students, nextByStudent: buildNextLessonByStudent(upcoming), schools, contextsByStudent }
   }, [user.id])
 
+  const { period } = usePeriod()
   const { data, loading, error, reload } = useFetch(load, [user.id])
   const schools = data?.schools ?? []
 
@@ -44,14 +48,25 @@ export default function StudentsPage() {
     return data.students.map((student) => ({
       ...student,
       nextLesson: formatNextLessonLabel(data.nextByStudent.get(student.id)),
+      // Contextes supplémentaires : permet le filtrage multi-casquette école/CESU
+      contexts: data.contextsByStudent?.[student.id] ?? [],
     }))
   }, [data])
 
+  // Filtre temporel (PeriodContext) — appliqué avant les autres filtres
+  const rowsByPeriod = useMemo(() => filterStudentsByPeriod(rows, period), [rows, period])
+
   const filtered = useMemo(() => {
-    return rows.filter((s) => {
+    return rowsByPeriod.filter((s) => {
       if (search && !s.name.toLowerCase().includes(search.toLowerCase()) && !(s.email ?? '').toLowerCase().includes(search.toLowerCase())) return false
       if (filterLevel && s.level !== filterLevel) return false
-      if (filterType && s.lessonType !== filterType) return false
+      if (filterType) {
+        const primaryMatch = s.lessonType === filterType
+        // Un élève multi-casquette apparaît aussi si l'un de ses contextes correspond au filtre
+        const ctxType = filterType === 'particulier' ? 'cesu' : 'ecole'
+        const contextMatch = s.contexts.some((c) => c.context_type === ctxType)
+        if (!primaryMatch && !contextMatch) return false
+      }
       if (filterSchool && s.schoolName !== filterSchool) return false
       if (filterAge) {
         const group = AGE_GROUPS.find((g) => g.value === filterAge)
@@ -62,7 +77,7 @@ export default function StudentsPage() {
       }
       return true
     })
-  }, [rows, search, filterLevel, filterType, filterSchool, filterAge])
+  }, [rowsByPeriod, search, filterLevel, filterType, filterSchool, filterAge])
 
   const hasFilters = search || filterLevel || filterType || filterSchool || filterAge
   const clearFilters = () => { setSearch(''); setFilterLevel(''); setFilterType(''); setFilterSchool(''); setFilterAge('') }
@@ -99,7 +114,7 @@ export default function StudentsPage() {
         <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600">
           <option value="">Tous types</option>
           <option value="particulier">CESU</option>
-          <option value="école">École</option>
+          <option value="ecole">École</option>
         </select>
         {schools.length > 0 && (
           <select value={filterSchool} onChange={(e) => setFilterSchool(e.target.value)} className="px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600">

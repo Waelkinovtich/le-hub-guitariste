@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { PeriodProvider } from './context/PeriodContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
@@ -23,6 +24,17 @@ import SurveyResultsPage from './pages/SurveyResultsPage'
 import SendSurveyPage from './pages/SendSurveyPage'
 import QuickSurveyPage from './pages/QuickSurveyPage'
 import ManageSurveysPage from './pages/ManageSurveysPage'
+import SchoolNotesPage from './pages/SchoolNotesPage'
+import SchoolsPage from './pages/SchoolsPage'
+import SchoolDetailPage from './pages/SchoolDetailPage'
+import SchoolsComparativePage from './pages/SchoolsComparativePage'
+import RevenueTrackingPage from './pages/RevenueTrackingPage'
+import MessageTemplatesPage from './pages/MessageTemplatesPage'
+import SchedulingAssistantPage from './pages/SchedulingAssistantPage'
+import ObjectivesPage from './pages/ObjectivesPage'
+import SimulationPage from './pages/SimulationPage'
+import TravelPage from './pages/TravelPage'
+import { useTheme } from './hooks/useTheme'
 
 function ConfigWarning() {
   const { isSupabaseConfigured, authError } = useAuth()
@@ -66,6 +78,16 @@ function AppShell() {
           <Route path="sondages" element={<SurveyResultsPage />} />
           <Route path="sondages/gerer" element={<ManageSurveysPage />} />
           <Route path="envoyer-sondage" element={<SendSurveyPage />} />
+          <Route path="ecoles/notes" element={<SchoolNotesPage />} />
+          <Route path="ecoles/liste" element={<SchoolsPage />} />
+          <Route path="ecoles/comparatif" element={<SchoolsComparativePage />} />
+          <Route path="ecoles/:id" element={<SchoolDetailPage />} />
+          <Route path="revenus" element={<RevenueTrackingPage />} />
+          <Route path="messages" element={<MessageTemplatesPage />} />
+          <Route path="planning-intelligent" element={<SchedulingAssistantPage />} />
+          <Route path="objectifs" element={<ObjectivesPage />} />
+          <Route path="simulation" element={<SimulationPage />} />
+          <Route path="deplacements" element={<TravelPage />} />
         </Route>
         <Route path="/eleve" element={<ProtectedRoute requiredRole="student"><Layout /></ProtectedRoute>}>
           <Route index element={<StudentDashboard />} />
@@ -81,12 +103,20 @@ function AppShell() {
   )
 }
 
+function ThemeInit() {
+  useTheme() // applique le thème sauvegardé dès le montage
+  return null
+}
+
 export default function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <AppShell />
-      </BrowserRouter>
+      <PeriodProvider>
+        <BrowserRouter>
+          <ThemeInit />
+          <AppShell />
+        </BrowserRouter>
+      </PeriodProvider>
     </AuthProvider>
   )
 }

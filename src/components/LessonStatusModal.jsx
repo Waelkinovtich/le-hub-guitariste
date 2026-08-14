@@ -4,13 +4,13 @@ import { updateLessonStatus } from '../services/lessons'
 import { LESSON_STATUSES, RAISONS_ANNULATION_PROF } from '../utils/lessonStatus'
 
 export default function LessonStatusModal({ lesson, onClose, onUpdated }) {
-  const [status, setStatus] = useState(lesson.status ?? 'planifié')
+  const [status, setStatus] = useState(lesson.status ?? 'planifie')
   const [absenceReason, setAbsenceReason] = useState(lesson.absenceReason ?? '')
   const [cancelReason, setCancelReason] = useState(lesson.cancelReason ?? '')
   const [submitting, setSubmitting] = useState(false)
 
   const needsAbsenceReason = ['absent', 'excuse'].includes(status)
-  const needsCancelReason = status === 'annulé_prof'
+  const needsCancelReason = status === 'annule_prof'
 
   const handleSubmit = async () => {
     setSubmitting(true)
@@ -64,7 +64,7 @@ export default function LessonStatusModal({ lesson, onClose, onUpdated }) {
 
         {needsCancelReason && (
           <div className="mb-4">
-            <label className="block text-sm text-muted-foreground mb-2">Raison de l annulation</label>
+            <label className="block text-sm text-muted-foreground mb-2">Raison de l'annulation</label>
             <div className="space-y-2">
               {RAISONS_ANNULATION_PROF.map((r) => (
                 <button key={r.value} type="button" onClick={() => setCancelReason(r.value)}
@@ -78,7 +78,7 @@ export default function LessonStatusModal({ lesson, onClose, onUpdated }) {
         )}
 
         <div className="flex gap-3">
-          <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">Annulér</button>
+          <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">Annuler</button>
           <button type="button" onClick={handleSubmit} disabled={submitting} className="flex-1 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-60 flex items-center justify-center gap-2">
             {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Enregistrer'}
           </button>

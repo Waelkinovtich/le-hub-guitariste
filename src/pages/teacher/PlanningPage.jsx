@@ -1,9 +1,12 @@
-import { useCallback, useMemo, useState } from 'react'
-import { Plus, Pencil, Trash2, ClipboardCheck, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useCallback, useMemo, useState, useEffect } from 'react'
+import { Plus, Pencil, Trash2, ClipboardCheck, ChevronLeft, ChevronRight, Download, HelpCircle, Eye, EyeOff, Navigation } from 'lucide-react'
+import { downloadIcs } from '../../utils/icsExport'
+import { currentSchoolYear } from '../../services/schools'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
-import { fetchLessonsInRange } from '../../services/lessons'
+import { fetchLessonsInRange, updateLessonPlanningStatus } from '../../services/lessons'
+import { fetchTeacherSchools } from '../../services/schools'
 import { startOfWeek, toISODate } from '../../utils/format'
 import { getPériodes, getCurrentPériode } from '../../utils/vacances'
 import AddLessonModal from '../../components/AddLessonModal'
@@ -13,6 +16,7 @@ import DeleteLessonModal from '../../components/DeleteLessonModal'
 import YearView from "../../components/YearView"
 import WeekGridView from "../../components/WeekGridView"
 import MonthView from '../../components/MonthView'
+import WeekGridPlanning from '../../components/WeekGridPlanning'
 
 const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: 'Mois' }, { value: 'période', label: 'Période scolaire' }, { value: 'année', label: 'Année' }]
@@ -33,6 +37,26 @@ export default function PlanningPage() {
   const [editLesson, setEditLesson] = useState(null)
   const [statusLesson, setStatusLesson] = useState(null)
   const [deleteLessonItem, setDeleteLessonItem] = useState(null)
+  const [showIcsPanel, setShowIcsPanel] = useState(false)
+  const [newLessonDraft, setNewLessonDraft] = useState(null)
+  const [hideEnvisages, setHideEnvisages] = useState(false)
+  const [togglingId, setTogglingId] = useState(null)
+  // Coordonnées GPS des écoles indexées par nom (pour les boutons de navigation)
+  const [schoolCoords, setSchoolCoords] = useState({})
+
+  useEffect(() => {
+    fetchTeacherSchools(user.id).then((schools) => {
+      const map = {}
+      schools.forEach((s) => { if (s.name) map[s.name] = { lat: s.latitude, lng: s.longitude, address: s.address } })
+      setSchoolCoords(map)
+    }).catch(() => {})
+  }, [user.id])
+
+  const [icsRange, setIcsRange] = useState(() => {
+    const yr = currentSchoolYear()
+    const [y1, y2] = yr.split('-').map(Number)
+    return { from: `${y1}-09-01`, to: `${y2}-07-31` }
+  })
 
   const périodes = useMemo(() => getPériodes(zone), [zone])
 
@@ -105,14 +129,43 @@ export default function PlanningPage() {
   }, [weekStart, lessons])
 
   const displayedLessons = useMemo(() => {
-    const all = lessons ?? []
+    let all = lessons ?? []
+    if (hideEnvisages) all = all.filter((l) => l.planningStatus !== 'envisage')
     if (selectedDay) return all.filter((l) => l.lessonDate === selectedDay)
     if (view === 'semaine') {
       const from = toISODate(weekStart), to = toISODate(weekEnd)
       return all.filter((l) => l.lessonDate >= from && l.lessonDate <= to)
     }
     return all
-  }, [lessons, selectedDay, view, weekStart, weekEnd])
+  }, [lessons, selectedDay, view, weekStart, weekEnd, hideEnvisages])
+
+  // Génère l'URL de navigation GPS selon la préférence du prof et la disponibilité des coordonnées
+  const buildGpsUrl = (schoolName) => {
+    if (!schoolName) return null
+    const coords = schoolCoords[schoolName]
+    const navApp = user.navApp ?? 'google_maps'
+    if (coords?.lat && coords?.lng) {
+      return navApp === 'waze'
+        ? `https://waze.com/ul?ll=${coords.lat},${coords.lng}&navigate=yes`
+        : `https://maps.google.com/?daddr=${coords.lat},${coords.lng}`
+    }
+    // Fallback : recherche par nom d'école
+    const encoded = encodeURIComponent(schoolName)
+    return navApp === 'waze'
+      ? `https://waze.com/ul?q=${encoded}`
+      : `https://maps.google.com/?q=${encoded}`
+  }
+
+  const togglePlanningStatus = async (lesson) => {
+    const next = lesson.planningStatus === 'envisage' ? 'confirme' : 'envisage'
+    setTogglingId(lesson.id)
+    try {
+      await updateLessonPlanningStatus(lesson.id, next)
+      reload()
+    } finally {
+      setTogglingId(null)
+    }
+  }
 
   const showNav = view === 'semaine' || view === 'mois'
 
@@ -123,11 +176,67 @@ export default function PlanningPage() {
           <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Planning</h1>
           <p className="text-muted-foreground mt-1">{headerLabel}</p>
         </div>
-        <button type="button" onClick={() => setShowAddForm(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity">
-          <Plus className="w-4 h-4" />
-          Ajouter un cours
-        </button>
+        <div className="flex gap-2 flex-wrap">
+          <button type="button" onClick={() => setShowAddForm(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity">
+            <Plus className="w-4 h-4" />
+            Ajouter un cours
+          </button>
+          <button
+            type="button"
+            onClick={() => setHideEnvisages((v) => !v)}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
+              hideEnvisages
+                ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
+                : 'border-border-subtle hover:bg-surface-overlay'
+            }`}
+            title={hideEnvisages ? 'Afficher les cours envisagés' : 'Masquer les cours envisagés'}
+          >
+            {hideEnvisages ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            {hideEnvisages ? 'Envisagés masqués' : 'Envisagés visibles'}
+          </button>
+          <button type="button" onClick={() => setShowIcsPanel((v) => !v)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">
+            <Download className="w-4 h-4" />
+            Exporter .ics
+          </button>
+        </div>
       </header>
+
+      {showIcsPanel && (
+        <div className="glass-panel rounded-2xl p-4 mb-4">
+          <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3">Exporter mon planning (.ics)</p>
+          <p className="text-xs text-muted-foreground mb-3">
+            Génère un fichier importable directement dans Calendrier (macOS/iOS) par double-clic. Les cours annulés sont inclus.
+          </p>
+          <div className="flex flex-wrap gap-3 items-end mb-3">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Du</label>
+              <input type="date" value={icsRange.from} onChange={(e) => setIcsRange((r) => ({ ...r, from: e.target.value }))}
+                className="px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Au</label>
+              <input type="date" value={icsRange.to} onChange={(e) => setIcsRange((r) => ({ ...r, to: e.target.value }))}
+                className="px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const filtered = (lessons ?? []).filter((l) => l.lessonDate >= icsRange.from && l.lessonDate <= icsRange.to)
+                const yr = currentSchoolYear()
+                downloadIcs(filtered, `planning-guitare-${yr}.ics`)
+              }}
+              disabled={!(lessons ?? []).length}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-40"
+            >
+              <Download className="w-4 h-4" />
+              Télécharger ({(lessons ?? []).filter((l) => l.lessonDate >= icsRange.from && l.lessonDate <= icsRange.to).length} cours)
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Sur iPhone ou iPad : ouvrez le fichier depuis Mail ou Fichiers — Calendrier proposera de l'importer directement.
+          </p>
+        </div>
+      )}
 
       <div className="flex gap-2 mb-4 flex-wrap">
         {VIEWS.map((v) => (
@@ -167,25 +276,17 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {view === 'semaine' && (
-        <div className="grid grid-cols-7 gap-2 mb-8">
-          {weekDays.map(({ label, dayNum, iso, isToday, count }) => {
-            const isSelected = selectedDay === iso
-            return (
-              <button key={label} onClick={() => setSelectedDay(isSelected ? null : iso)}
-                className={'text-center py-3 rounded-xl text-sm font-medium transition-colors ' + (isSelected ? 'ring-2 ring-guitar-400 ' : '') + (isToday ? 'guitar-gradient text-white' : 'glass-panel text-muted-foreground hover:bg-surface-overlay')}>
-                {label}
-                <span className="block text-lg mt-0.5 font-semibold">{dayNum}</span>
-                {count > 0 && (
-                  <span className={'inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded-full ' + (isToday ? 'bg-white/20' : 'bg-guitar-600/20 text-guitar-400')}>
-                    {count} cours
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </div>
+      {/* Vue Semaine : grille interactive 08h–22h */}
+      {view === 'semaine' && !loading && !error && (
+        <WeekGridPlanning
+          weekDays={weekDays}
+          lessons={displayedLessons}
+          onNewLesson={(draft) => setNewLessonDraft(draft)}
+          onSelectLesson={(lesson) => setEditLesson(lesson)}
+        />
       )}
+      {view === 'semaine' && loading && <LoadingBlock label="Chargement du planning" />}
+      {view === 'semaine' && error && <ErrorBlock message={error} onRetry={reload} />}
 
       {view === 'année' && !selectedDay && (
         loading ? null : (
@@ -200,7 +301,7 @@ export default function PlanningPage() {
         loading ? <LoadingBlock label="Chargement" /> : error ? <ErrorBlock message={error} onRetry={reload} /> : (
           <MonthView monthDate={monthDate} lessons={lessons ?? []} zone={zone} onSelectDay={(iso) => setSelectedDay(iso)} onSelectLesson={(l) => setStatusLesson(l)} />
         )
-      ) : (
+      ) : view !== 'semaine' ? (
         <>
           {selectedDay && (
             <button onClick={() => setSelectedDay(null)} className="text-sm text-guitar-400 mb-4 hover:underline">
@@ -212,23 +313,41 @@ export default function PlanningPage() {
           ) : (
             <div className="space-y-3">
               {displayedLessons.map((lesson) => {
-                const statusInfo = getStatusInfo(lesson.status)
-              return (
-                  <article key={lesson.id} className="glass-panel rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center gap-4" style={{ borderLeft: '4px solid ' + statusInfo.color }}>
+                const statusInfo  = getStatusInfo(lesson.status)
+                const isEnvisage  = lesson.planningStatus === 'envisage'
+                const toggling    = togglingId === lesson.id
+                return (
+                  <article
+                    key={lesson.id}
+                    className={`glass-panel rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center gap-4 transition-opacity ${isEnvisage ? 'opacity-70' : ''}`}
+                    style={{
+                      borderLeft: `4px ${isEnvisage ? 'dashed' : 'solid'} ${isEnvisage ? '#9ca3af' : statusInfo.color}`,
+                    }}
+                  >
                     <div className="sm:w-32 shrink-0">
-                      <p className="font-medium" style={{ color: statusInfo.color }}>{lesson.dateLabel}</p>
-                      <p className="text-2xl font-semibold">{lesson.timeLabel}</p>
+                      <p className="font-medium" style={{ color: isEnvisage ? '#9ca3af' : statusInfo.color }}>{lesson.dateLabel}</p>
+                      <p className={`text-2xl font-semibold ${isEnvisage ? 'text-muted-foreground' : ''}`}>{lesson.timeLabel}</p>
                     </div>
                     <div className="flex-1">
-                      <h3 className="font-semibold text-lg">{lesson.studentName || 'Élève'}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className={`font-semibold text-lg ${isEnvisage ? 'italic text-muted-foreground' : ''}`}>{lesson.studentName || 'Élève'}</h3>
+                        {isEnvisage && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25">
+                            <HelpCircle className="w-2.5 h-2.5" />
+                            Envisagé
+                          </span>
+                        )}
+                      </div>
                       <p className="text-muted-foreground mt-1">{lesson.topic}</p>
                       {lesson.notes && <p className="text-xs text-muted-foreground mt-1 italic">{lesson.notes}</p>}
                       {lesson.absenceReason && <p className="text-xs mt-1 italic" style={{ color: statusInfo.color }}>Motif : {lesson.absenceReason}</p>}
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border" style={{ backgroundColor: statusInfo.color + '20', borderColor: statusInfo.color + '50', color: statusInfo.color }}>
-                        {statusInfo.emoji} {statusInfo.label}
-                      </span>
+                      {!isEnvisage && (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border" style={{ backgroundColor: statusInfo.color + '20', borderColor: statusInfo.color + '50', color: statusInfo.color }}>
+                          {statusInfo.emoji} {statusInfo.label}
+                        </span>
+                      )}
                       <span className="inline-flex px-3 py-1 rounded-full text-xs font-medium bg-guitar-600/15 text-guitar-400 border border-guitar-600/25">
                         {lesson.durationMinutes} min
                       </span>
@@ -238,10 +357,35 @@ export default function PlanningPage() {
                         </span>
                       )}
                     </div>
-                    <div className="flex gap-2 self-start sm:self-center">
-                      <button onClick={() => setStatusLesson(lesson)} title="Émargement" className="p-2 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors text-guitar-400">
-                        <ClipboardCheck className="w-4 h-4" />
+                    <div className="flex gap-2 self-start sm:self-center flex-wrap">
+                      {lesson.schoolName && buildGpsUrl(lesson.schoolName) && (
+                        <a
+                          href={buildGpsUrl(lesson.schoolName)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={`Naviguer vers ${lesson.schoolName}`}
+                          className="p-2 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors text-muted-foreground hover:text-foreground"
+                        >
+                          <Navigation className="w-4 h-4" />
+                        </a>
+                      )}
+                      <button
+                        onClick={() => togglePlanningStatus(lesson)}
+                        disabled={toggling}
+                        title={isEnvisage ? 'Confirmer ce cours' : 'Marquer comme envisagé'}
+                        className={`p-2 rounded-lg border transition-colors ${
+                          isEnvisage
+                            ? 'border-amber-500/40 text-amber-400 hover:bg-amber-500/10'
+                            : 'border-border-subtle text-muted hover:text-amber-400 hover:bg-amber-500/10'
+                        }`}
+                      >
+                        <HelpCircle className="w-4 h-4" />
                       </button>
+                      {!isEnvisage && (
+                        <button onClick={() => setStatusLesson(lesson)} title="Émargement" className="p-2 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors text-guitar-400">
+                          <ClipboardCheck className="w-4 h-4" />
+                        </button>
+                      )}
                       <button onClick={() => setEditLesson(lesson)} title="Modifier" className="p-2 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors">
                         <Pencil className="w-4 h-4" />
                       </button>
@@ -255,9 +399,10 @@ export default function PlanningPage() {
             </div>
           )}
         </>
-      )}
+      ) : null}
 
       {showAddForm && <AddLessonModal teacherId={user.id} onClose={() => setShowAddForm(false)} onCreated={() => reload()} />}
+      {newLessonDraft && <AddLessonModal teacherId={user.id} lesson={newLessonDraft} onClose={() => setNewLessonDraft(null)} onCreated={() => { reload(); setNewLessonDraft(null) }} />}
       {editLesson && <AddLessonModal teacherId={user.id} lesson={editLesson} onClose={() => setEditLesson(null)} onCreated={() => { reload(); setEditLesson(null) }} />}
       {statusLesson && <LessonStatusModal lesson={statusLesson} onClose={() => setStatusLesson(null)} onUpdated={() => { reload(); setStatusLesson(null) }} />}
       {deleteLessonItem && <DeleteLessonModal lesson={deleteLessonItem} onClose={() => setDeleteLessonItem(null)} onDeleted={() => { reload(); setDeleteLessonItem(null) }} />}

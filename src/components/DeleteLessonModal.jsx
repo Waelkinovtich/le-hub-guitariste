@@ -74,8 +74,8 @@ export default function DeleteLessonModal({ lesson, onClose, onDeleted }) {
               </>
             )}
 
-            <button onClick={onClose} className="w-full py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surfoverlay transition-colors mt-2">
-              Annulér
+            <button onClick={onClose} className="w-full py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors mt-2">
+              Annuler
             </button>
           </div>
         )}

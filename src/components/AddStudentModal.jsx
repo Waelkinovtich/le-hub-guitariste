@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { X, Loader2 } from 'lucide-react'
-import { createStudent, updateStudent, fetchSchoolNames } from '../services/students'
+import { createStudent, updateStudent } from '../services/students'
+import { fetchTeacherSchools, findOrCreateSchool } from '../services/schools'
 import { getSchoolColor } from '../utils/schoolColors'
 
 const LEVELS = ['Debutant', 'Intermediaire', 'Avance']
@@ -9,13 +10,15 @@ const YEARS = Array.from({ length: 80 }, (_, i) => currentYear - i)
 
 export default function AddStudentModal({ teacherId, student, onClose, onCreated }) {
   const isEdit = Boolean(student)
-  const [form, setForm] = useState({ firstName: student?.firstName ?? '', lastName: student?.lastName ?? '', email: student?.email ?? '', phone: student?.phone ?? '', studentPhone: student?.studentPhone ?? '', level: student?.level ?? '', instrument: student?.instrument ?? '', progress: student?.progress ?? 0, lessonType: student?.lessonType ?? 'particulier', schoolName: student?.schoolName ?? '', birthYear: student?.birthYear ?? '', notes: student?.notes ?? '', parent1Name: student?.parent1Name ?? '', parent1Phone: student?.parent1Phone ?? '', parent1Email: student?.parent1Email ?? '', parent2Name: student?.parent2Name ?? '', parent2Phone: student?.parent2Phone ?? '', parent2Email: student?.parent2Email ?? '' })
+  const [form, setForm] = useState({ firstName: student?.firstName ?? '', lastName: student?.lastName ?? '', email: student?.email ?? '', phone: student?.phone ?? '', studentPhone: student?.studentPhone ?? '', level: student?.level ?? '', instrument: student?.instrument ?? '', progress: student?.progress ?? 0, lessonType: student?.lessonType ?? 'particulier', schoolName: student?.schoolName ?? '', schoolId: student?.schoolId ?? null, birthYear: student?.birthYear ?? '', notes: student?.notes ?? '', parent1Name: student?.parent1Name ?? '', parent1Phone: student?.parent1Phone ?? '', parent1Email: student?.parent1Email ?? '', parent2Name: student?.parent2Name ?? '', parent2Phone: student?.parent2Phone ?? '', parent2Email: student?.parent2Email ?? '' })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [knownSchools, setKnownSchools] = useState([])
+  const [newSchoolName, setNewSchoolName] = useState('')
+  const [addingNew, setAddingNew] = useState(false)
 
   useEffect(() => {
-    fetchSchoolNames(teacherId).then(setKnownSchools).catch(() => {})
+    fetchTeacherSchools(teacherId).then(setKnownSchools).catch(() => {})
   }, [teacherId])
 
   const update = (field) => (e) => {
@@ -27,10 +30,20 @@ export default function AddStudentModal({ teacherId, student, onClose, onCreated
     e.preventDefault()
     setError('')
     if (!form.firstName.trim() || !form.lastName.trim()) { setError('Le prenom et le nom sont obligatoires.'); return }
-    if (form.lessonType === 'ecole' && !form.schoolName.trim()) { setError('Precisez le nom de l école.'); return }
+    if (form.lessonType === 'ecole' && !form.schoolName.trim() && !newSchoolName.trim()) { setError("Precisez le nom de l'école."); return }
     setSubmitting(true)
     try {
-      const result = isEdit ? await updateStudent(student.id, form) : await createStudent(teacherId, form)
+      let finalForm = { ...form }
+      if (form.lessonType === 'ecole') {
+        const schoolName = addingNew ? newSchoolName.trim() : form.schoolName.trim()
+        if (schoolName) {
+          const school = await findOrCreateSchool(teacherId, schoolName)
+          finalForm = { ...finalForm, schoolName: school.name, schoolId: school.id }
+        }
+      } else {
+        finalForm = { ...finalForm, schoolName: '', schoolId: null }
+      }
+      const result = isEdit ? await updateStudent(student.id, finalForm) : await createStudent(teacherId, finalForm)
       onCreated(result)
       onClose()
     } catch (err) {
@@ -137,17 +150,49 @@ export default function AddStudentModal({ teacherId, student, onClose, onCreated
             </div>
             {form.lessonType === 'ecole' && (
               <div>
-                <label className="block text-sm text-muted-foreground mb-1.5">Nom de l école</label>
-                <input value={form.schoolName} onChange={update('schoolName')} placeholder="Ex: École de musique de Lyon..." list="schools-list" className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
-                <datalist id="schools-list">{knownSchools.map((s) => <option key={s} value={s} />)}</datalist>
-                {knownSchools.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {knownSchools.map((s) => (
-                      <button key={s} type="button" onClick={() => setForm((p) => ({ ...p, schoolName: s }))}
-                        style={{ backgroundColor: getSchoolColor(s, knownSchools) + '25', borderColor: getSchoolColor(s, knownSchools) + '60', color: getSchoolColor(s, knownSchools) }}
-                        className="px-2 py-1 rounded-full text-xs font-medium border transition-opacity hover:opacity-80">{s}
-                      </button>
-                    ))}
+                <label className="block text-sm text-muted-foreground mb-1.5">École</label>
+                {!addingNew ? (
+                  <>
+                    <select
+                      value={form.schoolId ?? ''}
+                      onChange={(e) => {
+                        if (e.target.value === '__new__') { setAddingNew(true); return }
+                        const school = knownSchools.find((s) => s.id === e.target.value)
+                        setForm((p) => ({ ...p, schoolId: school?.id ?? null, schoolName: school?.name ?? '' }))
+                      }}
+                      className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                    >
+                      <option value="">-- Choisir une école --</option>
+                      {knownSchools.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                      <option value="__new__">+ Nouvelle école…</option>
+                    </select>
+                    {form.schoolId && (() => {
+                      const names = knownSchools.map((s) => s.name)
+                      return (
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {knownSchools.map((s) => (
+                            <button key={s.id} type="button"
+                              onClick={() => setForm((p) => ({ ...p, schoolId: s.id, schoolName: s.name }))}
+                              style={{ backgroundColor: getSchoolColor(s.name, names) + '25', borderColor: getSchoolColor(s.name, names) + '60', color: getSchoolColor(s.name, names) }}
+                              className={`px-2 py-1 rounded-full text-xs font-medium border transition-opacity hover:opacity-80 ${form.schoolId === s.id ? 'opacity-100' : 'opacity-50'}`}
+                            >{s.name}</button>
+                          ))}
+                        </div>
+                      )
+                    })()}
+                  </>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      value={newSchoolName}
+                      onChange={(e) => setNewSchoolName(e.target.value)}
+                      placeholder="Nom de la nouvelle école..."
+                      autoFocus
+                      className="flex-1 px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                    />
+                    <button type="button" onClick={() => { setAddingNew(false); setNewSchoolName('') }} className="px-3 py-2.5 rounded-xl border border-border-subtle text-sm hover:bg-surface-overlay transition-colors">Annuler</button>
                   </div>
                 )}
               </div>

@@ -54,3 +54,72 @@
     background-image: linear-gradient(135deg, #fca5a5 0%, #dc2626 50%, #991b1b 100%);
   }
 }
+
+/* ── Thème Clair ──────────────────────────────────────────────────────────── */
+[data-theme="clair"] {
+  --color-void:           #f0f0f5;
+  --color-surface:        #ffffff;
+  --color-surface-raised: #f5f5fa;
+  --color-surface-overlay:#eaeaf2;
+  --color-border:         #c0c0cc;
+  --color-border-subtle:  #d8d8e4;
+  --color-muted:          #5a5a72;
+  --color-muted-foreground:#6b6b88;
+  --color-foreground:     #18182a;
+}
+[data-theme="clair"] body {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, var(--color-guitar-glow), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 100%, #dc262615, transparent);
+}
+[data-theme="clair"] .glass-panel {
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(24px);
+  border-color: var(--color-border-subtle);
+}
+
+/* ── Thème Rose ───────────────────────────────────────────────────────────── */
+[data-theme="rose"] {
+  --color-guitar-400:  #f9a8d4;
+  --color-guitar-500:  #ec4899;
+  --color-guitar-600:  #db2777;
+  --color-guitar-700:  #be185d;
+  --color-guitar-glow: #db277733;
+}
+[data-theme="rose"] body {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, var(--color-guitar-glow), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 100%, #db277720, transparent);
+}
+[data-theme="rose"] .text-gradient-guitar {
+  background-image: linear-gradient(135deg, #fda4c8 0%, #db2777 50%, #9d174d 100%);
+}
+
+/* ── Thème Vert cacadois ──────────────────────────────────────────────────── */
+[data-theme="vert"] {
+  --color-guitar-400:  #bef264;
+  --color-guitar-500:  #a3e635;
+  --color-guitar-600:  #84cc16;
+  --color-guitar-700:  #65a30d;
+  --color-guitar-glow: #84cc1633;
+}
+[data-theme="vert"] body {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, var(--color-guitar-glow), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 100%, #84cc1620, transparent);
+}
+[data-theme="vert"] .text-gradient-guitar {
+  background-image: linear-gradient(135deg, #d9f99d 0%, #84cc16 50%, #4d7c0f 100%);
+}
+
+/* Thème personnalisé : guitar-600 est injecté via JS (style inline sur :root) */
+[data-theme="personnalise"] {
+  --color-guitar-400:  color-mix(in srgb, var(--color-guitar-600) 60%, white);
+  --color-guitar-500:  color-mix(in srgb, var(--color-guitar-600) 80%, white);
+  --color-guitar-700:  color-mix(in srgb, var(--color-guitar-600) 80%, black);
+  --color-guitar-glow: color-mix(in srgb, var(--color-guitar-600) 20%, transparent);
+}
+[data-theme="personnalise"] body {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, var(--color-guitar-glow), transparent);
+}

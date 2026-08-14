@@ -2,17 +2,19 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { Plus, Users, Music2, Trash2 } from 'lucide-react'
+import { Plus, Users, Music2, Trash2, CalendarDays } from 'lucide-react'
 import CreateGroupModal from './CreateGroupModal'
+import { usePeriod } from '../../context/PeriodContext'
 
 const TYPE_LABELS = {
   cours_collectif: { label: 'Cours collectif', icon: '🎸', color: 'bg-blue-500/15 text-blue-400' },
-  repetition: { label: 'Repetition', icon: '🎵', color: 'bg-purple-500/15 text-purple-400' },
+  repetition: { label: 'Répétition', icon: '🎵', color: 'bg-purple-500/15 text-purple-400' },
   ensemble: { label: 'Ensemble', icon: '🎶', color: 'bg-green-500/15 text-green-400' },
 }
 
 export default function GroupesPage() {
   const { user } = useAuth()
+  const { period: periodCtx } = usePeriod()
   const navigate = useNavigate()
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
@@ -51,8 +53,8 @@ export default function GroupesPage() {
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-display">Groupes et Repetitions</h1>
-          <p className="text-sm text-muted mt-1">Gerez vos cours collectifs, repetitions et ensembles</p>
+          <h1 className="text-2xl font-display">Groupes et Répétitions</h1>
+          <p className="text-sm text-muted mt-1">Gérez vos cours collectifs, répétitions et ensembles</p>
         </div>
         <button onClick={() => setShowCreate(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-guitar-600 text-white text-sm font-medium hover:bg-guitar-700 transition-all">
@@ -61,8 +63,15 @@ export default function GroupesPage() {
         </button>
       </div>
 
+      {periodCtx.mode !== 'toutes' && (
+        <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/20 text-xs text-guitar-400">
+          <CalendarDays className="w-3.5 h-3.5 shrink-0" />
+          Filtre temporel global actif — les séances de chaque groupe sont filtrées par la période sélectionnée dans la barre latérale.
+        </div>
+      )}
+
       {loading ? (
-        <p className="text-muted text-sm">Chargement...</p>
+        <p className="text-muted text-sm">Chargement…</p>
       ) : groups.length === 0 ? (
         <div className="text-center py-16 text-muted">
           <Music2 className="w-12 h-12 mx-auto mb-3 opacity-30" />

@@ -3,7 +3,7 @@ import { TABLES } from '../lib/tables'
 import { fullName, formatLessonDateLabel, formatTime } from '../utils/format'
 
 const LESSON_SELECT = `
-  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group,
+  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group, planning_status, context_type,
   student:${TABLES.students} (id, first_name, last_name, level, instrument, lesson_type, school_name)
 `
 
@@ -23,6 +23,8 @@ function mapLesson(row) {
     absenceReason: row.absence_reason ?? null,
     cancelReason: row.cancel_reason ?? null,
     recurrenceGroup: row.recurrence_group ?? null,
+    planningStatus: row.planning_status ?? 'confirme',
+    contextType:   row.context_type ?? null,
     studentName,
     dateLabel: formatLessonDateLabel(row.lesson_date),
     timeLabel: formatTime(row.lesson_time),
@@ -83,13 +85,13 @@ export function formatNextLessonLabel(lesson) {
 }
 
 export async function createLesson(teacherId, input) {
-  const { data, error } = await supabase.from(TABLES.lessons).insert({ teacher_id: teacherId, student_id: input.studentId, lesson_date: input.lessonDate, lesson_time: input.lessonTime, duration_minutes: input.durationMinutes ?? 45, topic: input.topic, notes: input.notes ?? null, status: 'planifie' }).select(LESSON_SELECT).single()
+  const { data, error } = await supabase.from(TABLES.lessons).insert({ teacher_id: teacherId, student_id: input.studentId, lesson_date: input.lessonDate, lesson_time: input.lessonTime, duration_minutes: input.durationMinutes ?? 45, topic: input.topic, notes: input.notes ?? null, status: 'planifie', context_type: input.contextType ?? null }).select(LESSON_SELECT).single()
   if (error) throw new Error(error.message)
   return mapLesson(data)
 }
 
 export async function updateLesson(lessonId, input) {
-  const { data, error } = await supabase.from(TABLES.lessons).update({ student_id: input.studentId, lesson_date: input.lessonDate, lesson_time: input.lessonTime, duration_minutes: Number(input.durationMinutes), topic: input.topic, notes: input.notes ?? null }).eq('id', lessonId).select(LESSON_SELECT).single()
+  const { data, error } = await supabase.from(TABLES.lessons).update({ student_id: input.studentId, lesson_date: input.lessonDate, lesson_time: input.lessonTime, duration_minutes: Number(input.durationMinutes), topic: input.topic, notes: input.notes ?? null, context_type: input.contextType ?? null }).eq('id', lessonId).select(LESSON_SELECT).single()
   if (error) throw new Error(error.message)
   return mapLesson(data)
 }
@@ -192,4 +194,12 @@ export async function fetchGroupSessionsInRange({ teacherId, from, to }) {
       timeLabel: formatTime(s.session_time),
     }
   })
+}
+
+export async function updateLessonPlanningStatus(lessonId, planningStatus) {
+  const { error } = await supabase
+    .from(TABLES.lessons)
+    .update({ planning_status: planningStatus })
+    .eq('id', lessonId)
+  if (error) throw new Error(error.message)
 }

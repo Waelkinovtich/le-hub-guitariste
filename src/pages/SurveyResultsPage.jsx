@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -78,6 +78,9 @@ function DetailView({ response, onBack }) {
 
       <div className="glass-panel rounded-2xl p-6 space-y-6">
         <Section title="Identité">
+          {response.assigned_day && (
+            <InfoRow icon={Clock} label="Créneau confirmé" value={`${response.assigned_day} ${response.assigned_time ?? ''}`.trim()} />
+          )}
           <InfoRow icon={User}     label="Année de naissance" value={response.birth_year} />
           <InfoRow icon={Mail}     label="Email"              value={response.email} />
           <InfoRow icon={Phone}    label="Téléphone"          value={response.phone} />
@@ -286,7 +289,7 @@ function SlotAssignPanel({ response, onConfirmed, onClose }) {
       const count = await createRecurringLessons(teacherId, response.student_id, selection.day, startTime, totalMinutes)
       const { error: updErr } = await supabase
         .from('survey_responses')
-        .update({ status: 'confirme' })
+        .update({ status: 'confirme', assigned_day: selection.day, assigned_time: parseStartTime(selection.slots[0]) })
         .eq('id', response.id)
       if (updErr) throw new Error(updErr.message)
       onConfirmed(count, { day: selection.day, slot: selection.slots[0] })
@@ -382,7 +385,48 @@ function SlotAssignPanel({ response, onConfirmed, onClose }) {
 
 // ─── Carte de réponse ─────────────────────────────────────────────────────────
 
-function ResponseCard({ r, openPanelId, setOpenPanelId, onToggleStatus, onSelect, onConfirmed, onReassign }) {
+function RegistrationsList({ registrations }) {
+  if (!registrations || registrations.length === 0) return null
+  return (
+    <div className="px-5 pb-4 pt-1">
+      <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">
+        Inscriptions ({registrations.length})
+      </p>
+      <div className="space-y-1.5">
+        {registrations.map((reg) => (
+          <div key={reg.id}
+            className="flex flex-wrap items-center gap-2 text-xs px-3 py-2 rounded-lg bg-surface border border-border-subtle">
+            {reg.is_respondent && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-guitar-600/15 text-guitar-400 border border-guitar-600/25 flex-shrink-0">
+                Répondant
+              </span>
+            )}
+            <span className="font-medium text-foreground">
+              {reg.prenom || '—'} {reg.nom || ''}
+            </span>
+            {reg.choix_structure === 'cesu' ? (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/25 flex items-center gap-1 flex-shrink-0">
+                <Home className="w-2.5 h-2.5" />CESU
+              </span>
+            ) : reg.school_name ? (
+              <span className="px-1.5 py-0.5 rounded text-[10px] bg-surface-raised border border-border-subtle text-muted-foreground flex-shrink-0">
+                {reg.school_name}
+              </span>
+            ) : null}
+            {reg.email && (
+              <span className="text-muted-foreground truncate">{reg.email}</span>
+            )}
+            {reg.telephone && (
+              <span className="text-muted-foreground flex-shrink-0">{reg.telephone}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ResponseCard({ r, registrations, openPanelId, setOpenPanelId, onSelect, onConfirmed, onReassign, onDelete }) {
   return (
     <div className="glass-panel rounded-2xl overflow-hidden">
       <div
@@ -404,16 +448,17 @@ function ResponseCard({ r, openPanelId, setOpenPanelId, onToggleStatus, onSelect
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              onClick={(e) => onToggleStatus(e, r)}
-              className={`text-xs px-2.5 py-1 rounded-lg border font-medium transition-all ${
-                r.status === 'confirme'
-                  ? 'border-green-600/40 bg-green-600/10 text-green-400 hover:bg-green-600/20'
-                  : 'border-border-subtle bg-surface text-muted-foreground hover:border-border'
-              }`}
-            >
-              {r.status === 'confirme' ? 'Confirmé' : 'Attente'}
-            </button>
+            <span className={`text-xs px-2.5 py-1 rounded-lg border font-medium ${
+              r.status === 'confirme'
+                ? 'border-green-600/40 bg-green-600/10 text-green-400'
+                : 'border-border-subtle bg-surface text-muted-foreground'
+            }`}>
+              {r.status === 'confirme'
+                ? r.assigned_day
+                  ? `Confirmé — ${r.assigned_day} ${r.assigned_time ?? ''}`
+                  : 'Confirmé'
+                : 'En attente'}
+            </span>
             <div className="flex items-center gap-1.5 text-xs text-muted">
               <Calendar className="w-3.5 h-3.5" />
               {fmt(r.submitted_at)}
@@ -421,6 +466,8 @@ function ResponseCard({ r, openPanelId, setOpenPanelId, onToggleStatus, onSelect
           </div>
         </div>
       </div>
+
+      <RegistrationsList registrations={registrations} />
 
       <div className="px-5 pb-4 border-t border-border-subtle pt-3 flex flex-wrap gap-2">
         {r.status !== 'confirme' && (
@@ -446,6 +493,19 @@ function ResponseCard({ r, openPanelId, setOpenPanelId, onToggleStatus, onSelect
             Modifier le créneau
           </button>
         )}
+
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            if (window.confirm(`Supprimer la réponse de ${r.first_name || ''} ${r.last_name || ''} ? Cette action est irréversible.`)) {
+              onDelete(r)
+            }
+          }}
+          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-border-subtle text-muted-foreground hover:border-guitar-600/40 hover:text-guitar-400 hover:bg-guitar-600/8 transition-all"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          Supprimer
+        </button>
 
         {openPanelId === r.id && (
           <div className="w-full">
@@ -473,6 +533,7 @@ function SectionTitle({ children, count }) {
 
 export default function SurveyResultsPage() {
   const [responses, setResponses] = useState([])
+  const [registrations, setRegistrations] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
   const [fetchError, setFetchError] = useState(null)
@@ -481,29 +542,26 @@ export default function SurveyResultsPage() {
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const { data, error } = await supabase
-        .from('survey_responses')
-        .select('*')
-        .order('submitted_at', { ascending: false })
-      setFetchError(error?.message ?? null)
-      setResponses(data ?? [])
+      const [survRes, regsRes] = await Promise.all([
+        supabase.from('survey_responses').select('*').order('submitted_at', { ascending: false }),
+        supabase.from('survey_registrations').select('*').order('created_at', { ascending: true }),
+      ])
+      setFetchError(survRes.error?.message ?? null)
+      setResponses(survRes.data ?? [])
+      setRegistrations(regsRes.data ?? [])
       setLoading(false)
     }
     load()
   }, [])
 
-  const toggleStatus = async (e, r) => {
-    e.stopPropagation()
-    const newStatus = r.status === 'confirme' ? 'attente' : 'confirme'
-    const { error } = await supabase
-      .from('survey_responses')
-      .update({ status: newStatus })
-      .eq('id', r.id)
-    if (!error) {
-      setResponses(prev => prev.map(x => x.id === r.id ? { ...x, status: newStatus } : x))
-      if (selected?.id === r.id) setSelected(s => ({ ...s, status: newStatus }))
+  const regsByToken = useMemo(() => {
+    const map = {}
+    for (const reg of registrations) {
+      if (!map[reg.token_id]) map[reg.token_id] = []
+      map[reg.token_id].push(reg)
     }
-  }
+    return map
+  }, [registrations])
 
   const handleConfirmed = (count, slot) => {
     setResponses(prev => prev.map(x =>
@@ -512,11 +570,21 @@ export default function SurveyResultsPage() {
     setOpenPanelId(null)
   }
 
+  const handleDelete = async (r) => {
+    const { error } = await supabase
+      .from('survey_responses')
+      .delete()
+      .eq('id', r.id)
+    if (!error) {
+      setResponses(prev => prev.filter(x => x.id !== r.id))
+    }
+  }
+
   const handleReassign = async (r) => {
     const today = new Date().toISOString().slice(0, 10)
     await supabase
       .from('survey_responses')
-      .update({ status: 'attente' })
+      .update({ status: 'attente', assigned_day: null, assigned_time: null })
       .eq('id', r.id)
     await supabase
       .from('lessons')
@@ -573,12 +641,14 @@ export default function SurveyResultsPage() {
                   <ResponseCard
                     key={r.id}
                     r={r}
+                    registrations={regsByToken[r.token_id] ?? []}
                     openPanelId={openPanelId}
                     setOpenPanelId={setOpenPanelId}
-                    onToggleStatus={toggleStatus}
+
                     onSelect={setSelected}
                     onConfirmed={handleConfirmed}
                     onReassign={handleReassign}
+                    onDelete={handleDelete}
                   />
                 ))}
               </div>
@@ -592,11 +662,13 @@ export default function SurveyResultsPage() {
                   <ResponseCard
                     key={r.id}
                     r={r}
+                    registrations={regsByToken[r.token_id] ?? []}
                     openPanelId={openPanelId}
                     setOpenPanelId={setOpenPanelId}
-                    onToggleStatus={toggleStatus}
+
                     onSelect={setSelected}
                     onConfirmed={handleConfirmed}
+                    onDelete={handleDelete}
                   />
                 ))}
               </div>
