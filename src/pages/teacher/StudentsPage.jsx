@@ -5,6 +5,7 @@ import { usePeriod, filterStudentsByPeriod } from '../../context/PeriodContext'
 import AddStudentModal from '../../components/AddStudentModal'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
 import { useAuth } from '../../context/AuthContext'
+import AideContextuelle from '../../components/AideContextuelle'
 import { useFetch } from '../../hooks/useFetch'
 import { fetchTeacherStudents, fetchSchoolNames, fetchAllContextsByStudent } from '../../services/students'
 import { fetchUpcomingLessons, buildNextLessonByStudent, formatNextLessonLabel } from '../../services/lessons'
@@ -97,6 +98,7 @@ export default function StudentsPage() {
           Ajouter un élève
         </button>
       </header>
+      <AideContextuelle texte="Vos élèves sont listés ici. Cliquez sur une fiche pour voir l'historique de cours, les contextes (école de musique, CESU) et le prochain cours prévu. Un élève peut avoir plusieurs casquettes : école ET cours particulier CESU, reflétant la réalité de votre activité." />
 
       <div className="flex flex-col sm:flex-row flex-wrap gap-3 mb-6">
         <div className="relative flex-1 min-w-48">

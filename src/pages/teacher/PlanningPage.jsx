@@ -4,6 +4,7 @@ import { downloadIcs } from '../../utils/icsExport'
 import { currentSchoolYear } from '../../services/schools'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
 import { useAuth } from '../../context/AuthContext'
+import AideContextuelle from '../../components/AideContextuelle'
 import { useFetch } from '../../hooks/useFetch'
 import { fetchLessonsInRange, updateLessonPlanningStatus } from '../../services/lessons'
 import { fetchTeacherSchools } from '../../services/schools'
@@ -200,6 +201,7 @@ export default function PlanningPage() {
           </button>
         </div>
       </header>
+      <AideContextuelle texte="Le planning affiche vos cours semaine par semaine. Un cours peut être « envisagé » (créneau à confirmer), « réalisé », « annulé » ou « rattrapé ». Cliquez sur un cours pour mettre à jour son statut ou l'éditer. Les cours envisagés peuvent être masqués pour ne voir que le planning ferme." />
 
       {showIcsPanel && (
         <div className="glass-panel rounded-2xl p-4 mb-4">

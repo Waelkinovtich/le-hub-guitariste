@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { fetchTeacherSchools, createSchool, deleteSchool, currentSchoolYear, computePriorityScore, isScoreIncomplete } from '../services/schools'
 import { fetchContextCountsBySchool } from '../services/students'
 import { getSchoolColor } from '../utils/schoolColors'
+import AideContextuelle from '../components/AideContextuelle'
 
 export default function SchoolsPage() {
   const navigate = useNavigate()
@@ -128,6 +129,7 @@ export default function SchoolsPage() {
           Comparatif
         </button>
       </header>
+      <AideContextuelle texte="Chaque fiche représente une structure : école de musique ou employeur CESU (famille en cours particulier). Le score de priorité est calculé automatiquement depuis vos notes (locaux, ambiance, contrat...). Cliquez sur une fiche pour rattacher des élèves ou mettre à jour les taux horaires." />
 
       {/* Ajouter une école */}
       <div className="glass-panel rounded-2xl p-5 mb-6">

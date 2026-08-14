@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { geocodeAddress } from '../../utils/geocode'
-import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation } from 'lucide-react'
+import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, HelpCircle } from 'lucide-react'
 import { useTheme, THEMES } from '../../hooks/useTheme'
 import { fetchMileageRates, upsertMileageRate, deleteMileageRate, seedDefaultRates } from '../../services/mileageRates'
 
@@ -39,6 +39,10 @@ const inputCls = 'w-full px-3 py-2 rounded-xl bg-surface-raised border border-bo
 export default function SettingsPage() {
   const { user, setUser } = useAuth()
   const { theme, setTheme, customColor } = useTheme()
+
+  // ── Mode Assistance ────────────────────────────────────────────────────────
+  const [assistanceMode, setAssistanceModeState] = useState(user?.assistanceMode ?? false)
+  const [savingAssistance, setSavingAssistance]   = useState(false)
 
   // ── Application GPS ────────────────────────────────────────────────────────
   const [navApp, setNavAppState]   = useState(user?.navApp ?? 'google_maps')
@@ -209,6 +213,15 @@ export default function SettingsPage() {
     if (!match) return null
     return { cost: (km * match.rate_per_km).toFixed(2), rate: match.rate_per_km, label: match.label }
   })()
+
+  async function handleToggleAssistance() {
+    const next = !assistanceMode
+    setAssistanceModeState(next)
+    setSavingAssistance(true)
+    const { error: err } = await supabase.from('profiles').update({ assistance_mode: next }).eq('id', user.id)
+    setSavingAssistance(false)
+    if (!err) setUser((prev) => ({ ...prev, assistanceMode: next }))
+  }
 
   async function handleSaveNavApp(value) {
     setSavingNav(true)
@@ -823,6 +836,38 @@ export default function SettingsPage() {
             <Check className="w-3.5 h-3.5" />Préférence enregistrée.
           </p>
         )}
+      </section>
+
+      {/* ── Mode Assistance ──────────────────────────────────────────────────── */}
+      <section className="glass-panel rounded-2xl p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-9 h-9 rounded-xl bg-guitar-600/15 flex items-center justify-center">
+            <HelpCircle className="w-4 h-4 text-guitar-400" />
+          </div>
+          <div>
+            <h2 className="font-semibold">Mode Assistance</h2>
+            <p className="text-sm text-muted-foreground">Affiche des encadrés d'aide sur les pages principales pour vous guider dans l'application</p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleToggleAssistance}
+          disabled={savingAssistance}
+          className={'w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-colors ' +
+            (assistanceMode
+              ? 'border-guitar-600/60 bg-guitar-600/10'
+              : 'border-border-subtle hover:bg-surface-overlay')}
+        >
+          <div className="flex items-center gap-3">
+            {/* Indicateur visuel ON / OFF */}
+            <div className={`w-10 h-5 rounded-full transition-colors relative ${assistanceMode ? 'bg-guitar-600' : 'bg-muted'}`}>
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${assistanceMode ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </div>
+            <span className="text-sm font-medium">{assistanceMode ? 'Activé' : 'Désactivé'}</span>
+          </div>
+          {savingAssistance && <Loader2 className="w-4 h-4 animate-spin text-guitar-400" />}
+        </button>
       </section>
     </div>
   )
