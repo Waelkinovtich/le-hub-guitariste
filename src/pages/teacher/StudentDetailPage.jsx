@@ -1,13 +1,12 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useCallback, useState, useEffect } from 'react'
-import { ArrowLeft, Pencil, Trash2, Phone, Mail, Plus, Loader2, Check } from 'lucide-react'
+import { ArrowLeft, Pencil, Trash2, Phone, Mail } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import {
   fetchTeacherStudents, deleteStudent, fetchSchoolNames,
-  fetchStudentContexts, addStudentContext, deleteStudentContext,
+  fetchStudentContexts, fetchStudentsPaidByStudent,
 } from '../../services/students'
-import { fetchTeacherSchools } from '../../services/schools'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
 import AddStudentModal from '../../components/AddStudentModal'
 import { getSchoolColor } from '../../utils/schoolColors'
@@ -34,182 +33,18 @@ function Section({ title, children }) {
   )
 }
 
-// ─── Section contextes de cours ───────────────────────────────────────────────
-
-// Valeurs canoniques stockées en base — sans accents pour éviter toute ambiguïté
+// Étiquettes et couleurs des types de contexte (valeurs canoniques stockées en base)
 const CTX_COLORS = { ecole: '#7c3aed', cesu: '#dc2626' }
 const CTX_LABELS = { ecole: 'École de musique', cesu: 'Cours particulier (CESU)' }
 
-function StudentContextsSection({ studentId, teacherId, contexts, ecoleSchools, onContextsChange }) {
-  const [showForm, setShowForm]     = useState(false)
-  const [formType, setFormType]     = useState('ecole')
-  const [formSchoolId, setFormSchoolId] = useState('')
-  const [formRate, setFormRate]     = useState('')
-  const [saving, setSaving]         = useState(false)
-  const [deletingId, setDeletingId] = useState(null)
-
-  const selectedSchool = ecoleSchools.find((s) => s.id === formSchoolId)
-
-  const resetForm = () => { setFormType('ecole'); setFormSchoolId(''); setFormRate('') }
-
-  const handleAdd = async () => {
-    setSaving(true)
-    try {
-      const ctx = await addStudentContext(teacherId, studentId, {
-        contextType: formType,
-        schoolId:    formType === 'ecole' ? (formSchoolId || null) : null,
-        schoolName:  formType === 'ecole' ? (selectedSchool?.name ?? null) : null,
-        hourlyRate:  formRate,
-      })
-      onContextsChange([...contexts, ctx])
-      setShowForm(false)
-      resetForm()
-    } catch (err) {
-      // Doublon : l'index unique Supabase retourne un code 23505
-      if (err.message?.includes('23505') || err.message?.toLowerCase().includes('unique')) {
-        alert('Ce contexte existe déjà pour cet élève.')
-      } else {
-        alert('Erreur : ' + err.message)
-      }
-    }
-    setSaving(false)
+const payeurLabelReadOnly = (ctx, students) => {
+  if (ctx.context_type !== 'cesu') return null
+  if (ctx.payer_student_id) {
+    const p = students.find((s) => s.id === ctx.payer_student_id)
+    return 'Payé par ' + (p?.name ?? 'un autre élève')
   }
-
-  const handleDelete = async (ctxId) => {
-    setDeletingId(ctxId)
-    try {
-      await deleteStudentContext(ctxId)
-      onContextsChange(contexts.filter((c) => c.id !== ctxId))
-    } catch (err) {
-      alert('Erreur : ' + err.message)
-    }
-    setDeletingId(null)
-  }
-
-  const canSubmit = formType === 'cesu' || (formType === 'ecole' && !!formSchoolId)
-
-  return (
-    <Section title="Contextes de cours">
-      <p className="text-xs text-muted-foreground mb-3">
-        Un élève peut suivre des cours dans plusieurs contextes simultanément — école et CESU — chacun avec son propre taux horaire.
-      </p>
-
-      {contexts.length === 0 && !showForm && (
-        <p className="text-sm text-muted-foreground italic mb-3">Aucun contexte de cours supplémentaire.</p>
-      )}
-
-      {contexts.length > 0 && (
-        <div className="space-y-2 mb-3">
-          {contexts.map((ctx) => {
-            const color = CTX_COLORS[ctx.context_type] ?? '#6b7280'
-            return (
-              <div key={ctx.id} className="flex items-center justify-between p-3 rounded-xl bg-surface-raised border border-border-subtle">
-                <div className="flex items-center gap-3 flex-wrap min-w-0">
-                  <span
-                    className="inline-block shrink-0 px-2 py-0.5 rounded-full text-xs font-medium border"
-                    style={{ backgroundColor: color + '25', borderColor: color + '60', color }}
-                  >
-                    {CTX_LABELS[ctx.context_type] ?? ctx.context_type}
-                  </span>
-                  {ctx.school_name && (
-                    <span className="text-sm text-foreground truncate">{ctx.school_name}</span>
-                  )}
-                  {ctx.hourly_rate != null && (
-                    <span className="text-xs text-muted-foreground shrink-0">
-                      {Number(ctx.hourly_rate).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €/h
-                    </span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleDelete(ctx.id)}
-                  disabled={deletingId === ctx.id}
-                  className="p-1.5 ml-2 shrink-0 rounded-lg text-muted hover:text-guitar-400 hover:bg-guitar-600/10 transition-colors disabled:opacity-40"
-                  title="Retirer ce contexte"
-                >
-                  {deletingId === ctx.id
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    : <Trash2 className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {showForm ? (
-        <div className="p-4 rounded-xl bg-surface-raised border border-border-subtle space-y-3">
-          {/* Type de contexte */}
-          <div className="flex gap-2">
-            {[
-              { value: 'ecole', label: 'École de musique' },
-              { value: 'cesu',  label: 'Cours particulier (CESU)' },
-            ].map((opt) => (
-              <button
-                key={opt.value} type="button"
-                onClick={() => { setFormType(opt.value); setFormSchoolId('') }}
-                className={`flex-1 py-2 px-3 rounded-lg border text-xs font-medium transition-all ${
-                  formType === opt.value
-                    ? 'border-guitar-600/40 bg-guitar-600/15 text-guitar-400'
-                    : 'border-border-subtle text-muted-foreground hover:border-border'
-                }`}
-              >{opt.label}</button>
-            ))}
-          </div>
-
-          {/* École liée — uniquement si contexte "ecole" */}
-          {formType === 'ecole' && (
-            <select
-              value={formSchoolId}
-              onChange={(e) => setFormSchoolId(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-surface border border-border-subtle text-sm outline-none focus:border-guitar-600"
-            >
-              <option value="">— Choisir l'école —</option>
-              {ecoleSchools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          )}
-
-          {/* Taux horaire net pour ce contexte */}
-          <div className="relative">
-            <input
-              type="number" min="0" step="0.01"
-              value={formRate}
-              onChange={(e) => setFormRate(e.target.value)}
-              placeholder="Taux horaire net (optionnel)"
-              className="w-full px-3 py-2 pr-10 rounded-lg bg-surface border border-border-subtle text-sm outline-none focus:border-guitar-600"
-            />
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">€/h</span>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              type="button" onClick={handleAdd}
-              disabled={saving || !canSubmit}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg guitar-gradient text-white text-xs font-medium disabled:opacity-60"
-            >
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-              Enregistrer
-            </button>
-            <button
-              type="button"
-              onClick={() => { setShowForm(false); resetForm() }}
-              className="px-3 py-2 rounded-lg border border-border-subtle text-xs font-medium hover:bg-surface-overlay transition-colors"
-            >
-              Annuler
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button
-          type="button" onClick={() => setShowForm(true)}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Ajouter un contexte de cours
-        </button>
-      )}
-    </Section>
-  )
+  if (ctx.school_id) return 'Payé par ' + (ctx.school_name ?? 'un employeur enregistré')
+  return 'Paiement direct'
 }
 
 // ─── Page principale ──────────────────────────────────────────────────────────
@@ -220,27 +55,27 @@ export default function StudentDetailPage() {
   const navigate = useNavigate()
   const [showEdit, setShowEdit] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  // État local des contextes pour des mises à jour optimistes (sans reload complet)
+  // Contextes en état local — mis à jour après reload pour rafraîchir AddStudentModal
   const [contexts, setContexts] = useState([])
 
   const load = useCallback(async () => {
-    const [students, schools, allSchools, ctxData] = await Promise.all([
+    const [students, schools, ctxData] = await Promise.all([
       fetchTeacherStudents(user.id),
       fetchSchoolNames(user.id),
-      fetchTeacherSchools(user.id),
       fetchStudentContexts(id),
     ])
+    const paidByThis = await fetchStudentsPaidByStudent(id, user.id).catch(() => [])
     return {
-      student:   students.find((s) => s.id === id) ?? null,
-      schools,   // string[] — noms uniquement, pour les couleurs
-      allSchools, // {id, name, structure_type}[] — pour le sélecteur d'école
-      contexts: ctxData,
+      student:     students.find((s) => s.id === id) ?? null,
+      allStudents: students,
+      schools,
+      contexts:    ctxData,
+      paidByThis,
     }
   }, [user.id, id])
 
   const { data, loading, error, reload } = useFetch(load, [id])
 
-  // Sync les contextes depuis le fetch (initial et reloads)
   useEffect(() => {
     if (data?.contexts) setContexts(data.contexts)
   }, [data])
@@ -261,14 +96,16 @@ export default function StudentDetailPage() {
   if (error) return <ErrorBlock message={error} />
   if (!data?.student) return <ErrorBlock message="Élève introuvable." />
 
-  const { student, schools, allSchools } = data
+  const { student, schools, allStudents, paidByThis } = data
   const color = student.lessonType === 'ecole' ? getSchoolColor(student.schoolName, schools) : '#dc2626'
-  const lessonLabel = student.lessonType === 'ecole' ? (student.schoolName || 'École de musique') : 'Cours particulier (CESU)'
   const hasParent1 = student.parent1Name || student.parent1Phone || student.parent1Email
   const hasParent2 = student.parent2Name || student.parent2Phone || student.parent2Email
 
-  // Écoles de musique uniquement (hors CESU) pour le sélecteur du formulaire de contexte
-  const ecoleSchools = (allSchools ?? []).filter((s) => s.structure_type !== 'particulier_cesu')
+  // Tous les types de cours de cet élève (legacy lesson_type + contextes student_contexts)
+  const allContextTypes = new Set()
+  if (student.lessonType === 'ecole') allContextTypes.add('ecole')
+  if (student.lessonType === 'particulier') allContextTypes.add('cesu')
+  contexts.forEach((c) => allContextTypes.add(c.context_type))
 
   return (
     <div className="p-6 sm:p-8 max-w-3xl space-y-4">
@@ -300,13 +137,49 @@ export default function StudentDetailPage() {
       </div>
 
       <Section title="Cours">
-        <div className="grid sm:grid-cols-2 gap-4">
-          <div>
-            <p className="text-xs text-muted-foreground mb-1">Type principal</p>
-            <span className="inline-block px-2 py-1 rounded-full text-xs font-medium border" style={{ backgroundColor: color + '25', borderColor: color + '60', color }}>
-              {lessonLabel}
-            </span>
+        {/* Badges des types de cours */}
+        <div className="mb-4">
+          <p className="text-xs text-muted-foreground mb-2">Type{allContextTypes.size > 1 ? 's' : ''} de cours</p>
+          <div className="flex gap-2 flex-wrap">
+            {[...allContextTypes].map((ct) => {
+              const c = CTX_COLORS[ct] ?? '#6b7280'
+              return (
+                <span key={ct} className="inline-block px-2 py-1 rounded-full text-xs font-medium border"
+                  style={{ backgroundColor: c + '25', borderColor: c + '60', color: c }}>
+                  {ct === 'ecole' ? (student.schoolName || CTX_LABELS.ecole) : CTX_LABELS.cesu}
+                </span>
+              )
+            })}
           </div>
+        </div>
+
+        {/* Détails par contexte (taux horaire, payeur) */}
+        {contexts.length > 0 && (
+          <div className="space-y-2 mb-4">
+            {contexts.map((ctx) => {
+              const pLabel = payeurLabelReadOnly(ctx, allStudents ?? [])
+              return (
+                <div key={ctx.id} className="p-3 rounded-xl bg-surface-raised border border-border-subtle space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-medium">{CTX_LABELS[ctx.context_type] ?? ctx.context_type}</span>
+                    {ctx.context_type === 'ecole' && ctx.school_name && (
+                      <span className="text-xs text-muted-foreground">– {ctx.school_name}</span>
+                    )}
+                    {ctx.hourly_rate != null && (
+                      <span className="text-xs text-muted-foreground ml-auto shrink-0">
+                        {Number(ctx.hourly_rate).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €/h
+                      </span>
+                    )}
+                  </div>
+                  {pLabel && <p className="text-xs text-muted-foreground">{pLabel}</p>}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Niveau, instrument, progression */}
+        <div className="grid sm:grid-cols-2 gap-4">
           <div>
             <p className="text-xs text-muted-foreground mb-1">Niveau</p>
             <p className="text-sm">{student.level ?? '--'}</p>
@@ -327,13 +200,23 @@ export default function StudentDetailPage() {
         </div>
       </Section>
 
-      <StudentContextsSection
-        studentId={student.id}
-        teacherId={user.id}
-        contexts={contexts}
-        ecoleSchools={ecoleSchools}
-        onContextsChange={setContexts}
-      />
+      {paidByThis && paidByThis.length > 0 && (
+        <Section title="Paie aussi les cours de">
+          <div className="space-y-2">
+            {paidByThis.map((s) => (
+              <button
+                key={s.studentId}
+                type="button"
+                onClick={() => navigate('/professeur/eleves/' + s.id)}
+                className="flex items-center justify-between w-full text-left px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle hover:bg-surface-overlay transition-colors text-sm font-medium"
+              >
+                {s.name}
+                <span className="text-xs text-muted-foreground">Voir la fiche →</span>
+              </button>
+            ))}
+          </div>
+        </Section>
+      )}
 
       <Section title="Participations aux groupes">
         <StudentGroupHistory studentId={student.id} />
@@ -377,6 +260,8 @@ export default function StudentDetailPage() {
         <AddStudentModal
           teacherId={user.id}
           student={student}
+          contexts={contexts}
+          allStudents={allStudents ?? []}
           onClose={() => setShowEdit(false)}
           onCreated={() => { reload(); setShowEdit(false) }}
         />

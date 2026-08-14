@@ -147,13 +147,17 @@ export default function StudentsPage() {
             </thead>
             <tbody>
               {filtered.map((student) => {
-                const color = student.lessonType === 'ecole' ? getSchoolColor(student.schoolName, schools) : '#dc2626'
-                const label = student.lessonType === 'ecole' ? (student.schoolName || 'École') : 'CESU'
+                const primaryColor = student.lessonType === 'ecole' ? getSchoolColor(student.schoolName, schools) : '#dc2626'
+                // Tous les types de cours de cet élève (principal + contextes secondaires)
+                const allTypes = new Set()
+                if (student.lessonType === 'ecole') allTypes.add('ecole')
+                if (student.lessonType === 'particulier') allTypes.add('cesu')
+                student.contexts.forEach((c) => allTypes.add(c.context_type))
                 return (
                   <tr key={student.id} onClick={() => navigate('/professeur/eleves/' + student.id)} className="border-b border-border-subtle last:border-0 hover:bg-surface-overlay/50 transition-colors cursor-pointer">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white" style={{ backgroundColor: color }}>
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white" style={{ backgroundColor: primaryColor }}>
                           {initials(student.firstName, student.lastName)}
                         </div>
                         <div>
@@ -163,9 +167,17 @@ export default function StudentsPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4 hidden md:table-cell">
-                      <span className="inline-block px-2 py-1 rounded-full text-xs font-medium border" style={{ backgroundColor: color + '25', borderColor: color + '60', color }}>
-                        {label}
-                      </span>
+                      <div className="flex gap-1 flex-wrap">
+                        {[...allTypes].map((ct) => {
+                          const c = ct === 'ecole' ? getSchoolColor(student.schoolName, schools) : '#dc2626'
+                          const l = ct === 'ecole' ? (student.schoolName || 'École') : 'CESU'
+                          return (
+                            <span key={ct} className="inline-block px-2 py-1 rounded-full text-xs font-medium border" style={{ backgroundColor: c + '25', borderColor: c + '60', color: c }}>
+                              {l}
+                            </span>
+                          )
+                        })}
+                      </div>
                     </td>
                     <td className="px-6 py-4 hidden lg:table-cell text-muted-foreground">{student.level ?? '--'}</td>
                     <td className="px-6 py-4 hidden lg:table-cell text-muted-foreground">{student.instrument ?? '--'}</td>
@@ -173,7 +185,7 @@ export default function StudentsPage() {
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
                         <div className="flex-1 max-w-24 h-1.5 rounded-full bg-surface-overlay overflow-hidden">
-                          <div className="h-full rounded-full" style={{ width: student.progress + '%', backgroundColor: color }} />
+                          <div className="h-full rounded-full" style={{ width: student.progress + '%', backgroundColor: primaryColor }} />
                         </div>
                         <span className="text-xs text-muted w-8">{student.progress}%</span>
                       </div>

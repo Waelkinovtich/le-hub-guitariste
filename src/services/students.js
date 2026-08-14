@@ -74,7 +74,7 @@ export async function deleteStudent(studentId) {
 export async function fetchStudentContexts(studentId) {
   const { data, error } = await supabase
     .from('student_contexts')
-    .select('id, context_type, school_id, school_name, hourly_rate, created_at')
+    .select('id, context_type, school_id, school_name, hourly_rate, payer_student_id, created_at')
     .eq('student_id', studentId)
     .order('created_at')
   if (error) throw new Error(error.message)
@@ -101,18 +101,19 @@ export async function fetchAllContextsByStudent(teacherId) {
 }
 
 /** Ajoute un contexte de cours à un élève. */
-export async function addStudentContext(teacherId, studentId, { contextType, schoolId, schoolName, hourlyRate }) {
+export async function addStudentContext(teacherId, studentId, { contextType, schoolId, schoolName, hourlyRate, payerStudentId }) {
   const { data, error } = await supabase
     .from('student_contexts')
     .insert({
-      teacher_id:   teacherId,
-      student_id:   studentId,
-      context_type: contextType,
-      school_id:    schoolId ?? null,
-      school_name:  schoolName ?? null,
-      hourly_rate:  hourlyRate !== '' && hourlyRate != null ? Number(hourlyRate) : null,
+      teacher_id:       teacherId,
+      student_id:       studentId,
+      context_type:     contextType,
+      school_id:        schoolId ?? null,
+      school_name:      schoolName ?? null,
+      hourly_rate:      hourlyRate !== '' && hourlyRate != null ? Number(hourlyRate) : null,
+      payer_student_id: payerStudentId ?? null,
     })
-    .select('id, context_type, school_id, school_name, hourly_rate, created_at')
+    .select('id, context_type, school_id, school_name, hourly_rate, payer_student_id, created_at')
     .single()
   if (error) throw new Error(error.message)
   return data
@@ -124,11 +125,118 @@ export async function deleteStudentContext(contextId) {
   if (error) throw new Error(error.message)
 }
 
+/**
+ * Synchronise les lignes student_contexts après enregistrement du formulaire élève.
+ * Crée les nouveaux contextes, supprime les contextes désactivés, met à jour si les données ont changé.
+ *
+ * Choix de conception : si une case est décochée, le contexte est supprimé immédiatement
+ * (pas de désactivation logique). L'opération n'est pas atomique — une erreur partielle
+ * laisse les données en état cohérent (l'utilisateur peut ré-enregistrer).
+ *
+ * @param {string}      teacherId
+ * @param {string}      studentId
+ * @param {object|null} ecoleConfig - null = désactivé ; sinon { schoolId, schoolName, hourlyRate }
+ * @param {object|null} cesuConfig  - null = désactivé ; sinon { payMode, schoolId, schoolName, payerStudentId, hourlyRate }
+ * @param {Array}       existingContexts - résultat de fetchStudentContexts (peut être [])
+ */
+export async function syncStudentContexts(teacherId, studentId, ecoleConfig, cesuConfig, existingContexts) {
+  const toNumber = (v) => (v !== '' && v != null) ? Number(v) : null
+
+  const existingEcole = existingContexts.find((c) => c.context_type === 'ecole')
+  const existingCesu  = existingContexts.find((c) => c.context_type === 'cesu')
+
+  // ── Contexte École ─────────────────────────────────────────────────────
+  if (ecoleConfig) {
+    const newRate = toNumber(ecoleConfig.hourlyRate)
+    const changed = !existingEcole
+      || existingEcole.school_id    !== (ecoleConfig.schoolId ?? null)
+      || existingEcole.hourly_rate  !== newRate
+    if (existingEcole && changed) await deleteStudentContext(existingEcole.id)
+    if (!existingEcole || changed) {
+      await addStudentContext(teacherId, studentId, {
+        contextType: 'ecole', schoolId: ecoleConfig.schoolId ?? null,
+        schoolName: ecoleConfig.schoolName ?? null, hourlyRate: ecoleConfig.hourlyRate, payerStudentId: null,
+      })
+    }
+  } else if (existingEcole) {
+    await deleteStudentContext(existingEcole.id)
+  }
+
+  // ── Contexte CESU ──────────────────────────────────────────────────────
+  if (cesuConfig) {
+    const newSchoolId = cesuConfig.payMode === 'employeur'   ? (cesuConfig.schoolId       ?? null) : null
+    const newPayerId  = cesuConfig.payMode === 'autre_eleve' ? (cesuConfig.payerStudentId ?? null) : null
+    const newRate     = toNumber(cesuConfig.hourlyRate)
+    const changed = !existingCesu
+      || existingCesu.school_id        !== newSchoolId
+      || existingCesu.payer_student_id !== newPayerId
+      || existingCesu.hourly_rate      !== newRate
+    if (existingCesu && changed) await deleteStudentContext(existingCesu.id)
+    if (!existingCesu || changed) {
+      await addStudentContext(teacherId, studentId, {
+        contextType: 'cesu', schoolId: newSchoolId,
+        schoolName:     cesuConfig.payMode === 'employeur' ? (cesuConfig.schoolName ?? null) : null,
+        hourlyRate:     cesuConfig.hourlyRate,
+        payerStudentId: newPayerId,
+      })
+    }
+  } else if (existingCesu) {
+    await deleteStudentContext(existingCesu.id)
+  }
+}
+
 export async function fetchSchoolNames(teacherId) {
-  const { data: schoolsData } = await supabase.from('schools').select('name').eq('teacher_id', teacherId).order('name')
+  // Exclure les employeurs CESU (particulier_cesu) — ce ne sont pas des écoles de musique
+  const { data: schoolsData } = await supabase
+    .from('schools')
+    .select('name, structure_type')
+    .eq('teacher_id', teacherId)
+    .or('structure_type.is.null,structure_type.neq.particulier_cesu')
+    .order('name')
   if (schoolsData && schoolsData.length > 0) return schoolsData.map((r) => r.name)
   const { data, error } = await supabase.from(TABLES.students).select('school_name').eq('teacher_id', teacherId).eq('lesson_type', 'ecole').not('school_name', 'is', null)
   if (error) throw new Error(error.message)
   const names = (data ?? []).map((r) => r.school_name).filter(Boolean)
   return [...new Set(names)]
+}
+
+/**
+ * Retourne les élèves dont les cours CESU sont payés par un employeur donné
+ * (student_contexts.school_id = schoolId et context_type = 'cesu').
+ */
+export async function fetchStudentsPaidBySchool(schoolId, teacherId) {
+  const { data, error } = await supabase
+    .from('student_contexts')
+    .select('student_id, student:students!student_id(id, first_name, last_name)')
+    .eq('school_id', schoolId)
+    .eq('teacher_id', teacherId)
+    .eq('context_type', 'cesu')
+  if (error) throw new Error(error.message)
+  return (data ?? []).map((row) => ({
+    studentId: row.student_id,
+    id: row.student?.id ?? row.student_id,
+    firstName: row.student?.first_name ?? '',
+    lastName: row.student?.last_name ?? '',
+    name: [row.student?.first_name, row.student?.last_name].filter(Boolean).join(' '),
+  }))
+}
+
+/**
+ * Retourne les élèves dont les cours CESU sont payés par un élève donné
+ * (student_contexts.payer_student_id = payerStudentId).
+ */
+export async function fetchStudentsPaidByStudent(payerStudentId, teacherId) {
+  const { data, error } = await supabase
+    .from('student_contexts')
+    .select('student_id, student:students!student_id(id, first_name, last_name)')
+    .eq('payer_student_id', payerStudentId)
+    .eq('teacher_id', teacherId)
+  if (error) throw new Error(error.message)
+  return (data ?? []).map((row) => ({
+    studentId: row.student_id,
+    id: row.student?.id ?? row.student_id,
+    firstName: row.student?.first_name ?? '',
+    lastName: row.student?.last_name ?? '',
+    name: [row.student?.first_name, row.student?.last_name].filter(Boolean).join(' '),
+  }))
 }

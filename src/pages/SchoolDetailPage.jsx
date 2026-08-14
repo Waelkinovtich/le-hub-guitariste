@@ -10,6 +10,7 @@ import {
   fetchHourlyRates, upsertHourlyRate,
   currentSchoolYear, computePriorityScore, isScoreIncomplete,
 } from '../services/schools'
+import { fetchStudentsPaidBySchool } from '../services/students'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -465,6 +466,7 @@ export default function SchoolDetailPage() {
   const [draft, setDraft]       = useState(null)
   const [saving, setSaving]     = useState(false)
   const [saveError, setSaveError] = useState('')
+  const [paidStudents, setPaidStudents] = useState([])
 
   const curYear = currentSchoolYear()
 
@@ -483,6 +485,9 @@ export default function SchoolDetailPage() {
         setSchool(profile)
         setRates(hourlyRates)
         setStudentCount(countsRes.count ?? 0)
+        if (profile?.structure_type === 'particulier_cesu') {
+          fetchStudentsPaidBySchool(id, user.id).then(setPaidStudents).catch(() => {})
+        }
       } catch (err) {
         setError(err.message)
       }
@@ -1065,6 +1070,31 @@ export default function SchoolDetailPage() {
           </Field>
         </div>
       </Section>
+
+      {/* ─── Section CESU : élèves dont les cours sont payés par cet employeur ── */}
+      {isCesu && (
+        <Section title="Élèves dont les cours sont payés par cet employeur">
+          {paidStudents.length === 0 ? (
+            <p className="text-sm text-muted-foreground italic">
+              Aucun élève CESU n'est encore lié à cet employeur. Ajoutez un contexte CESU depuis la fiche de l'élève.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {paidStudents.map((s) => (
+                <button
+                  key={s.studentId}
+                  type="button"
+                  onClick={() => navigate('/professeur/eleves/' + s.id)}
+                  className="flex items-center justify-between w-full text-left px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle hover:bg-surface-overlay transition-colors text-sm font-medium"
+                >
+                  <span>{s.name}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-muted shrink-0" />
+                </button>
+              ))}
+            </div>
+          )}
+        </Section>
+      )}
 
     </div>
   )
