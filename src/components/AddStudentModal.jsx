@@ -8,33 +8,43 @@ const LEVELS = ['Debutant', 'Intermediaire', 'Avance']
 const currentYear = new Date().getFullYear()
 const YEARS = Array.from({ length: 80 }, (_, i) => currentYear - i)
 
-const PAY_MODES = [
-  { value: 'employeur',   label: 'Payé par un employeur enregistré' },
-  { value: 'autre_eleve', label: 'Payé par un autre élève de ma liste' },
-  { value: 'direct',      label: 'Paiement direct par cette personne' },
-]
-
-export default function AddStudentModal({ teacherId, student, contexts = [], allStudents = [], onClose, onCreated }) {
+/**
+ * Modal de création / édition d'un élève.
+ *
+ * Props :
+ *   teacherId   — identifiant du professeur connecté
+ *   student     — élève à modifier (undefined = création)
+ *   contexts    — student_contexts existants de cet élève (tableau, défaut [])
+ *   allStudents — liste complète des élèves (pour afficher le nom du payeur hérité)
+ *   preselect   — { type: 'ecole'|'cesu', schoolId, schoolName } — pré-coche et
+ *                 pré-sélectionne depuis une fiche école/employeur (création uniquement)
+ *   onClose     — callback fermeture
+ *   onCreated   — callback(studentResult) après enregistrement réussi
+ */
+export default function AddStudentModal({ teacherId, student, contexts = [], allStudents = [], preselect = null, onClose, onCreated }) {
   const isEdit = Boolean(student)
 
-  // ── Pré-remplissage depuis les contextes existants (mode édition) ─────────
+  // ── Contextes existants en base (source de vérité en mode édition) ─────────
   const existingEcole = contexts.find((c) => c.context_type === 'ecole')
   const existingCesu  = contexts.find((c) => c.context_type === 'cesu')
   const hasContexts   = contexts.length > 0
 
-  const initCesuPayMode = () => {
-    if (!existingCesu) return 'direct'
-    if (existingCesu.payer_student_id) return 'autre_eleve'
-    if (existingCesu.school_id) return 'employeur'
-    return 'direct'
-  }
+  // Identifiant de l'élève payeur hérité du chantier précédent.
+  // Non éditable depuis ce formulaire — affiché en lecture seule uniquement.
+  const cesuPayerStudentId = existingCesu?.payer_student_id ?? null
+  const payerStudentName   = cesuPayerStudentId
+    ? (allStudents.find((s) => s.id === cesuPayerStudentId)?.name ?? 'Élève non identifié')
+    : null
 
-  // Pré-cochage :
-  //   Contextes existants → source de vérité.
-  //   Aucun contexte → on se rabat sur le champ legacy lesson_type.
-  //   Création (pas d'élève) → CESU coché par défaut.
-  const initEcoleChecked = existingEcole != null || (!hasContexts && student?.lessonType === 'ecole')
-  const initCesuChecked  = existingCesu  != null || (!hasContexts && (student?.lessonType === 'particulier' || !student))
+  // ── Pré-cochage initial ────────────────────────────────────────────────────
+  // Priorité : preselect (depuis fiche école) > contextes existants > lesson_type legacy > défaut CESU
+  const initEcoleChecked = preselect
+    ? preselect.type === 'ecole'
+    : existingEcole != null || (!hasContexts && student?.lessonType === 'ecole')
+
+  const initCesuChecked = preselect
+    ? preselect.type === 'cesu'
+    : existingCesu != null || (!hasContexts && (student?.lessonType === 'particulier' || !student))
 
   // ── État général du formulaire ────────────────────────────────────────────
   const [form, setForm] = useState({
@@ -56,21 +66,28 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
     parent2Email: student?.parent2Email ?? '',
   })
 
-  // ── État des contextes (cases à cocher indépendantes) ────────────────────
+  // ── État du contexte École ────────────────────────────────────────────────
   const [ecoleChecked, setEcoleChecked]   = useState(initEcoleChecked)
-  const [ecoleSchoolId, setEcoleSchoolId] = useState(existingEcole?.school_id ?? student?.schoolId ?? null)
+  // Pré-sélection depuis : contexte existant > school de l'élève legacy > preselect
+  const [ecoleSchoolId, setEcoleSchoolId] = useState(
+    existingEcole?.school_id ?? student?.schoolId ?? (preselect?.type === 'ecole' ? preselect.schoolId : null)
+  )
   const [ecoleRate, setEcoleRate]         = useState(existingEcole?.hourly_rate?.toString() ?? '')
-  const [addingNew, setAddingNew]         = useState(false)
-  const [newSchoolName, setNewSchoolName] = useState('')
+  const [ecoleAddingNew, setEcoleAddingNew] = useState(false)
+  const [ecoleNewName, setEcoleNewName]     = useState('')
 
-  const [cesuChecked, setCesuChecked]               = useState(initCesuChecked)
-  const [cesuPayMode, setCesuPayMode]               = useState(initCesuPayMode())
-  const [cesuSchoolId, setCesuSchoolId]             = useState(existingCesu?.school_id ?? null)
-  const [cesuPayerStudentId, setCesuPayerStudentId] = useState(existingCesu?.payer_student_id ?? null)
-  const [cesuRate, setCesuRate]                     = useState(existingCesu?.hourly_rate?.toString() ?? '')
+  // ── État du contexte CESU ─────────────────────────────────────────────────
+  const [cesuChecked, setCesuChecked]   = useState(initCesuChecked)
+  // Pré-sélection employeur depuis : contexte existant > preselect
+  const [cesuSchoolId, setCesuSchoolId] = useState(
+    existingCesu?.school_id ?? (preselect?.type === 'cesu' ? preselect.schoolId : null)
+  )
+  const [cesuRate, setCesuRate]           = useState(existingCesu?.hourly_rate?.toString() ?? '')
+  const [cesuAddingNew, setCesuAddingNew] = useState(false)
+  const [cesuNewName, setCesuNewName]     = useState('')
 
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError]           = useState('')
   const [knownSchools, setKnownSchools] = useState([])
 
   useEffect(() => {
@@ -79,7 +96,6 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
 
   const ecoleSchoolsList = knownSchools.filter((s) => s.structure_type !== 'particulier_cesu')
   const cesuSchoolsList  = knownSchools.filter((s) => s.structure_type === 'particulier_cesu')
-  const otherStudents    = allStudents.filter((s) => s.id !== student?.id)
 
   const update = (field) => (e) => {
     const value = field === 'progress' ? Number(e.target.value) : e.target.value
@@ -90,36 +106,43 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
     e.preventDefault()
     setError('')
 
+    // ── Validations ──────────────────────────────────────────────────────────
     if (!form.firstName.trim() || !form.lastName.trim()) {
       setError('Le prénom et le nom sont obligatoires.'); return
     }
     if (!ecoleChecked && !cesuChecked) {
       setError('Sélectionnez au moins un type de cours (École ou CESU).'); return
     }
-    if (ecoleChecked && !ecoleSchoolId && !newSchoolName.trim()) {
+    if (ecoleChecked && !ecoleSchoolId && !ecoleNewName.trim()) {
       setError("Précisez l'école de musique ou saisissez-en une nouvelle."); return
     }
-    if (cesuChecked && cesuPayMode === 'employeur' && !cesuSchoolId) {
-      setError("Sélectionnez l'employeur CESU."); return
-    }
-    if (cesuChecked && cesuPayMode === 'autre_eleve' && !cesuPayerStudentId) {
-      setError("Sélectionnez l'élève qui règle les cours."); return
+    // Pour CESU : employeur requis seulement si pas de payer_student_id hérité
+    if (cesuChecked && !cesuPayerStudentId && !cesuSchoolId && !cesuNewName.trim()) {
+      setError("Sélectionnez un employeur CESU ou saisissez-en un nouveau."); return
     }
 
     setSubmitting(true)
     try {
-      // Résolution de l'école (création à la volée si besoin)
+      // ── Résolution de l'école de musique (création à la volée si besoin) ──
       let resolvedEcoleSchoolId   = ecoleSchoolId
       let resolvedEcoleSchoolName = ecoleSchoolsList.find((s) => s.id === ecoleSchoolId)?.name ?? null
-      if (ecoleChecked && addingNew && newSchoolName.trim()) {
-        const school = await findOrCreateSchool(teacherId, newSchoolName.trim())
+      if (ecoleChecked && ecoleAddingNew && ecoleNewName.trim()) {
+        const school = await findOrCreateSchool(teacherId, ecoleNewName.trim())
         resolvedEcoleSchoolId   = school.id
         resolvedEcoleSchoolName = school.name
       }
 
-      // lesson_type sur la table students :
-      // École seule → 'ecole'. Si les deux sont cochés, 'ecole' est le type primaire (couleur, filtres).
-      // CESU seul → 'particulier'.
+      // ── Résolution de l'employeur CESU (création à la volée si besoin) ──
+      let resolvedCesuSchoolId   = cesuSchoolId
+      let resolvedCesuSchoolName = cesuSchoolsList.find((s) => s.id === cesuSchoolId)?.name ?? null
+      if (cesuChecked && !cesuPayerStudentId && cesuAddingNew && cesuNewName.trim()) {
+        // Créer avec structure_type = 'particulier_cesu' pour bien catégoriser l'employeur
+        const school = await findOrCreateSchool(teacherId, cesuNewName.trim(), 'particulier_cesu')
+        resolvedCesuSchoolId   = school.id
+        resolvedCesuSchoolName = school.name
+      }
+
+      // ── lesson_type legacy : 'ecole' si École cochée (type primaire), sinon 'particulier' ──
       const lessonType = ecoleChecked ? 'ecole' : 'particulier'
       const schoolId   = ecoleChecked ? (resolvedEcoleSchoolId ?? null) : null
       const schoolName = ecoleChecked ? (resolvedEcoleSchoolName ?? null) : null
@@ -128,15 +151,17 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
         ? await updateStudent(student.id, { ...form, lessonType, schoolId, schoolName })
         : await createStudent(teacherId,   { ...form, lessonType, schoolId, schoolName })
 
+      // ── Configuration des contextes pour syncStudentContexts ──────────────
       const ecoleConfig = ecoleChecked
         ? { schoolId: resolvedEcoleSchoolId, schoolName: resolvedEcoleSchoolName, hourlyRate: ecoleRate }
         : null
 
       const cesuConfig = cesuChecked ? {
-        payMode:        cesuPayMode,
-        schoolId:       cesuPayMode === 'employeur'   ? cesuSchoolId       : null,
-        schoolName:     cesuPayMode === 'employeur'   ? (cesuSchoolsList.find((s) => s.id === cesuSchoolId)?.name ?? null) : null,
-        payerStudentId: cesuPayMode === 'autre_eleve' ? cesuPayerStudentId : null,
+        // Si payer_student_id hérité → préserver pour éviter de perdre la donnée
+        payMode:        cesuPayerStudentId ? 'autre_eleve' : 'employeur',
+        payerStudentId: cesuPayerStudentId,
+        schoolId:       cesuPayerStudentId ? null : resolvedCesuSchoolId,
+        schoolName:     cesuPayerStudentId ? null : resolvedCesuSchoolName,
         hourlyRate:     cesuRate,
       } : null
 
@@ -242,17 +267,20 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
             </div>
           </div>
 
-          {/* ── Cours — section unifiée École + CESU ────────────────────── */}
+          {/* ── Cours — cases à cocher indépendantes École + CESU ───────── */}
           <div>
             <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3">Cours</p>
             <div className="space-y-3">
 
-              {/* Case École de musique */}
+              {/* ─ Case École de musique ─────────────────────────────────── */}
               <div className="rounded-xl border border-border-subtle overflow-hidden">
                 <label className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-surface-overlay transition-colors">
                   <input
                     type="checkbox" checked={ecoleChecked}
-                    onChange={(e) => { setEcoleChecked(e.target.checked); if (!e.target.checked) { setAddingNew(false); setNewSchoolName('') } }}
+                    onChange={(e) => {
+                      setEcoleChecked(e.target.checked)
+                      if (!e.target.checked) { setEcoleAddingNew(false); setEcoleNewName('') }
+                    }}
                     className="w-4 h-4 accent-guitar-600"
                   />
                   <span className="text-sm font-medium">École de musique</span>
@@ -261,12 +289,12 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
                   <div className="border-t border-border-subtle px-4 py-3 space-y-3 bg-surface-raised">
                     <div>
                       <label className="block text-xs text-muted-foreground mb-1.5">École</label>
-                      {!addingNew ? (
+                      {!ecoleAddingNew ? (
                         <>
                           <select
                             value={ecoleSchoolId ?? ''}
                             onChange={(e) => {
-                              if (e.target.value === '__new__') { setAddingNew(true); return }
+                              if (e.target.value === '__new__') { setEcoleAddingNew(true); return }
                               setEcoleSchoolId(e.target.value || null)
                             }}
                             className={inputCls}
@@ -292,10 +320,10 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
                         </>
                       ) : (
                         <div className="flex gap-2">
-                          <input value={newSchoolName} onChange={(e) => setNewSchoolName(e.target.value)}
+                          <input value={ecoleNewName} onChange={(e) => setEcoleNewName(e.target.value)}
                             placeholder="Nom de la nouvelle école…" autoFocus
                             className={inputCls + ' flex-1'} />
-                          <button type="button" onClick={() => { setAddingNew(false); setNewSchoolName('') }}
+                          <button type="button" onClick={() => { setEcoleAddingNew(false); setEcoleNewName('') }}
                             className="px-3 py-2 rounded-xl border border-border-subtle text-sm hover:bg-surface-overlay transition-colors">Annuler</button>
                         </div>
                       )}
@@ -310,51 +338,58 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
                 )}
               </div>
 
-              {/* Case Cours particulier (CESU) */}
+              {/* ─ Case Cours particulier (CESU) ─────────────────────────── */}
               <div className="rounded-xl border border-border-subtle overflow-hidden">
                 <label className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-surface-overlay transition-colors">
                   <input
                     type="checkbox" checked={cesuChecked}
-                    onChange={(e) => { setCesuChecked(e.target.checked); if (!e.target.checked) { setCesuPayMode('direct'); setCesuSchoolId(null); setCesuPayerStudentId(null) } }}
+                    onChange={(e) => {
+                      setCesuChecked(e.target.checked)
+                      if (!e.target.checked) { setCesuSchoolId(null); setCesuAddingNew(false); setCesuNewName('') }
+                    }}
                     className="w-4 h-4 accent-guitar-600"
                   />
                   <span className="text-sm font-medium">Cours particulier (CESU)</span>
                 </label>
                 {cesuChecked && (
                   <div className="border-t border-border-subtle px-4 py-3 space-y-3 bg-surface-raised">
-                    <div>
-                      <label className="block text-xs text-muted-foreground mb-1.5">Mode de paiement</label>
-                      <div className="space-y-1.5">
-                        {PAY_MODES.map((opt) => (
-                          <button key={opt.value} type="button"
-                            onClick={() => { setCesuPayMode(opt.value); setCesuSchoolId(null); setCesuPayerStudentId(null) }}
-                            className={`w-full text-left py-2 px-3 rounded-lg border text-xs font-medium transition-all ${
-                              cesuPayMode === opt.value
-                                ? 'border-guitar-600/40 bg-guitar-600/15 text-guitar-400'
-                                : 'border-border-subtle text-muted-foreground hover:border-border'
-                            }`}
-                          >{opt.label}</button>
-                        ))}
+
+                    {/* Si payer_student_id hérité → lecture seule ; sinon sélecteur employeur */}
+                    {cesuPayerStudentId ? (
+                      <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                        <span className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+                          Payé actuellement par : <strong>{payerStudentName}</strong>
+                          <br />Modification non disponible depuis ce formulaire.
+                        </span>
                       </div>
-                    </div>
-                    {cesuPayMode === 'employeur' && (
+                    ) : (
                       <div>
-                        <label className="block text-xs text-muted-foreground mb-1.5">Employeur</label>
-                        <select value={cesuSchoolId ?? ''} onChange={(e) => setCesuSchoolId(e.target.value || null)} className={inputCls}>
-                          <option value="">-- Choisir l'employeur --</option>
-                          {cesuSchoolsList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                        </select>
+                        <label className="block text-xs text-muted-foreground mb-1.5">Employeur CESU</label>
+                        {!cesuAddingNew ? (
+                          <select
+                            value={cesuSchoolId ?? ''}
+                            onChange={(e) => {
+                              if (e.target.value === '__new__') { setCesuAddingNew(true); return }
+                              setCesuSchoolId(e.target.value || null)
+                            }}
+                            className={inputCls}
+                          >
+                            <option value="">-- Choisir un employeur --</option>
+                            {cesuSchoolsList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            <option value="__new__">+ Nouvel employeur…</option>
+                          </select>
+                        ) : (
+                          <div className="flex gap-2">
+                            <input value={cesuNewName} onChange={(e) => setCesuNewName(e.target.value)}
+                              placeholder="Nom de l'employeur…" autoFocus
+                              className={inputCls + ' flex-1'} />
+                            <button type="button" onClick={() => { setCesuAddingNew(false); setCesuNewName('') }}
+                              className="px-3 py-2 rounded-xl border border-border-subtle text-sm hover:bg-surface-overlay transition-colors">Annuler</button>
+                          </div>
+                        )}
                       </div>
                     )}
-                    {cesuPayMode === 'autre_eleve' && (
-                      <div>
-                        <label className="block text-xs text-muted-foreground mb-1.5">Élève payeur</label>
-                        <select value={cesuPayerStudentId ?? ''} onChange={(e) => setCesuPayerStudentId(e.target.value || null)} className={inputCls}>
-                          <option value="">-- Choisir l'élève --</option>
-                          {otherStudents.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                        </select>
-                      </div>
-                    )}
+
                     <div className="relative">
                       <label className="block text-xs text-muted-foreground mb-1.5">Taux horaire net (optionnel)</label>
                       <input type="number" min="0" step="0.01" value={cesuRate} onChange={(e) => setCesuRate(e.target.value)}

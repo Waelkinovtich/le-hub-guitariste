@@ -201,6 +201,27 @@ export async function fetchSchoolNames(teacherId) {
 }
 
 /**
+ * Retourne les élèves rattachés à une école via student_contexts (context_type = 'ecole').
+ * Même pattern que fetchStudentsPaidBySchool, mais pour les contextes d'école de musique.
+ */
+export async function fetchStudentsAttachedToSchool(schoolId, teacherId) {
+  const { data, error } = await supabase
+    .from('student_contexts')
+    .select('student_id, student:students!student_id(id, first_name, last_name)')
+    .eq('school_id', schoolId)
+    .eq('teacher_id', teacherId)
+    .eq('context_type', 'ecole')
+  if (error) throw new Error(error.message)
+  return (data ?? []).map((row) => ({
+    studentId: row.student_id,
+    id: row.student?.id ?? row.student_id,
+    firstName: row.student?.first_name ?? '',
+    lastName: row.student?.last_name ?? '',
+    name: [row.student?.first_name, row.student?.last_name].filter(Boolean).join(' '),
+  }))
+}
+
+/**
  * Retourne les élèves dont les cours CESU sont payés par un employeur donné
  * (student_contexts.school_id = schoolId et context_type = 'cesu').
  */

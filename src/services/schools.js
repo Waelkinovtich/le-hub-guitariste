@@ -29,16 +29,18 @@ export async function deleteSchool(schoolId) {
   if (error) throw new Error(error.message)
 }
 
-export async function findOrCreateSchool(teacherId, name) {
+// structureType optionnel — utile pour créer un employeur CESU ('particulier_cesu')
+// sans modifier le comportement existant pour les écoles de musique.
+export async function findOrCreateSchool(teacherId, name, structureType = null) {
   const trimmed = name.trim()
   const { data: existing } = await supabase
     .from('schools')
-    .select('id, name')
+    .select('id, name, structure_type')
     .eq('teacher_id', teacherId)
     .eq('name', trimmed)
     .maybeSingle()
   if (existing) return existing
-  return createSchool(teacherId, trimmed)
+  return createSchool(teacherId, trimmed, structureType)
 }
 
 // ─── Profil complet ───────────────────────────────────────────────────────────

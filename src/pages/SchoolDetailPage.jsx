@@ -10,7 +10,11 @@ import {
   fetchHourlyRates, upsertHourlyRate,
   currentSchoolYear, computePriorityScore, isScoreIncomplete,
 } from '../services/schools'
-import { fetchStudentsPaidBySchool } from '../services/students'
+import {
+  fetchStudentsPaidBySchool, fetchStudentsAttachedToSchool,
+  fetchTeacherStudents, addStudentContext,
+} from '../services/students'
+import AddStudentModal from '../components/AddStudentModal'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -466,7 +470,20 @@ export default function SchoolDetailPage() {
   const [draft, setDraft]       = useState(null)
   const [saving, setSaving]     = useState(false)
   const [saveError, setSaveError] = useState('')
-  const [paidStudents, setPaidStudents] = useState([])
+
+  // ── Élèves liés à cette fiche ─────────────────────────────────────────────
+  const [paidStudents, setPaidStudents]         = useState([])   // CESU : payés par cet employeur
+  const [attachedStudents, setAttachedStudents] = useState([])   // École : cours dispensés ici
+  const [allStudents, setAllStudents]           = useState([])   // tous les élèves (recherche)
+
+  // ── Panneau de rattachement d'un élève existant ───────────────────────────
+  const [showAttachPanel, setShowAttachPanel]   = useState(false)
+  const [showCreateStudent, setShowCreateStudent] = useState(false)
+  const [attachSearch, setAttachSearch]         = useState('')
+  const [attachStudentId, setAttachStudentId]   = useState(null)
+  const [attachRate, setAttachRate]             = useState('')
+  const [attaching, setAttaching]               = useState(false)
+  const [attachError, setAttachError]           = useState('')
 
   const curYear = currentSchoolYear()
 
@@ -485,8 +502,12 @@ export default function SchoolDetailPage() {
         setSchool(profile)
         setRates(hourlyRates)
         setStudentCount(countsRes.count ?? 0)
+        // Charger tous les élèves pour la recherche de rattachement
+        fetchTeacherStudents(user.id).then(setAllStudents).catch(() => {})
         if (profile?.structure_type === 'particulier_cesu') {
           fetchStudentsPaidBySchool(id, user.id).then(setPaidStudents).catch(() => {})
+        } else {
+          fetchStudentsAttachedToSchool(id, user.id).then(setAttachedStudents).catch(() => {})
         }
       } catch (err) {
         setError(err.message)
@@ -537,6 +558,59 @@ export default function SchoolDetailPage() {
 
   // Téléphones : tableau jsonb ou tableau vide
   const phones = Array.isArray(data.director_phones) ? data.director_phones : []
+
+  // ── Élèves déjà liés — exclus de la recherche de rattachement ─────────────
+  const alreadyLinkedIds = new Set(
+    isCesu ? paidStudents.map((s) => s.id) : attachedStudents.map((s) => s.id)
+  )
+  // Filtre en mémoire (≥ 2 caractères) — même pattern que StudentsPage
+  const searchResults = attachSearch.trim().length >= 2
+    ? allStudents
+        .filter((s) => !alreadyLinkedIds.has(s.id) && s.name.toLowerCase().includes(attachSearch.toLowerCase()))
+        .slice(0, 8)
+    : []
+
+  // ── Rattachement d'un élève existant via student_contexts ─────────────────
+  const handleAttach = async () => {
+    if (!attachStudentId) { setAttachError("Sélectionnez un élève dans la liste."); return }
+    setAttaching(true)
+    setAttachError('')
+    try {
+      await addStudentContext(teacherId, attachStudentId, {
+        contextType:     isCesu ? 'cesu' : 'ecole',
+        schoolId:        id,
+        schoolName:      school.name,
+        hourlyRate:      attachRate,
+        payerStudentId:  null,
+      })
+      // Mise à jour optimiste sans rechargement
+      const found = allStudents.find((s) => s.id === attachStudentId)
+      if (found) {
+        const entry = { studentId: found.id, id: found.id, firstName: found.firstName, lastName: found.lastName, name: found.name }
+        if (isCesu) setPaidStudents((prev) => [...prev, entry])
+        else        setAttachedStudents((prev) => [...prev, entry])
+      }
+      setShowAttachPanel(false)
+      setAttachSearch('')
+      setAttachStudentId(null)
+      setAttachRate('')
+    } catch (err) {
+      const msg = (err.message?.includes('23505') || err.message?.toLowerCase().includes('unique'))
+        ? 'Cet élève est déjà rattaché à cette école.'
+        : err.message
+      setAttachError(msg)
+    }
+    setAttaching(false)
+  }
+
+  // Réinitialise et ferme le panneau de rattachement
+  const cancelAttach = () => {
+    setShowAttachPanel(false)
+    setAttachSearch('')
+    setAttachStudentId(null)
+    setAttachRate('')
+    setAttachError('')
+  }
 
   return (
     <div className="p-6 sm:p-8 max-w-3xl space-y-4">
@@ -1073,11 +1147,14 @@ export default function SchoolDetailPage() {
 
       {/* ─── Section CESU : élèves dont les cours sont payés par cet employeur ── */}
       {isCesu && (
-        <Section title="Élèves dont les cours sont payés par cet employeur">
+        <div className="glass-panel rounded-2xl p-5 space-y-4">
+          <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider">
+            Élèves dont les cours sont payés par cet employeur
+          </p>
+
+          {/* Liste des élèves CESU liés */}
           {paidStudents.length === 0 ? (
-            <p className="text-sm text-muted-foreground italic">
-              Aucun élève CESU n'est encore lié à cet employeur. Ajoutez un contexte CESU depuis la fiche de l'élève.
-            </p>
+            <p className="text-sm text-muted-foreground italic">Aucun élève lié pour l'instant.</p>
           ) : (
             <div className="space-y-2">
               {paidStudents.map((s) => (
@@ -1093,7 +1170,236 @@ export default function SchoolDetailPage() {
               ))}
             </div>
           )}
-        </Section>
+
+          {/* Boutons d'action */}
+          {!showAttachPanel && (
+            <div className="flex gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => { setShowAttachPanel(true); setShowCreateStudent(false) }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" />Rattacher un élève existant
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowCreateStudent(true); setShowAttachPanel(false) }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" />Créer un nouvel élève
+              </button>
+            </div>
+          )}
+
+          {/* Panneau de recherche / rattachement inline */}
+          {showAttachPanel && (
+            <div className="rounded-xl border border-border-subtle bg-surface-raised p-4 space-y-3">
+              <p className="text-xs font-medium text-foreground">Rechercher un élève à rattacher</p>
+              <input
+                type="text"
+                value={attachSearch}
+                onChange={(e) => { setAttachSearch(e.target.value); setAttachStudentId(null) }}
+                placeholder="Nom de l'élève (min. 2 caractères)…"
+                autoFocus
+                className={inputCls}
+              />
+              {searchResults.length > 0 && (
+                <div className="space-y-1">
+                  {searchResults.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => { setAttachStudentId(s.id); setAttachSearch(s.name) }}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                        attachStudentId === s.id
+                          ? 'bg-guitar-600/15 border border-guitar-600/30 text-guitar-400'
+                          : 'hover:bg-surface-overlay border border-transparent'
+                      }`}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {attachStudentId && (
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Taux horaire CESU (optionnel)</label>
+                  <div className="relative w-40">
+                    <input
+                      type="number" min="0" step="0.01"
+                      value={attachRate}
+                      onChange={(e) => setAttachRate(e.target.value)}
+                      placeholder="0,00"
+                      className={inputCls + ' pr-8'}
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">€/h</span>
+                  </div>
+                </div>
+              )}
+              {attachError && <p className="text-xs text-guitar-400">{attachError}</p>}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleAttach}
+                  disabled={attaching || !attachStudentId}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl guitar-gradient text-white text-xs font-medium disabled:opacity-60"
+                >
+                  {attaching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  Confirmer le rattachement
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelAttach}
+                  className="px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Annuler
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── Section École : élèves rattachés à cette école de musique ─────────── */}
+      {!isCesu && (
+        <div className="glass-panel rounded-2xl p-5 space-y-4">
+          <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider">
+            Élèves rattachés à cette école
+          </p>
+
+          {/* Liste des élèves école liés */}
+          {attachedStudents.length === 0 ? (
+            <p className="text-sm text-muted-foreground italic">Aucun élève rattaché pour l'instant.</p>
+          ) : (
+            <div className="space-y-2">
+              {attachedStudents.map((s) => (
+                <button
+                  key={s.studentId}
+                  type="button"
+                  onClick={() => navigate('/professeur/eleves/' + s.id)}
+                  className="flex items-center justify-between w-full text-left px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle hover:bg-surface-overlay transition-colors text-sm font-medium"
+                >
+                  <span>{s.name}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-muted shrink-0" />
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Boutons d'action */}
+          {!showAttachPanel && (
+            <div className="flex gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => { setShowAttachPanel(true); setShowCreateStudent(false) }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" />Rattacher un élève existant
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowCreateStudent(true); setShowAttachPanel(false) }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" />Créer un nouvel élève
+              </button>
+            </div>
+          )}
+
+          {/* Panneau de recherche / rattachement inline */}
+          {showAttachPanel && (
+            <div className="rounded-xl border border-border-subtle bg-surface-raised p-4 space-y-3">
+              <p className="text-xs font-medium text-foreground">Rechercher un élève à rattacher</p>
+              <input
+                type="text"
+                value={attachSearch}
+                onChange={(e) => { setAttachSearch(e.target.value); setAttachStudentId(null) }}
+                placeholder="Nom de l'élève (min. 2 caractères)…"
+                autoFocus
+                className={inputCls}
+              />
+              {searchResults.length > 0 && (
+                <div className="space-y-1">
+                  {searchResults.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => { setAttachStudentId(s.id); setAttachSearch(s.name) }}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                        attachStudentId === s.id
+                          ? 'bg-guitar-600/15 border border-guitar-600/30 text-guitar-400'
+                          : 'hover:bg-surface-overlay border border-transparent'
+                      }`}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {attachStudentId && (
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Taux horaire (optionnel)</label>
+                  <div className="relative w-40">
+                    <input
+                      type="number" min="0" step="0.01"
+                      value={attachRate}
+                      onChange={(e) => setAttachRate(e.target.value)}
+                      placeholder="0,00"
+                      className={inputCls + ' pr-8'}
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">€/h</span>
+                  </div>
+                </div>
+              )}
+              {attachError && <p className="text-xs text-guitar-400">{attachError}</p>}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleAttach}
+                  disabled={attaching || !attachStudentId}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl guitar-gradient text-white text-xs font-medium disabled:opacity-60"
+                >
+                  {attaching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  Confirmer le rattachement
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelAttach}
+                  className="px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Annuler
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── Modal création d'élève depuis la fiche école ────────────────────────
+          preselect pre-coche la case école ou CESU et présélectionne cet établissement */}
+      {showCreateStudent && teacherId && (
+        <AddStudentModal
+          teacherId={teacherId}
+          preselect={{
+            type:       isCesu ? 'cesu' : 'ecole',
+            schoolId:   id,
+            schoolName: school.name,
+          }}
+          onClose={() => setShowCreateStudent(false)}
+          onCreated={(newStudent) => {
+            // Ajouter immédiatement l'élève dans la liste locale
+            const entry = {
+              studentId: newStudent.id,
+              id:        newStudent.id,
+              firstName: newStudent.firstName,
+              lastName:  newStudent.lastName,
+              name:      newStudent.name,
+            }
+            if (isCesu) setPaidStudents((prev) => [...prev, entry])
+            else        setAttachedStudents((prev) => [...prev, entry])
+            setShowCreateStudent(false)
+          }}
+        />
       )}
 
     </div>
