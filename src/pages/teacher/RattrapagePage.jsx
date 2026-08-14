@@ -1,11 +1,15 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import { fetchCancelledLessons } from '../../services/lessons'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
 import { getRaisonLabel } from '../../utils/lessonStatus'
-import { RotateCcw, CalendarDays } from 'lucide-react'
+import { RotateCcw, CalendarDays, Search, Check, Loader2, AlertCircle, Star, X } from 'lucide-react'
 import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
+import { supabase } from '../../lib/supabase'
+import { computeProposals } from '../../utils/scoringCreneaux'
+
+// ─── Helpers d'affichage ──────────────────────────────────────────────────────
 
 function minutesToLabel(min) {
   const h = Math.floor(min / 60)
@@ -15,9 +19,301 @@ function minutesToLabel(min) {
   return h + 'h' + String(m).padStart(2, '0')
 }
 
+/** Date ISO de la semaine prochaine au même jour qu'une date ISO donnée. */
+function nextWeekSameDay(isoDate) {
+  if (!isoDate) return ''
+  const d = new Date(isoDate + 'T00:00:00')
+  d.setDate(d.getDate() + 7)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+// ─── Composant : badge de score ───────────────────────────────────────────────
+
+function ScoreBadge({ score }) {
+  const color = score >= 4
+    ? 'text-green-400 border-green-500/30 bg-green-500/10'
+    : score >= 2
+      ? 'text-guitar-400 border-guitar-600/30 bg-guitar-600/10'
+      : score >= 0
+        ? 'text-muted-foreground border-border-subtle bg-surface-raised'
+        : 'text-amber-400 border-amber-500/30 bg-amber-500/10'
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border text-xs font-medium ${color}`}>
+      <Star className="w-3 h-3" fill="currentColor" />
+      {score >= 0 ? '+' : ''}{score}
+    </span>
+  )
+}
+
+// ─── Panel de recherche de créneau de rattrapage ──────────────────────────────
+
+/**
+ * Affiché sous une ligne de cours annulé.
+ * Recherche les disponibilités de l'élève via ses réponses au sondage,
+ * applique le moteur de score partagé, propose les meilleurs créneaux.
+ * Si aucune disponibilité connue : fallback vers un sélecteur manuel.
+ *
+ * onConfirmed() : appelé après création du rattrapage pour déclencher un reload.
+ * onClose()     : ferme le panel sans action.
+ */
+function RattrapagePanel({ lesson, teacherId, zone, onConfirmed, onClose }) {
+  const [loading, setLoading]         = useState(true)
+  const [surveyResponse, setSurvey]   = useState(null) // null = non trouvé
+  const [proposals, setProposals]     = useState([])
+  const [confirming, setConfirming]   = useState(false)
+  const [error, setError]             = useState('')
+
+  // Fallback manuel : sélecteur de date + heure
+  const [manualDate, setManualDate]   = useState(nextWeekSameDay(lesson.lessonDate))
+  const [manualTime, setManualTime]   = useState(lesson.lessonTime ?? '09:00')
+
+  // Chargement à la montée du panel
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const today       = new Date().toISOString().slice(0, 10)
+      const inFourWeeks = new Date(Date.now() + 28 * 86400000).toISOString().slice(0, 10)
+
+      const [respRes, lessonsRes, schoolsRes] = await Promise.all([
+        // Dernière réponse de sondage pour cet élève (toutes statuts confondus)
+        supabase
+          .from('survey_responses')
+          .select('*')
+          .eq('student_id', lesson.studentId)
+          .order('submitted_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from('lessons')
+          .select('id, lesson_date, lesson_time, duration_minutes, students(school_name, level)')
+          .eq('teacher_id', teacherId)
+          .gte('lesson_date', today)
+          .lte('lesson_date', inFourWeeks),
+        supabase
+          .from('schools')
+          .select('id, name, current_weekly_hours, desired_weekly_hours')
+          .eq('teacher_id', teacherId),
+      ])
+
+      const resp = respRes.data
+      setSurvey(resp)
+
+      if (resp?.availabilities) {
+        const mappedLessons = (lessonsRes.data ?? []).map((l) => ({
+          ...l,
+          schoolName:       l.students?.school_name ?? null,
+          lessonDate:       l.lesson_date,
+          lessonTime:       l.lesson_time,
+          durationMinutes:  l.duration_minutes,
+        }))
+        const computed = computeProposals({
+          response:       resp,
+          existingLessons: mappedLessons,
+          schools:        schoolsRes.data ?? [],
+          zone,
+          maxResults:     3,
+        })
+        setProposals(computed)
+      }
+    } catch (e) {
+      setError(e.message)
+    }
+    setLoading(false)
+  }, [lesson.studentId, lesson.lessonDate, lesson.lessonTime, teacherId, zone])
+
+  // Déclenche le chargement une seule fois à la montée
+  useMemo(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const confirmRattrapage = async ({ lessonDate, lessonTime }) => {
+    setConfirming(true)
+    setError('')
+    try {
+      // 1. Créer le cours de rattrapage
+      const { data: newLesson, error: insErr } = await supabase
+        .from('lessons')
+        .insert({
+          teacher_id:       teacherId,
+          student_id:       lesson.studentId,
+          lesson_date:      lessonDate,
+          lesson_time:      lessonTime,
+          duration_minutes: lesson.durationMinutes,
+          topic:            'Rattrapage — ' + (lesson.topic || 'Cours de guitare'),
+          status:           'planifie',
+        })
+        .select('id')
+        .single()
+
+      if (insErr) throw new Error(insErr.message)
+
+      // 2. Lier le cours annulé à son rattrapage et le passer en statut "rattrapé"
+      const { error: updErr } = await supabase
+        .from('lessons')
+        .update({ rattrapage_de_lesson_id: newLesson.id, status: 'rattrape' })
+        .eq('id', lesson.id)
+
+      if (updErr) throw new Error(updErr.message)
+
+      onConfirmed()
+    } catch (e) {
+      setError(e.message)
+      setConfirming(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="mt-3 pt-3 border-t border-border-subtle flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        Analyse des disponibilités…
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-border-subtle space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Planifier un rattrapage</p>
+        <button type="button" onClick={onClose} className="text-muted hover:text-foreground transition-colors">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {error && (
+        <p className="text-xs text-guitar-400 flex items-center gap-1.5">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />{error}
+        </p>
+      )}
+
+      {/* ── Cas 1 : disponibilités trouvées → propositions scorées ── */}
+      {surveyResponse?.availabilities && proposals.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Créneaux compatibles avec les disponibilités déclarées par {lesson.studentName} :
+          </p>
+          {proposals.map((p, i) => (
+            <div key={i} className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-surface border border-border-subtle">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{p.day} {p.candidateDate} à {p.startTime}</p>
+                <p className="text-xs text-muted-foreground">{p.durationMinutes} min</p>
+                {p.reasons.length > 0 && (
+                  <p className="text-xs text-muted mt-0.5 italic">{p.reasons[0]}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <ScoreBadge score={p.score} />
+                <button
+                  type="button"
+                  onClick={() => confirmRattrapage({ lessonDate: p.candidateDate, lessonTime: p.startTime })}
+                  disabled={confirming}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg guitar-gradient text-white text-xs font-medium disabled:opacity-50"
+                >
+                  {confirming ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                  Confirmer
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Cas 2 : pas de disponibilité connue ou aucune proposition compatible ── */}
+      {(!surveyResponse?.availabilities || proposals.length === 0) && (
+        <div className="space-y-3">
+          {!surveyResponse?.availabilities ? (
+            <p className="text-xs text-muted-foreground italic px-3 py-2 rounded-xl bg-surface border border-border-subtle">
+              Aucune disponibilité connue pour {lesson.studentName} — choisissez un créneau manuellement.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground italic px-3 py-2 rounded-xl bg-surface border border-border-subtle">
+              Aucun créneau compatible trouvé dans les disponibilités — choisissez un créneau manuellement.
+            </p>
+          )}
+
+          {/* Sélecteur manuel : date + heure, pré-rempli sur la semaine suivante */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Date du rattrapage</label>
+              <input
+                type="date"
+                value={manualDate}
+                onChange={(e) => setManualDate(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Heure</label>
+              <input
+                type="time"
+                value={manualTime}
+                onChange={(e) => setManualTime(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+              />
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => confirmRattrapage({ lessonDate: manualDate, lessonTime: manualTime })}
+            disabled={confirming || !manualDate || !manualTime}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-50"
+          >
+            {confirming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            Confirmer ce rattrapage
+          </button>
+        </div>
+      )}
+
+      {/* ── Fallback : propositions scorées ET sélecteur manuel complémentaire ── */}
+      {surveyResponse?.availabilities && proposals.length > 0 && (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer hover:text-foreground transition-colors">
+            Choisir un autre créneau manuellement…
+          </summary>
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Date</label>
+              <input
+                type="date"
+                value={manualDate}
+                onChange={(e) => setManualDate(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Heure</label>
+              <input
+                type="time"
+                value={manualTime}
+                onChange={(e) => setManualTime(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+              />
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => confirmRattrapage({ lessonDate: manualDate, lessonTime: manualTime })}
+            disabled={confirming || !manualDate || !manualTime}
+            className="mt-2 flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium hover:bg-surface-overlay transition-colors disabled:opacity-50"
+          >
+            {confirming ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+            Confirmer ce créneau
+          </button>
+        </details>
+      )}
+    </div>
+  )
+}
+
+// ─── Page principale ──────────────────────────────────────────────────────────
+
 export default function RattrapagePage() {
   const { user } = useAuth()
   const { period: periodCtx } = usePeriod()
+  // Id du cours dont le panel de rattrapage est ouvert (null = aucun)
+  const [openPanelId, setOpenPanelId] = useState(null)
+
+  const zone = user?.schoolZone ?? 'B'
 
   const load = useCallback(() => fetchCancelledLessons({ teacherId: user.id }), [user.id])
   const { data: rawLessons, loading, error, reload } = useFetch(load, [user.id])
@@ -26,14 +322,13 @@ export default function RattrapagePage() {
 
   const { global: globalStats, parÉcole, parÉlève } = useMemo(() => {
     const all = lessons ?? []
-    const annulés = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu')
-    const rattrapés = all.filter((l) => l.status === 'rattrape' && l.lessonType !== 'cesu')
-    const annulésCesu = all.filter((l) => l.status === 'annule_prof' && l.lessonType === 'cesu')
+    const annulés   = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu')
+    const rattrapés = all.filter((l) => l.status === 'rattrape'    && l.lessonType !== 'cesu')
 
-    let totalAnnulé = 0
+    let totalAnnulé  = 0
     let totalRattrapé = 0
-    const écoles = {}
-    const élèves = {}
+    const écoles  = {}
+    const élèves  = {}
 
     annulés.forEach((l) => {
       totalAnnulé += l.durationMinutes ?? 0
@@ -56,11 +351,16 @@ export default function RattrapagePage() {
     })
 
     return {
-      global: { annulé: totalAnnulé, rattrapé: totalRattrapé, restant: totalAnnulé - totalRattrapé },
+      global:  { annulé: totalAnnulé, rattrapé: totalRattrapé, restant: totalAnnulé - totalRattrapé },
       parÉcole: Object.entries(écoles).map(([nom, v]) => ({ nom, ...v, restant: v.annulé - v.rattrapé })),
       parÉlève: Object.entries(élèves).map(([nom, v]) => ({ nom, ...v, restant: v.annulé - v.rattrapé })),
     }
   }, [lessons])
+
+  const handleConfirmed = () => {
+    setOpenPanelId(null)
+    reload()
+  }
 
   return (
     <div className="p-6 sm:p-8 max-w-5xl">
@@ -141,32 +441,64 @@ export default function RattrapagePage() {
 
           {parÉlève.length === 0 && <EmptyBlock message="Aucun cours annulé pour le moment." />}
 
-          {/* Détail des cours annulés */}
+          {/* Détail des cours annulés avec bouton de rattrapage */}
           {(lessons ?? []).length > 0 && (
             <section>
-              <h2 className="text-lg font-semibold mb-3">Detail des cours annulés</h2>
+              <h2 className="text-lg font-semibold mb-3">Détail des cours annulés</h2>
               <div className="space-y-2">
                 {(lessons ?? []).map((l) => {
-                  const raison = getRaisonLabel(l.cancelReason)
+                  const raison     = getRaisonLabel(l.cancelReason)
+                  const isPanelOpen = openPanelId === l.id
+                  // Un cours avec rattrapage_de_lesson_id est déjà rattrapé
+                  const déjàRattrapé = Boolean(l.rattrapageDeLessonId) || l.status === 'rattrape'
+
                   return (
-                    <div key={l.id} className="glass-panel rounded-xl p-4 flex items-center justify-between gap-4">
-                      <div>
-                        <p className="font-medium">{l.studentName}</p>
-                        <p className="text-sm text-muted-foreground">{l.dateLabel} {l.timeLabel} — {l.durationMinutes} min</p>
+                    <div key={l.id} className="glass-panel rounded-xl p-4">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                          <p className="font-medium">{l.studentName}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {l.dateLabel} {l.timeLabel} — {l.durationMinutes} min
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {raison && (
+                            <span className="text-sm px-3 py-1 rounded-full bg-guitar-600/15 text-guitar-400 border border-guitar-600/25">
+                              {raison.emoji} {raison.label}
+                            </span>
+                          )}
+                          {déjàRattrapé ? (
+                            <span className="text-xs px-2 py-1 rounded-full font-medium bg-green-500/15 text-green-400">
+                              Rattrapé
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setOpenPanelId(isPanelOpen ? null : l.id)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-colors"
+                            >
+                              <Search className="w-3.5 h-3.5" />
+                              Chercher un créneau
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      {raison && (
-                        <span className="text-sm px-3 py-1 rounded-full bg-guitar-600/15 text-guitar-400 border border-guitar-600/25">
-                          {raison.emoji} {raison.label}
-                        </span>
+
+                      {/* Panel de rattrapage — s'affiche sous la ligne du cours */}
+                      {isPanelOpen && (
+                        <RattrapagePanel
+                          lesson={l}
+                          teacherId={user.id}
+                          zone={zone}
+                          onConfirmed={handleConfirmed}
+                          onClose={() => setOpenPanelId(null)}
+                        />
                       )}
-                      <span className={'text-xs px-2 py-1 rounded-full font-medium ' + (l.status === 'rattrape' ? 'bg-green-500/15 text-green-400' : 'bg-amber-500/15 text-amber-400')}>
-                        {l.status === 'rattrape' ? 'Rattrapé' : 'À rattraper'}
-                      </span>
                     </div>
                   )
                 })}
               </div>
-          </section>
+            </section>
           )}
         </>
       )}

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { geocodeAddress } from '../../utils/geocode'
-import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, HelpCircle } from 'lucide-react'
+import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, HelpCircle, CalendarDays, Copy, RefreshCw } from 'lucide-react'
 import { useTheme, THEMES } from '../../hooks/useTheme'
 import { fetchMileageRates, upsertMileageRate, deleteMileageRate, seedDefaultRates } from '../../services/mileageRates'
 
@@ -39,6 +39,11 @@ const inputCls = 'w-full px-3 py-2 rounded-xl bg-surface-raised border border-bo
 export default function SettingsPage() {
   const { user, setUser } = useAuth()
   const { theme, setTheme, customColor } = useTheme()
+
+  // ── Abonnement calendrier ──────────────────────────────────────────────────
+  const [calendarToken, setCalendarToken]     = useState(null)
+  const [generatingToken, setGeneratingToken] = useState(false)
+  const [copiedCal, setCopiedCal]             = useState(false)
 
   // ── Mode Assistance ────────────────────────────────────────────────────────
   const [assistanceMode, setAssistanceModeState] = useState(user?.assistanceMode ?? false)
@@ -109,6 +114,7 @@ export default function SettingsPage() {
           if (data.home_address && data.home_latitude) {
             setGeocodeInfo('Coordonnées enregistrées.')
           }
+          if (data.calendar_token) setCalendarToken(data.calendar_token)
         }
         setProfLoaded(true)
       })
@@ -231,6 +237,33 @@ export default function SettingsPage() {
     if (err) return
     setUser((prev) => ({ ...prev, navApp: chosen }))
     setSavedNav(true); setTimeout(() => setSavedNav(false), 2000)
+  }
+
+  // ── Handlers calendrier ───────────────────────────────────────────────────
+
+  async function handleGenerateCalendarToken() {
+    setGeneratingToken(true)
+    // Génère un UUID côté client — stable, opaque, jamais affiché comme "token"
+    const newToken = crypto.randomUUID()
+    const { error: err } = await supabase
+      .from('profiles')
+      .update({ calendar_token: newToken })
+      .eq('id', user.id)
+    setGeneratingToken(false)
+    if (!err) setCalendarToken(newToken)
+  }
+
+  function handleCopyCalendarUrl() {
+    if (!calendarToken) return
+    const url = calendarIcsUrl(calendarToken)
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedCal(true)
+      setTimeout(() => setCopiedCal(false), 2500)
+    })
+  }
+
+  function calendarIcsUrl(token) {
+    return window.location.origin + '/api/planning-ics?token=' + token
   }
 
   // ── Rendu ──────────────────────────────────────────────────────────────────
@@ -835,6 +868,78 @@ export default function SettingsPage() {
           <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
             <Check className="w-3.5 h-3.5" />Préférence enregistrée.
           </p>
+        )}
+      </section>
+
+      {/* ── Abonnement calendrier ─────────────────────────────────────────────── */}
+      <section className="glass-panel rounded-2xl p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-9 h-9 rounded-xl bg-guitar-600/15 flex items-center justify-center">
+            <CalendarDays className="w-4 h-4 text-guitar-400" />
+          </div>
+          <div>
+            <h2 className="font-semibold">Abonnement au calendrier</h2>
+            <p className="text-sm text-muted-foreground">Ajoutez vos cours directement dans Google Calendar, Apple Calendrier ou tout autre agenda</p>
+          </div>
+        </div>
+
+        {!calendarToken ? (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Générez votre lien d'abonnement personnel pour suivre vos cours en temps réel dans votre agenda préféré.
+              Ce lien est unique et privé — ne le partagez pas.
+            </p>
+            <button
+              type="button"
+              onClick={handleGenerateCalendarToken}
+              disabled={generatingToken}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-50"
+            >
+              {generatingToken ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarDays className="w-4 h-4" />}
+              Générer mon lien d'abonnement
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Votre lien d'abonnement</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-xs font-mono break-all select-all">
+                  {calendarIcsUrl(calendarToken)}
+                </code>
+                <button
+                  type="button"
+                  onClick={handleCopyCalendarUrl}
+                  className="shrink-0 flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
+                  title="Copier le lien"
+                >
+                  {copiedCal ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                  {copiedCal ? 'Copié !' : 'Copier'}
+                </button>
+              </div>
+            </div>
+
+            <div className="px-4 py-3 rounded-xl bg-surface-raised border border-border-subtle space-y-2 text-sm text-muted-foreground">
+              <p className="font-medium text-foreground text-xs uppercase tracking-wider mb-1">Comment utiliser ce lien ?</p>
+              <p>• <strong>Google Calendar</strong> : Autres agendas → Via l'URL → collez le lien</p>
+              <p>• <strong>Apple Calendrier</strong> (Mac) : Fichier → Nouvel abonnement → collez le lien</p>
+              <p>• <strong>iPhone / iPad</strong> : Réglages → Calendrier → Comptes → Ajouter un compte → Autre → Abonnement Calendrier</p>
+              <p>• <strong>Outlook</strong> : Ajouter un calendrier → S'abonner à partir du Web → collez le lien</p>
+              <p className="text-xs text-muted mt-1 pt-1 border-t border-border-subtle">
+                Le calendrier se met à jour automatiquement. Tous vos cours planifiés y apparaissent.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleGenerateCalendarToken}
+              disabled={generatingToken}
+              className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {generatingToken ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              Révoquer et générer un nouveau lien
+            </button>
+          </div>
         )}
       </section>
 

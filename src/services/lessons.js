@@ -3,7 +3,7 @@ import { TABLES } from '../lib/tables'
 import { fullName, formatLessonDateLabel, formatTime } from '../utils/format'
 
 const LESSON_SELECT = `
-  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group, planning_status, context_type,
+  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group, planning_status, context_type, rattrapage_de_lesson_id,
   student:${TABLES.students} (id, first_name, last_name, level, instrument, lesson_type, school_name)
 `
 
@@ -23,8 +23,9 @@ function mapLesson(row) {
     absenceReason: row.absence_reason ?? null,
     cancelReason: row.cancel_reason ?? null,
     recurrenceGroup: row.recurrence_group ?? null,
-    planningStatus: row.planning_status ?? 'confirme',
-    contextType:   row.context_type ?? null,
+    planningStatus:       row.planning_status ?? 'confirme',
+    contextType:          row.context_type ?? null,
+    rattrapageDeLessonId: row.rattrapage_de_lesson_id ?? null,
     studentName,
     dateLabel: formatLessonDateLabel(row.lesson_date),
     timeLabel: formatTime(row.lesson_time),
@@ -106,8 +107,14 @@ export async function updateLessonStatus(lessonId, status, absenceReason, cancel
   if (error) throw new Error(error.message)
 }
 
+// Remonte les cours annulés par le prof ET ceux déjà rattrapés (pour le tableau de bord Heures à rattraper)
 export async function fetchCancelledLessons({ teacherId } = {}) {
-  const { data, error } = await supabase.from(TABLES.lessons).select(LESSON_SELECT).eq('status', 'annule_prof').eq('teacher_id', teacherId).order('lesson_date', { ascending: false })
+  const { data, error } = await supabase
+    .from(TABLES.lessons)
+    .select(LESSON_SELECT)
+    .in('status', ['annule_prof', 'rattrape'])
+    .eq('teacher_id', teacherId)
+    .order('lesson_date', { ascending: false })
   if (error) throw new Error(error.message)
   return (data ?? []).map(mapLesson)
 }

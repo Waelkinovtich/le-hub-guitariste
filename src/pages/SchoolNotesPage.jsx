@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
-import { StickyNote, CalendarDays, Plus, Trash2, Pencil, Check, Loader2, AlertCircle, X, ChevronDown, ChevronUp, Mic, MicOff, Square } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { StickyNote, CalendarDays, Plus, Trash2, Pencil, Check, Loader2, AlertCircle, X, ChevronDown, ChevronUp, Mic, MicOff, Square, Users, FileDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { exportEventRoutePDF } from '../utils/exportPDF'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -351,9 +352,74 @@ function NoteCard({ item, onEdit, onDelete }) {
 
 // ─── Carte événement ──────────────────────────────────────────────────────────
 
-function EventCard({ item, isPast, onEdit, onDelete }) {
+/**
+ * Carte d'événement avec panel de participants pliable.
+ * Les participants sont chargés à la demande (lazy) pour ne pas surcharger
+ * le chargement initial de la page quand il y a beaucoup d'événements.
+ *
+ * allStudents : liste pré-chargée depuis la page parente, filtrée par école
+ * teacherId   : nécessaire pour écrire dans event_participants (RLS)
+ */
+function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
+  const [showPanel, setShowPanel] = useState(false)
+  // null = non chargé, [] = chargé mais vide, [uuid, …] = chargé avec données
+  const [participantIds, setParticipantIds] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  // Élèves de l'école concernée (filtre par school_name si renseigné)
+  const schoolStudents = useMemo(() => {
+    if (!item.school_name || allStudents.length === 0) return allStudents
+    const filtered = allStudents.filter((s) => s.school_name === item.school_name)
+    // Si aucun élève de cette école : afficher tous les élèves (l'école n'a peut-être
+    // pas d'élèves en base avec ce school_name exactement)
+    return filtered.length > 0 ? filtered : allStudents
+  }, [allStudents, item.school_name])
+
+  const loadParticipants = async () => {
+    const { data } = await supabase
+      .from('event_participants')
+      .select('student_id')
+      .eq('event_id', item.id)
+    setParticipantIds((data ?? []).map((r) => r.student_id))
+  }
+
+  const handleTogglePanel = async () => {
+    // Chargement paresseux : une seule requête à la première ouverture
+    if (!showPanel && participantIds === null) await loadParticipants()
+    setShowPanel((v) => !v)
+  }
+
+  const toggleParticipant = async (studentId) => {
+    if (!teacherId || participantIds === null) return
+    const isIn = participantIds.includes(studentId)
+    setSaving(true)
+    if (isIn) {
+      await supabase
+        .from('event_participants')
+        .delete()
+        .eq('event_id', item.id)
+        .eq('student_id', studentId)
+      setParticipantIds((prev) => prev.filter((id) => id !== studentId))
+    } else {
+      await supabase
+        .from('event_participants')
+        .insert({ teacher_id: teacherId, event_id: item.id, student_id: studentId })
+      setParticipantIds((prev) => [...prev, studentId])
+    }
+    setSaving(false)
+  }
+
+  const handleExportPDF = () => {
+    if (!participantIds) return
+    const participantDetails = schoolStudents.filter((s) => participantIds.includes(s.id))
+    exportEventRoutePDF({ event: item, participants: participantDetails })
+  }
+
+  const nbParticipants = participantIds?.length ?? null
+
   return (
     <div className={`glass-panel rounded-2xl p-4 ${isPast ? 'opacity-60' : ''}`}>
+      {/* ── Contenu principal ── */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1">
@@ -391,6 +457,70 @@ function EventCard({ item, isPast, onEdit, onDelete }) {
           </button>
         </div>
       </div>
+
+      {/* ── Bouton ouvrir le panel participants ── */}
+      <div className="mt-3 pt-3 border-t border-border-subtle">
+        <button
+          type="button"
+          onClick={handleTogglePanel}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <Users className="w-3.5 h-3.5" />
+          {nbParticipants !== null
+            ? `${nbParticipants} participant${nbParticipants !== 1 ? 's' : ''} — Feuille de route`
+            : 'Participants & feuille de route'}
+          {showPanel
+            ? <ChevronUp className="w-3 h-3 ml-1" />
+            : <ChevronDown className="w-3 h-3 ml-1" />}
+        </button>
+      </div>
+
+      {/* ── Panel participants ── */}
+      {showPanel && (
+        <div className="mt-3 space-y-3">
+          {schoolStudents.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic">
+              Aucun élève enregistré — ajoutez des élèves dans la section Élèves.
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+              {schoolStudents.map((s) => {
+                const checked = (participantIds ?? []).includes(s.id)
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => toggleParticipant(s.id)}
+                    disabled={saving}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-all text-left ${
+                      checked
+                        ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
+                        : 'border-border-subtle bg-surface text-muted-foreground hover:border-border hover:text-foreground'
+                    }`}
+                  >
+                    <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center ${
+                      checked ? 'bg-guitar-600 border-guitar-600' : 'border-border'
+                    }`}>
+                      {checked && <Check className="w-2.5 h-2.5 text-white" />}
+                    </span>
+                    <span className="truncate">{s.first_name} {s.last_name}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleExportPDF}
+            disabled={!participantIds}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium hover:bg-surface-overlay transition-colors disabled:opacity-40"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            Générer la feuille de route
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -418,6 +548,9 @@ export default function SchoolNotesPage() {
   const [items, setItems] = useState([])
   const [schools, setSchools] = useState([])
   const [activeSchool, setActiveSchool] = useState(null)
+  // Élèves complets pour le panel participants de chaque EventCard
+  const [allStudents, setAllStudents] = useState([])
+  const [teacherId, setTeacherId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState(null)
   const [showForm, setShowForm] = useState(false)
@@ -430,10 +563,15 @@ export default function SchoolNotesPage() {
     async function load() {
       setLoading(true)
       const { data: { user } } = await supabase.auth.getUser()
+      if (user) setTeacherId(user.id)
+
       const [notesRes, schoolsRes, studentsRes] = await Promise.all([
         supabase.from('school_notes_events').select('*').order('created_at', { ascending: false }),
         user ? supabase.from('schools').select('name').eq('teacher_id', user.id).order('name') : Promise.resolve({ data: [] }),
-        supabase.from('students').select('school_name').not('school_name', 'is', null),
+        // Champs complets : nécessaires pour les checkboxes et le PDF (contact)
+        user
+          ? supabase.from('students').select('id, first_name, last_name, email, phone, school_name').eq('teacher_id', user.id).order('last_name')
+          : Promise.resolve({ data: [] }),
       ])
 
       if (notesRes.error) {
@@ -448,6 +586,7 @@ export default function SchoolNotesPage() {
 
       setItems(notesRes.data ?? [])
       setSchools(uniqueSchools)
+      setAllStudents(studentsRes.data ?? [])
       if (uniqueSchools.length > 0 && !activeSchool) setActiveSchool(uniqueSchools[0])
       setLoading(false)
     }
@@ -645,6 +784,8 @@ export default function SchoolNotesPage() {
                     isPast={(item.event_date ?? '') < today}
                     onEdit={handleEdit}
                     onDelete={handleDelete}
+                    allStudents={allStudents}
+                    teacherId={teacherId}
                   />
                 ))}
               </div>

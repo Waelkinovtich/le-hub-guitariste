@@ -1,123 +1,15 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { Loader2, Star, CalendarDays, AlertCircle, Check, Brain, Clock, School } from 'lucide-react'
-import { isVacances } from '../utils/vacances'
+import { computeProposals } from '../utils/scoringCreneaux'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const JOURS_FR = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi']
-
-function nextDateForDay(dayName) {
-  const target = JOURS_FR.indexOf(dayName)
-  const today = new Date()
-  let diff = target - today.getDay()
-  if (diff <= 0) diff += 7
-  const d = new Date(today)
-  d.setDate(today.getDate() + diff)
-  return d.toISOString().slice(0, 10)
-}
-
-function parseStartTime(slot) {
-  return slot.split('–')[0].trim()
-}
-
-function timeToMinutes(timeStr) {
-  const [h, m] = timeStr.split(':').map(Number)
-  return h * 60 + m
-}
 
 async function getTeacherId() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
   const { data } = await supabase.from('profiles').select('id, school_zone').eq('id', user.id).single()
   return { id: data?.id ?? null, zone: data?.school_zone ?? 'B' }
-}
-
-// ─── Moteur de score ──────────────────────────────────────────────────────────
-
-/**
- * Score un candidat (day, slot) pour une réponse de sondage.
- * Retourne { score, reasons } — score > 0 est valide.
- */
-function scoreCandidate({ day, slot, slotsCount, response, existingLessons, schools, zone }) {
-  const reasons = []
-  let score = 0
-
-  const candidateDate   = nextDateForDay(day)
-  const startTime       = parseStartTime(slot)
-  const startMin        = timeToMinutes(startTime)
-  const durationMinutes = slotsCount * 15
-
-  // ── Vérification conflits stricts ─────────────────────────────────────────
-  const sameDayLessons = existingLessons.filter((l) => l.lesson_date === candidateDate || l.lessonDate === candidateDate)
-  const hasConflict = sameDayLessons.some((l) => {
-    const ls = timeToMinutes(l.lesson_time ?? l.lessonTime ?? '00:00')
-    const le = ls + (l.duration_minutes ?? l.durationMinutes ?? 45)
-    const cs = startMin
-    const ce = cs + durationMinutes
-    return cs < le && ce > ls
-  })
-  if (hasConflict) return null // créneau impossible
-
-  // ── Même école ce jour ────────────────────────────────────────────────────
-  const schoolName = response.school_name ?? ''
-  const sameDaySchool = sameDayLessons.filter((l) => (l.schoolName ?? l.student?.school_name ?? '') === schoolName && schoolName)
-  if (sameDaySchool.length > 0) {
-    score += 3
-    reasons.push(`+3 : même école (${schoolName}) déjà prévue ce jour`)
-  }
-
-  // ── Créneau adjacent à la même école ─────────────────────────────────────
-  const isAdjacent = sameDaySchool.some((l) => {
-    const ls = timeToMinutes(l.lesson_time ?? l.lessonTime ?? '00:00')
-    const le = ls + (l.duration_minutes ?? l.durationMinutes ?? 45)
-    return Math.abs(startMin - le) <= 5 || Math.abs(ls - (startMin + durationMinutes)) <= 5
-  })
-  if (isAdjacent) {
-    score += 2
-    reasons.push('+2 : créneau adjacent à un cours de la même école')
-  }
-
-  // ── Éviter les débutants consécutifs ─────────────────────────────────────
-  const level = (response.level ?? '').toLowerCase()
-  const isBeginnerCandidate = level.includes('débutant') || level.includes('debutant') || level === '0' || response.practice_years === 0
-  if (!isBeginnerCandidate) {
-    const hasAdjacentBeginner = sameDayLessons.some((l) => {
-      const ls = timeToMinutes(l.lesson_time ?? l.lessonTime ?? '00:00')
-      const le = ls + (l.duration_minutes ?? l.durationMinutes ?? 45)
-      const isAdj = Math.abs(startMin - le) <= 5 || Math.abs(ls - (startMin + durationMinutes)) <= 5
-      return isAdj && l.student?.level?.toLowerCase().includes('debutant')
-    })
-    if (!hasAdjacentBeginner) {
-      score += 1
-      reasons.push('+1 : pas de débutants consécutifs')
-    }
-  }
-
-  // ── Heures hebdomadaires ──────────────────────────────────────────────────
-  const school = schools.find((s) => s.name === schoolName)
-  if (school) {
-    const current  = school.current_weekly_hours ?? 0
-    const desired  = school.desired_weekly_hours ?? null
-    if (desired != null) {
-      if (current < desired) {
-        score += 1
-        reasons.push(`+1 : en-dessous du volume souhaité (${current}h actuel < ${desired}h souhaité)`)
-      } else if (current > desired) {
-        score -= 1
-        reasons.push(`-1 : au-dessus du volume souhaité (${current}h actuel > ${desired}h souhaité)`)
-      }
-    }
-  }
-
-  // ── Période de vacances ───────────────────────────────────────────────────
-  const vac = isVacances(candidateDate, zone)
-  if (vac) {
-    score -= 2
-    reasons.push(`-2 : période de vacances (${vac.label})`)
-  }
-
-  return { score, reasons, candidateDate, startTime, durationMinutes }
 }
 
 // ─── Composants ───────────────────────────────────────────────────────────────
@@ -315,45 +207,12 @@ export default function SchedulingAssistantPage() {
     load()
   }, [])
 
-  // Calcul des propositions pour chaque réponse
+  // Calcul des propositions pour chaque réponse — délégué à computeProposals (partagé avec Rattrapage)
   const proposalsMap = useMemo(() => {
     const zone = teacherInfo?.zone ?? 'B'
     const map = {}
     for (const r of responses) {
-      const avail = r.availabilities ?? {}
-      const candidates = []
-      for (const [day, slots] of Object.entries(avail)) {
-        if (!Array.isArray(slots) || slots.length === 0) continue
-        for (let i = 0; i < slots.length; i++) {
-          // Essayer 1, 2, 3 créneaux consécutifs (15, 30, 45 min)
-          const maxSlots = Math.min(4, slots.length - i)
-          for (let count = 1; count <= maxSlots; count++) {
-            const selectedSlots = slots.slice(i, i + count)
-            // Vérifier que les slots sont consécutifs (on fait confiance au tri du sondage)
-            const result = scoreCandidate({
-              day,
-              slot: selectedSlots[0],
-              slotsCount: count,
-              response: r,
-              existingLessons,
-              schools,
-              zone,
-            })
-            if (result !== null) {
-              candidates.push({ day, slot: selectedSlots[0], slotsCount: count, ...result })
-            }
-          }
-        }
-      }
-      // Dédupliquer par (day, startTime, durationMinutes) et trier par score desc
-      const seen = new Set()
-      const unique = candidates.filter(({ day, startTime, durationMinutes }) => {
-        const key = `${day}|${startTime}|${durationMinutes}`
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-      map[r.id] = unique.sort((a, b) => b.score - a.score).slice(0, 5)
+      map[r.id] = computeProposals({ response: r, existingLessons, schools, zone, maxResults: 5 })
     }
     return map
   }, [responses, existingLessons, schools, teacherInfo])
