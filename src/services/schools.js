@@ -249,15 +249,22 @@ export function isSalaryFixed(paymentSmoothing) {
 // renseigné ne doit jamais avantager ni pénaliser artificiellement une école.
 
 const SCORE_NEUTRE = 3
+const FIABILITE_MIN = 1
+const FIABILITE_MAX = 5
 
 // ─── 1. Fiabilité des heures ──────────────────────────────────────────────────
 
 // Base automatique selon le type de structure : une école/association a un
-// fonctionnement institutionnel (paie régulière, rattrapages organisés) bien
-// plus fiable qu'un particulier CESU, où un cours annulé n'est ni rattrapé ni
-// payé — c'est précisément le biais que cette refonte du score corrige.
+// fonctionnement institutionnel où un cours annulé déclenche TOUJOURS un
+// rattrapage — les heures prévues sont donc systématiquement effectuées et
+// payées, sans aucun risque de perte. Sa fiabilité automatique est donc
+// maximale par défaut (FIABILITE_MAX), pas un simple "bien noté" à mi-chemin :
+// seul un signal concret (heures variables, restriction d'accès, correction
+// manuelle) peut ensuite la faire redescendre. Un particulier CESU, où un
+// cours annulé n'est ni rattrapé ni payé, part au contraire d'une base
+// nettement plus basse — c'est précisément le biais que cette refonte corrige.
 const FIABILITE_BASE_PAR_STRUCTURE = { particulier_cesu: 2.5, autre: 3 }
-const FIABILITE_BASE_INSTITUTION = 4 // association, municipale, conservatoire, privee
+const FIABILITE_BASE_INSTITUTION = FIABILITE_MAX // association, municipale, conservatoire, privee
 
 /**
  * Calcul automatique de la fiabilité des heures (1-5), avant toute correction
@@ -277,7 +284,7 @@ function calculerFiabiliteHeuresAuto(school) {
   if (school.access_restriction_type === 'vacances_uniquement') ajustement += 0.2
   else if (school.access_restriction_type === 'hors_vacances_uniquement') ajustement -= 0.2
 
-  return Math.min(5, Math.max(1, base + ajustement))
+  return Math.min(FIABILITE_MAX, Math.max(FIABILITE_MIN, base + ajustement))
 }
 
 /**
@@ -455,39 +462,61 @@ export function isScoreIncomplete(school, options = {}) {
 
 const SEMAINES_PAR_MOIS = 52 / 12 // ≈ 4,33 — conversion standard hebdomadaire → mensuelle
 
+// Facteur de fiabilité minimal (structure la moins fiable, note 1/5) : une
+// heure statistiquement peu fiable (CESU annulée = jamais rattrapée ni payée)
+// vaut moins qu'une heure garantie, mais seule la FRÉQUENCE des heures
+// effectivement payées est en jeu, pas le taux affiché lui-même — une
+// structure peu fiable ne paie pas moins cher quand le cours a bien lieu.
+// D'où un facteur modéré [0,7 ; 1,0] plutôt que [0 ; 1].
+const FACTEUR_FIABILITE_MIN = 0.7
+
+/**
+ * Taux net effectif AVANT ajustement de fiabilité : le montant mensuel fixe
+ * rapporté aux heures réellement travaillées si le salaire est lissé (plus
+ * représentatif qu'un taux horaire affiché quand le salaire ne varie pas avec
+ * les heures du mois), sinon le taux horaire net de l'année en cours.
+ * Fonction séparée pour être réutilisée par l'UI (comparaison "taux saisi" vs
+ * "ajusté fiabilité", voir SchoolDetailPage/SchoolsPage) sans dupliquer ce calcul.
+ */
+export function calculerTauxNetEffectif(school, options = {}) {
+  const { netHourlyRate = null } = options
+  const heures = school.current_weekly_hours
+  const tauxDepuisSalaireFixe =
+    isSalaryFixed(school.payment_smoothing) && school.fixed_monthly_salary != null && heures > 0
+      ? school.fixed_monthly_salary / (heures * SEMAINES_PAR_MOIS)
+      : null
+  const taux = tauxDepuisSalaireFixe ?? netHourlyRate
+  // Arrondi systématique à 2 décimales : garantit une égalité stricte et fiable
+  // avec calculerRendementHoraireNetReel (même arrondi) quand la fiabilité est
+  // maximale — sans ça, le taux dérivé d'un salaire fixe (division non ronde)
+  // pourrait sembler "ajusté" par un écart d'arrondi qui n'a rien à voir avec
+  // la fiabilité.
+  return taux != null ? Math.round(taux * 100) / 100 : null
+}
+
 /**
  * Rendement horaire net réel estimé (€/h) — indicateur simple et direct,
  * INDÉPENDANT du score pondéré, répondant à la question centrale du produit :
  * "combien je gagne vraiment de l'heure ici ?".
  *
- * - Taux de référence : le montant mensuel net fixe rapporté aux heures
- *   réellement travaillées si le salaire est lissé (plus représentatif qu'un
- *   taux horaire affiché quand le salaire ne varie pas avec les heures du
- *   mois), sinon le taux horaire net de l'année en cours.
- * - Facteur de fiabilité : une heure statistiquement peu fiable (CESU annulée
- *   = jamais rattrapée ni payée) vaut moins qu'une heure garantie en école —
- *   mais seule la FRÉQUENCE des heures effectivement payées est en jeu, pas
- *   le taux affiché lui-même (une structure peu fiable ne paie pas moins cher
- *   quand le cours a bien lieu). La note de fiabilité (1-5) est donc mappée
- *   sur un facteur modéré [0,7 ; 1,0], pas [0 ; 1] : même la structure la
- *   moins fiable paie plein tarif quand elle paie.
+ * La décote de fiabilité ne s'applique QUE si la fiabilité (automatique ou
+ * corrigée manuellement) est réellement inférieure au maximum — une école de
+ * musique standard, sans correction manuelle, a par construction une fiabilité
+ * automatique maximale (voir calculerFiabiliteHeures/FIABILITE_BASE_INSTITUTION)
+ * et retourne donc EXACTEMENT le taux net effectif, sans aucune décote. Seule
+ * une structure réellement moins fiable (CESU par défaut, heures variables,
+ * ou correction manuelle à la baisse) est décotée.
  *
  * Retourne null si aucune donnée de rémunération n'est disponible.
  */
 export function calculerRendementHoraireNetReel(school, options = {}) {
-  const { netHourlyRate = null } = options
-  const heures = school.current_weekly_hours
-
-  const tauxDepuisSalaireFixe =
-    isSalaryFixed(school.payment_smoothing) && school.fixed_monthly_salary != null && heures > 0
-      ? school.fixed_monthly_salary / (heures * SEMAINES_PAR_MOIS)
-      : null
-
-  const tauxEffectif = tauxDepuisSalaireFixe ?? netHourlyRate
+  const tauxEffectif = calculerTauxNetEffectif(school, options)
   if (tauxEffectif == null) return null
 
   const fiabilite = calculerFiabiliteHeures(school)
-  const facteurFiabilite = 0.7 + (fiabilite - 1) * (0.3 / 4) // 1→0,70 … 5→1,00
+  if (fiabilite >= FIABILITE_MAX) return Math.round(tauxEffectif * 100) / 100 // aucun risque identifié : pas de décote
 
+  const facteurFiabilite = FACTEUR_FIABILITE_MIN +
+    (fiabilite - FIABILITE_MIN) * ((1 - FACTEUR_FIABILITE_MIN) / (FIABILITE_MAX - FIABILITE_MIN))
   return Math.round(tauxEffectif * facteurFiabilite * 100) / 100
 }

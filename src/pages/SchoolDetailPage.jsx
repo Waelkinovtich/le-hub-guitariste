@@ -10,7 +10,7 @@ import {
   fetchSchoolProfile, updateSchoolProfile,
   fetchHourlyRates, upsertHourlyRate,
   currentSchoolYear, computePriorityScore, computeScoreBreakdown, isScoreIncomplete,
-  calculerRendementHoraireNetReel, isSalaryFixed,
+  calculerRendementHoraireNetReel, calculerTauxNetEffectif, isSalaryFixed,
 } from '../services/schools'
 import {
   fetchStudentsPaidBySchool, fetchStudentsAttachedToSchool,
@@ -476,7 +476,6 @@ export default function SchoolDetailPage() {
 
   const [school, setSchool]           = useState(null)
   const [rates, setRates]             = useState([])
-  const [studentCount, setStudentCount] = useState(0)
   const [teacherId, setTeacherId]     = useState(null)
   const [loading, setLoading]         = useState(true)
   const [error, setError]             = useState('')
@@ -509,14 +508,12 @@ export default function SchoolDetailPage() {
       if (!user) { setError('Non authentifié'); setLoading(false); return }
       setTeacherId(user.id)
       try {
-        const [profile, hourlyRates, countsRes] = await Promise.all([
+        const [profile, hourlyRates] = await Promise.all([
           fetchSchoolProfile(id),
           fetchHourlyRates(id),
-          supabase.from('students').select('id', { count: 'exact', head: true }).eq('school_id', id).eq('teacher_id', user.id),
         ])
         setSchool(profile)
         setRates(hourlyRates)
-        setStudentCount(countsRes.count ?? 0)
         // Charger tous les élèves pour la recherche de rattachement
         fetchTeacherStudents(user.id).then(setAllStudents).catch(() => {})
         if (profile?.structure_type === 'particulier_cesu') {
@@ -566,13 +563,22 @@ export default function SchoolDetailPage() {
 
   const data          = editing ? draft : school
   const isCesu        = data.structure_type === 'particulier_cesu'
+  // Dérivé directement des listes chargées via student_contexts (même source que
+  // fetchContextCountsBySchool sur SchoolsPage.jsx) — jamais une requête séparée
+  // sur students.school_id, qui ne reflète pas le rattachement CESU/école réel
+  // et pouvait diverger de la section "Élèves" plus bas sur cette même page.
+  const studentCount  = isCesu ? paidStudents.length : attachedStudents.length
   const currentRate    = rates.find((r) => r.school_year === curYear)
   const missingRate    = !currentRate || (currentRate.net_hourly_rate == null && currentRate.gross_hourly_rate == null)
   const scoreOptions   = { profile: user, netHourlyRate: currentRate?.net_hourly_rate, weights: user?.scoreWeights }
   const score          = computePriorityScore(school, scoreOptions)
   const scoreBreakdown = computeScoreBreakdown(school, scoreOptions)
   // Indicateur direct, en NET, indépendant du score pondéré (voir schools.js).
+  // tauxNetEffectif = valeur avant décote de fiabilité (identique au rendement
+  // net réel si la structure est fiable à 100 % — voir calculerRendementHoraireNetReel).
+  const tauxNetEffectif  = calculerTauxNetEffectif(school, { netHourlyRate: currentRate?.net_hourly_rate })
   const rendementNetReel = calculerRendementHoraireNetReel(school, { netHourlyRate: currentRate?.net_hourly_rate })
+  const fiabiliteReduite = tauxNetEffectif != null && rendementNetReel != null && rendementNetReel !== tauxNetEffectif
   const historyRates  = rates.filter((r) => r.school_year !== curYear)
 
   // Téléphones : tableau jsonb ou tableau vide
@@ -659,9 +665,24 @@ export default function SchoolDetailPage() {
                 Score de priorité : {score}/5
               </span>
             )}
-            {rendementNetReel != null && (
-              <span className="text-xs text-green-600 dark:text-green-400 font-medium" title="Taux net effectif, ajusté par la fiabilité des heures de cette structure">
-                ≈ {rendementNetReel.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h net réel
+            {/* Fiabilité maximale (école standard, pas de correction manuelle) : une
+                seule valeur, strictement égale au taux saisi — aucun doublon trompeur.
+                Fiabilité réduite (CESU par défaut, ou correction manuelle à la baisse) :
+                les deux valeurs côte à côte, distinctes visuellement. */}
+            {rendementNetReel != null && !fiabiliteReduite && (
+              <span className="text-xs text-green-600 dark:text-green-400 font-medium">
+                {rendementNetReel.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h net
+              </span>
+            )}
+            {fiabiliteReduite && (
+              <span className="text-xs flex items-center gap-1.5">
+                <span className="text-muted-foreground">Taux saisi : {tauxNetEffectif.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h</span>
+                <span
+                  className="text-green-600 dark:text-green-400 font-semibold"
+                  title="Tient compte du risque d'annulation non rattrapée pour cette structure — voir la fiabilité des heures ci-dessous"
+                >
+                  ≈ {rendementNetReel.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h ajusté fiabilité
+                </span>
               </span>
             )}
           </div>

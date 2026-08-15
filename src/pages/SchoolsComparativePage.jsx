@@ -266,9 +266,14 @@ export default function SchoolsComparativePage() {
                     </td>
                     <td className="px-4 py-3">{fmtRate(school.currentNetRate)}</td>
                     <td className="px-4 py-3 text-green-600 dark:text-green-400 font-medium">
-                      {school.netHourlyYieldReal != null
-                        ? `≈ ${school.netHourlyYieldReal.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h`
-                        : <span className="text-muted-foreground font-normal">—</span>
+                      {school.netHourlyYieldReal == null
+                        ? <span className="text-muted-foreground font-normal">—</span>
+                        // "≈" seulement si la fiabilité décote réellement le taux — une
+                        // école fiable à 100 % affiche le même chiffre que "Taux net",
+                        // sans laisser croire à un ajustement qui n'existe pas.
+                        : school.netHourlyYieldReal === school.currentNetRate
+                          ? `${school.netHourlyYieldReal.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h`
+                          : `≈ ${school.netHourlyYieldReal.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h`
                       }
                     </td>
                     <td className="px-4 py-3">

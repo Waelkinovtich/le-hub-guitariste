@@ -3,7 +3,7 @@ import { School, Plus, Trash2, Loader2, AlertCircle, Users, ChevronRight, AlertT
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { fetchTeacherSchools, createSchool, deleteSchool, currentSchoolYear, computePriorityScore, isScoreIncomplete, calculerRendementHoraireNetReel } from '../services/schools'
+import { fetchTeacherSchools, createSchool, deleteSchool, currentSchoolYear, computePriorityScore, isScoreIncomplete, calculerRendementHoraireNetReel, calculerTauxNetEffectif } from '../services/schools'
 import { fetchContextCountsBySchool } from '../services/students'
 import { getSchoolColor } from '../utils/schoolColors'
 import AideContextuelle from '../components/AideContextuelle'
@@ -231,7 +231,9 @@ export default function SchoolsPage() {
             const score = computePriorityScore(school, scoreOptions)
             const incomplete = score != null && isScoreIncomplete(school, scoreOptions)
             // Indicateur direct, en net, indépendant du score pondéré (voir schools.js).
+            const tauxNetEffectif  = calculerTauxNetEffectif(school, { netHourlyRate: netRates[school.id] })
             const rendementNetReel = calculerRendementHoraireNetReel(school, { netHourlyRate: netRates[school.id] })
+            const fiabiliteReduite = tauxNetEffectif != null && rendementNetReel != null && rendementNetReel !== tauxNetEffectif
             return (
               <div
                 key={school.id}
@@ -280,9 +282,23 @@ export default function SchoolsPage() {
                       ) : (
                         <p className="text-xs text-muted-foreground italic">Score incomplet</p>
                       )}
-                      {rendementNetReel != null && (
-                        <p className="text-xs text-green-600 dark:text-green-400 font-medium" title="Taux net effectif, ajusté par la fiabilité des heures">
-                          ≈ {rendementNetReel.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h net réel
+                      {/* Fiabilité maximale : une seule valeur, égale au taux saisi, sans
+                          doublon. Fiabilité réduite (CESU, ou correction manuelle) : les
+                          deux valeurs côte à côte pour rester transparent sur l'écart. */}
+                      {rendementNetReel != null && !fiabiliteReduite && (
+                        <p className="text-xs text-green-600 dark:text-green-400 font-medium">
+                          {rendementNetReel.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h net
+                        </p>
+                      )}
+                      {fiabiliteReduite && (
+                        <p className="text-xs flex items-center gap-1">
+                          <span className="text-muted-foreground">{tauxNetEffectif.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h saisi</span>
+                          <span
+                            className="text-green-600 dark:text-green-400 font-semibold"
+                            title="Ajusté du risque d'annulation non rattrapée pour cette structure"
+                          >
+                            → ≈ {rendementNetReel.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h réel
+                          </span>
                         </p>
                       )}
                     </div>
