@@ -282,22 +282,18 @@ export default function SchoolsPage() {
                       ) : (
                         <p className="text-xs text-muted-foreground italic">Score incomplet</p>
                       )}
-                      {/* Fiabilité maximale : une seule valeur, égale au taux saisi, sans
-                          doublon. Fiabilité réduite (CESU, ou correction manuelle) : les
-                          deux valeurs côte à côte pour rester transparent sur l'écart. */}
-                      {rendementNetReel != null && !fiabiliteReduite && (
-                        <p className="text-xs text-green-600 dark:text-green-400 font-medium">
-                          {rendementNetReel.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h net
-                        </p>
-                      )}
-                      {fiabiliteReduite && (
+                      {/* Les deux valeurs s'affichent TOUJOURS, sur toute structure — y
+                          compris identiques (école standard, fiabilité maximale) : l'intérêt
+                          est de pouvoir comparer d'un coup d'œil et repérer une décote.
+                          L'info-bulle n'apparaît que si les valeurs diffèrent réellement. */}
+                      {tauxNetEffectif != null && rendementNetReel != null && (
                         <p className="text-xs flex items-center gap-1">
                           <span className="text-muted-foreground">{tauxNetEffectif.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h saisi</span>
                           <span
                             className="text-green-600 dark:text-green-400 font-semibold"
-                            title="Ajusté du risque d'annulation non rattrapée pour cette structure"
+                            title={fiabiliteReduite ? "Ajusté du risque d'annulation non rattrapée pour cette structure" : undefined}
                           >
-                            → ≈ {rendementNetReel.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h réel
+                            → {fiabiliteReduite ? '≈ ' : ''}{rendementNetReel.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h réel
                           </span>
                         </p>
                       )}

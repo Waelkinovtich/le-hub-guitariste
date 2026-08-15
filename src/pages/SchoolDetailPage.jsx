@@ -665,23 +665,21 @@ export default function SchoolDetailPage() {
                 Score de priorité : {score}/5
               </span>
             )}
-            {/* Fiabilité maximale (école standard, pas de correction manuelle) : une
-                seule valeur, strictement égale au taux saisi — aucun doublon trompeur.
-                Fiabilité réduite (CESU par défaut, ou correction manuelle à la baisse) :
-                les deux valeurs côte à côte, distinctes visuellement. */}
-            {rendementNetReel != null && !fiabiliteReduite && (
-              <span className="text-xs text-green-600 dark:text-green-400 font-medium">
-                {rendementNetReel.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h net
-              </span>
-            )}
-            {fiabiliteReduite && (
+            {/* Les deux lignes s'affichent TOUJOURS, sur toute structure — y compris
+                quand elles sont identiques (école standard, fiabilité maximale).
+                L'intérêt est justement de pouvoir comparer les deux d'un coup d'œil,
+                structure par structure, pour repérer où une décote s'applique.
+                L'info-bulle n'apparaît que si les valeurs diffèrent réellement. */}
+            {tauxNetEffectif != null && rendementNetReel != null && (
               <span className="text-xs flex items-center gap-1.5">
-                <span className="text-muted-foreground">Taux saisi : {tauxNetEffectif.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h</span>
+                <span className="text-muted-foreground">
+                  Taux saisi : {tauxNetEffectif.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h
+                </span>
                 <span
                   className="text-green-600 dark:text-green-400 font-semibold"
-                  title="Tient compte du risque d'annulation non rattrapée pour cette structure — voir la fiabilité des heures ci-dessous"
+                  title={fiabiliteReduite ? "Tient compte du risque d'annulation non rattrapée pour cette structure — voir la fiabilité des heures ci-dessous" : undefined}
                 >
-                  ≈ {rendementNetReel.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h ajusté fiabilité
+                  {fiabiliteReduite ? '≈ ' : ''}Taux réel : {rendementNetReel.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h
                 </span>
               </span>
             )}
