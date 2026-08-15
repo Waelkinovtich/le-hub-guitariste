@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { geocodeAddress } from '../../utils/geocode'
-import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, HelpCircle, CalendarDays, Copy, RefreshCw, SlidersHorizontal, TableProperties } from 'lucide-react'
+import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, HelpCircle, CalendarDays, Copy, RefreshCw, SlidersHorizontal, TableProperties, School } from 'lucide-react'
 import { useTheme, THEMES } from '../../hooks/useTheme'
 import { fetchMileageRates, upsertMileageRate, deleteMileageRate, seedDefaultRates } from '../../services/mileageRates'
 import { DEFAULT_SCORE_WEIGHTS } from '../../services/schools'
@@ -61,11 +61,20 @@ export default function SettingsPage() {
   const location = useLocation()
 
   // Scroll direct vers une section précise si l'URL arrive avec une ancre
-  // (ex : /professeur/reglages#priorisation-ecoles depuis SchoolsPage.jsx).
+  // (ex : /professeur/reglages#priorisation-ecoles). On attend que les
+  // sections chargées de façon asynchrone plus haut sur la page (profil,
+  // taux kilométriques) aient remplacé leur spinner par leur contenu réel :
+  // sinon la mise en page grandit APRÈS le scroll et fait atterrir ailleurs
+  // (ex : sur "Taux kilométriques", juste au-dessus de la cible réelle).
   useEffect(() => {
-    if (!location.hash) return
-    document.querySelector(location.hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [location.hash])
+    if (!location.hash || !profLoaded || !mileageLoaded) return
+    // requestAnimationFrame : laisse le navigateur peindre la mise en page
+    // désormais stable avant de mesurer la position de la section visée.
+    const frame = requestAnimationFrame(() => {
+      document.querySelector(location.hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [location.hash, profLoaded, mileageLoaded])
 
   // ── Abonnement calendrier ──────────────────────────────────────────────────
   const [calendarToken, setCalendarToken]     = useState(null)
@@ -943,15 +952,27 @@ export default function SettingsPage() {
               <p className="text-sm text-muted-foreground">Réglez l'importance de chaque critère dans le classement de vos écoles</p>
             </div>
           </div>
-          {/* Effet immédiat visible : accès direct au classement pour voir le résultat d'un changement de curseur */}
-          <button
-            type="button"
-            onClick={() => navigate('/admin/ecoles/liste')}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
-          >
-            <TableProperties className="w-3.5 h-3.5" />
-            Voir le classement
-          </button>
+          {/* Effet immédiat visible : accès direct au classement et au comparatif
+              pour voir le résultat d'un changement de curseur. Icônes reprises
+              telles quelles de SchoolsPage.jsx / SchoolsComparativePage.jsx. */}
+          <div className="flex gap-2 shrink-0 flex-wrap justify-end">
+            <button
+              type="button"
+              onClick={() => navigate('/admin/ecoles/liste')}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+            >
+              <School className="w-3.5 h-3.5" />
+              Voir le classement
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/admin/ecoles/comparatif')}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+            >
+              <TableProperties className="w-3.5 h-3.5" />
+              Voir le comparatif
+            </button>
+          </div>
         </div>
 
         <p className="text-xs text-muted-foreground mb-5 bg-surface-raised rounded-lg px-3 py-2 border border-border-subtle">

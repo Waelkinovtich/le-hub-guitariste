@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, AlertCircle, ChevronUp, ChevronDown, Download, Star, AlertTriangle, EyeOff } from 'lucide-react'
+import { Loader2, AlertCircle, ChevronUp, ChevronDown, Download, Star, AlertTriangle, EyeOff, School, SlidersHorizontal } from 'lucide-react'
 import { fetchSchoolsOverview, currentSchoolYear } from '../services/schools'
 import { supabase } from '../lib/supabase'
 
@@ -168,6 +168,23 @@ export default function SchoolsComparativePage() {
           <p className="text-muted-foreground mt-1">Triez par colonne — taux horaires pour l'année {curYear}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Navigation croisée vers les 2 autres vues du même classement — icônes
+              reprises telles quelles de SchoolsPage.jsx / SettingsPage.jsx pour
+              rester cohérent visuellement sur les 3 pages. */}
+          <button
+            onClick={() => navigate('/admin/ecoles/liste')}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
+          >
+            <School className="w-4 h-4" />
+            Classement
+          </button>
+          <button
+            onClick={() => navigate('/professeur/reglages#priorisation-ecoles')}
+            title="Ajuster la pondération du classement"
+            className="p-2.5 rounded-xl border border-border-subtle text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors"
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+          </button>
           {/* Filtre par type */}
           <div className="flex gap-1">
             {[
