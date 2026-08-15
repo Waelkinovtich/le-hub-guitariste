@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { geocodeAddress } from '../../utils/geocode'
-import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, HelpCircle, CalendarDays, Copy, RefreshCw, SlidersHorizontal } from 'lucide-react'
+import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, HelpCircle, CalendarDays, Copy, RefreshCw, SlidersHorizontal, TableProperties } from 'lucide-react'
 import { useTheme, THEMES } from '../../hooks/useTheme'
 import { fetchMileageRates, upsertMileageRate, deleteMileageRate, seedDefaultRates } from '../../services/mileageRates'
 import { DEFAULT_SCORE_WEIGHTS } from '../../services/schools'
@@ -16,6 +17,12 @@ const SCORE_WEIGHT_SLIDERS = [
   { key: 'perspectives', label: 'Perspectives & stabilité' },
   { key: 'ambiance',     label: 'Ambiance & conditions humaines' },
 ]
+
+// Ancre de la section "Priorisation des écoles", ciblée depuis SchoolsPage.jsx
+// via /professeur/reglages#priorisation-ecoles — l'id doit rester identique
+// des deux côtés (pas de source commune : une seule chaîne, dupliquer un
+// fichier de constantes pour ça aurait été plus lourd qu'utile).
+const PRIORISATION_SECTION_ID = 'priorisation-ecoles'
 
 const ZONES = [
   { value: 'A', label: 'Zone A', description: 'Académies de Paris, Versailles, Créteil…' },
@@ -50,6 +57,15 @@ const inputCls = 'w-full px-3 py-2 rounded-xl bg-surface-raised border border-bo
 export default function SettingsPage() {
   const { user, setUser } = useAuth()
   const { theme, setTheme, customColor } = useTheme()
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  // Scroll direct vers une section précise si l'URL arrive avec une ancre
+  // (ex : /professeur/reglages#priorisation-ecoles depuis SchoolsPage.jsx).
+  useEffect(() => {
+    if (!location.hash) return
+    document.querySelector(location.hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [location.hash])
 
   // ── Abonnement calendrier ──────────────────────────────────────────────────
   const [calendarToken, setCalendarToken]     = useState(null)
@@ -916,15 +932,26 @@ export default function SettingsPage() {
       </section>
 
       {/* ── Priorisation des écoles ───────────────────────────────────────────── */}
-      <section className="glass-panel rounded-2xl p-6">
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-9 h-9 rounded-xl bg-guitar-600/15 flex items-center justify-center">
-            <SlidersHorizontal className="w-4 h-4 text-guitar-400" />
+      <section id={PRIORISATION_SECTION_ID} className="glass-panel rounded-2xl p-6 scroll-mt-4">
+        <div className="flex items-start justify-between gap-3 mb-5">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-guitar-600/15 flex items-center justify-center">
+              <SlidersHorizontal className="w-4 h-4 text-guitar-400" />
+            </div>
+            <div>
+              <h2 className="font-semibold">Priorisation des écoles</h2>
+              <p className="text-sm text-muted-foreground">Réglez l'importance de chaque critère dans le classement de vos écoles</p>
+            </div>
           </div>
-          <div>
-            <h2 className="font-semibold">Priorisation des écoles</h2>
-            <p className="text-sm text-muted-foreground">Réglez l'importance de chaque critère dans le classement de vos écoles</p>
-          </div>
+          {/* Effet immédiat visible : accès direct au classement pour voir le résultat d'un changement de curseur */}
+          <button
+            type="button"
+            onClick={() => navigate('/admin/ecoles/liste')}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+          >
+            <TableProperties className="w-3.5 h-3.5" />
+            Voir le classement
+          </button>
         </div>
 
         <p className="text-xs text-muted-foreground mb-5 bg-surface-raised rounded-lg px-3 py-2 border border-border-subtle">

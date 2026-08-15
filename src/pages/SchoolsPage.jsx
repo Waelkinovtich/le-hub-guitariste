@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { School, Plus, Trash2, Loader2, AlertCircle, Users, ChevronRight, AlertTriangle, Star, TableProperties, Info, Home } from 'lucide-react'
+import { School, Plus, Trash2, Loader2, AlertCircle, Users, ChevronRight, AlertTriangle, Star, TableProperties, Info, Home, SlidersHorizontal } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
@@ -126,13 +126,24 @@ export default function SchoolsPage() {
           <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Écoles et cours particuliers</h1>
           <p className="text-muted-foreground mt-1">Écoles de musique et familles en cours particulier (CESU)</p>
         </div>
-        <button
-          onClick={() => navigate('/admin/ecoles/comparatif')}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors shrink-0"
-        >
-          <TableProperties className="w-4 h-4" />
-          Comparatif
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Discret : ajuste la pondération qui détermine ce classement, sans
+              détourner l'attention du bouton principal "Comparatif". */}
+          <button
+            onClick={() => navigate('/professeur/reglages#priorisation-ecoles')}
+            title="Ajuster la pondération du classement"
+            className="p-2.5 rounded-xl border border-border-subtle text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors"
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => navigate('/admin/ecoles/comparatif')}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
+          >
+            <TableProperties className="w-4 h-4" />
+            Comparatif
+          </button>
+        </div>
       </header>
       <AideContextuelle texte="Chaque fiche représente une structure : école de musique ou employeur CESU (famille en cours particulier). Le score de priorité est calculé automatiquement depuis vos notes (locaux, ambiance, contrat...). Cliquez sur une fiche pour rattacher des élèves ou mettre à jour les taux horaires." />
 
