@@ -60,22 +60,6 @@ export default function SettingsPage() {
   const navigate = useNavigate()
   const location = useLocation()
 
-  // Scroll direct vers une section précise si l'URL arrive avec une ancre
-  // (ex : /professeur/reglages#priorisation-ecoles). On attend que les
-  // sections chargées de façon asynchrone plus haut sur la page (profil,
-  // taux kilométriques) aient remplacé leur spinner par leur contenu réel :
-  // sinon la mise en page grandit APRÈS le scroll et fait atterrir ailleurs
-  // (ex : sur "Taux kilométriques", juste au-dessus de la cible réelle).
-  useEffect(() => {
-    if (!location.hash || !profLoaded || !mileageLoaded) return
-    // requestAnimationFrame : laisse le navigateur peindre la mise en page
-    // désormais stable avant de mesurer la position de la section visée.
-    const frame = requestAnimationFrame(() => {
-      document.querySelector(location.hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [location.hash, profLoaded, mileageLoaded])
-
   // ── Abonnement calendrier ──────────────────────────────────────────────────
   const [calendarToken, setCalendarToken]     = useState(null)
   const [generatingToken, setGeneratingToken] = useState(false)
@@ -130,6 +114,26 @@ export default function SettingsPage() {
   const [mileageError, setMileageError] = useState(null)
   const [editingRate, setEditingRate] = useState(null) // { id?, vehicle_type, fiscal_cv, rate_per_km, label, year }
   const [savingRate, setSavingRate] = useState(false)
+
+  // Scroll direct vers une section précise si l'URL arrive avec une ancre
+  // (ex : /professeur/reglages#priorisation-ecoles). On attend que les
+  // sections chargées de façon asynchrone plus haut sur la page (profil,
+  // taux kilométriques) aient remplacé leur spinner par leur contenu réel :
+  // sinon la mise en page grandit APRÈS le scroll et fait atterrir ailleurs
+  // (ex : sur "Taux kilométriques", juste au-dessus de la cible réelle).
+  // Déclaré ICI et pas plus haut : profLoaded/mileageLoaded doivent déjà être
+  // initialisées avant d'apparaître dans le tableau de dépendances, sous peine
+  // de "Cannot access before initialization" (temporal dead zone) au build.
+  useEffect(() => {
+    if (!location.hash || !profLoaded || !mileageLoaded) return
+    // requestAnimationFrame : laisse le navigateur peindre la mise en page
+    // désormais stable avant de mesurer la position de la section visée.
+    const frame = requestAnimationFrame(() => {
+      document.querySelector(location.hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [location.hash, profLoaded, mileageLoaded])
+
   // Calculatrice kilométrique
   const [calcKm, setCalcKm] = useState('')
   const [calcVehicle, setCalcVehicle] = useState('voiture')
