@@ -10,6 +10,20 @@ import { allSchoolYears } from '../context/PeriodContext'
 
 const SCHOOL_YEARS = allSchoolYears()
 
+// Granularité des créneaux de cours : 15 minutes = 0,25 heure.
+// Toute proposition du simulateur est arrondie à ce multiple pour rester
+// directement traduisible en créneaux réels (ex : 2,5h → 2h30, jamais 2,37h).
+const GRANULARITE_HEURES = 0.25
+
+/** Convertit un nombre d'heures décimal en libellé "Xh" ou "XhYY" (ex: 2.5 → "2h30"). */
+function fmtHeures(h) {
+  if (h == null || isNaN(h)) return '—'
+  const heures  = Math.floor(h)
+  const minutes = Math.round((h - heures) * 60)
+  if (minutes === 0) return `${heures}h`
+  return `${heures}h${String(minutes).padStart(2, '0')}`
+}
+
 function fmt(v, suffix = '', digits = 0) {
   if (v == null || isNaN(v)) return '—'
   return Number(v).toLocaleString('fr-FR', { minimumFractionDigits: digits, maximumFractionDigits: digits }) + (suffix ? ' ' + suffix : '')
@@ -72,7 +86,7 @@ function simuler(schools, plafondHebdo, revenuMensuelCible) {
 
   const resultats = evaluees.map(s => {
     const ratio     = s.priorityScore / totalScore
-    const hebdo     = Math.round(ratio * plafondHebdo * 4) / 4   // arrondi au quart d'heure
+    const hebdo     = Math.round(ratio * plafondHebdo / GRANULARITE_HEURES) * GRANULARITE_HEURES
     const tauxRetenu = s.netHourlyYieldReal ?? s.currentNetRate
     const mensuel   = tauxRetenu ? hebdo * SEMAINES_PAR_MOIS * tauxRetenu : null
     return { ...s, heuresHebdoProposees: hebdo, revenuMensuelEstime: mensuel }
@@ -280,22 +294,27 @@ function SchoolRow({ school, plafond }) {
   const fiabiliteReduite = currentNetRate != null && netHourlyYieldReal != null && netHourlyYieldReal !== currentNetRate
 
   return (
-    <div className="px-5 py-4">
+    <div
+      className="px-5 py-4 cursor-pointer hover:bg-surface-overlay transition-colors"
+      onClick={() => navigate(`/admin/ecoles/${school.id}`)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/ecoles/${school.id}`)}
+    >
       <div className="flex items-start justify-between gap-4 mb-2">
         <div className="min-w-0">
-          <button
-            type="button"
-            onClick={() => navigate(`/admin/ecoles/${school.id}`)}
-            className="text-sm font-medium text-foreground truncate hover:text-guitar-400 transition-colors text-left w-full"
-          >{name}</button>
+          <p className="text-sm font-medium text-foreground truncate hover:text-guitar-400 transition-colors">{name}</p>
           <ScoreDots score={priorityScore} />
         </div>
         <div className="text-right shrink-0">
-          <p className="text-sm font-semibold text-foreground">
-            {heuresHebdoProposees != null ? fmt(heuresHebdoProposees, 'h', 2) : <span className="text-muted italic text-xs">Non évalué</span>}
-          </p>
-          {revenuMensuelEstime != null && (
-            <p className="text-xs text-muted-foreground">{fmt(revenuMensuelEstime, '€ / mois')}</p>
+          {heuresHebdoProposees != null ? (
+            <p className="text-sm font-semibold text-foreground">
+              {revenuMensuelEstime != null
+                ? `${fmtHeures(heuresHebdoProposees)} / sem. → ${fmt(revenuMensuelEstime, '€ / mois')}`
+                : `${fmtHeures(heuresHebdoProposees)} / sem.`}
+            </p>
+          ) : (
+            <span className="text-muted italic text-xs">Non évalué</span>
           )}
           {fiabiliteReduite && (
             <p className="text-xs text-muted italic" title="Revenu déjà réduit du risque d'annulation non rattrapée pour cette structure">
