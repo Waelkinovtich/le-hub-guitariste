@@ -1,6 +1,8 @@
 import { useRef, useState, useMemo, useCallback, useEffect } from 'react'
+import { Trash2 } from 'lucide-react'
 import { updateLesson } from '../services/lessons'
 import { getSchoolColor } from '../utils/schoolColors'
+import DeleteLessonModal from './DeleteLessonModal'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -84,6 +86,9 @@ export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSel
   const [movePreview, setMovePreview] = useState(null) // { day, startSlot, slotCount, lessonId }
   const [moveError,  setMoveError]  = useState('')
   const [isDragging, setIsDragging] = useState(false)
+  // Cours en attente de confirmation de suppression (réutilise DeleteLessonModal,
+  // déjà utilisé sur Émargement — même service deleteLesson, aucune logique dupliquée)
+  const [deleteLessonItem, setDeleteLessonItem] = useState(null)
 
   const lessonsByDay = useMemo(() => groupByDay(localLessons), [localLessons])
 
@@ -403,7 +408,7 @@ export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSel
                         opacity: isBeingMoved ? 0.25 : isEnvisage ? 0.6 : 1,
                         cursor: 'grab',
                       }}
-                      className="rounded overflow-hidden"
+                      className="rounded overflow-hidden group"
                       onPointerDown={(e) => {
                         e.stopPropagation()
                         e.preventDefault()
@@ -427,6 +432,18 @@ export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSel
                           </p>
                         )}
                       </div>
+
+                      {/* Suppression rapide — visible au survol, n'interfère pas avec le
+                          drag ni l'ouverture de l'édition (propagation stoppée avant la carte) */}
+                      <button
+                        type="button"
+                        title="Supprimer ce cours"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); setDeleteLessonItem(lesson) }}
+                        className="absolute top-0 right-0 z-20 p-0.5 rounded-bl-md bg-void/50 text-white/80 opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
                     </div>
                   )
                 })}
@@ -435,6 +452,18 @@ export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSel
           })}
         </div>
       </div>
+
+      {deleteLessonItem && (
+        <DeleteLessonModal
+          lesson={deleteLessonItem}
+          onClose={() => setDeleteLessonItem(null)}
+          onDeleted={() => {
+            // Mise à jour optimiste immédiate, même principe que le déplacement :
+            // pas d'attente d'un rechargement réseau pour retirer le cours de la grille.
+            setLocalLessons((prev) => prev.filter((l) => l.id !== deleteLessonItem.id))
+          }}
+        />
+      )}
     </div>
   )
 }
