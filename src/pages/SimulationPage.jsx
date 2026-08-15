@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { BarChart2, Target, Loader2, AlertCircle, Star, Clock, Euro, TrendingUp, Info, ChevronDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import AideContextuelle from '../components/AideContextuelle'
 import { fetchSchoolsOverview, currentSchoolYear, SEMAINES_PAR_MOIS } from '../services/schools'
 import { allSchoolYears } from '../context/PeriodContext'
 
@@ -163,6 +164,7 @@ export default function SimulationPage() {
           Aucun créneau n'est attribué automatiquement.
         </p>
       </div>
+      <AideContextuelle texte="Le simulateur répartit vos heures entre les écoles au prorata de leur score de priorité (calculé dans la fiche de chaque école) et de votre plafond hebdomadaire défini dans Objectifs. Le résultat est indicatif — aucun créneau n'est créé automatiquement." />
 
       {/* ── Sélecteur d'année ── */}
       <div className="flex items-center gap-3 mb-6">

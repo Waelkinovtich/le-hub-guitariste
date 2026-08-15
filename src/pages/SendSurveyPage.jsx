@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Users, Mail, Plus, Trash2, CheckSquare, Square, Send, Loader2, Check, AlertCircle, School, UserCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import AideContextuelle from '../components/AideContextuelle'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -206,6 +207,8 @@ export default function SendSurveyPage() {
           Générez un lien unique par destinataire pour le sondage d'inscription.
         </p>
       </div>
+      <AideContextuelle texte="Cette page envoie à chaque élève un lien personnalisé vers le sondage de rentrée. Une fois les réponses reçues, rendez-vous dans Planning intelligent pour que l'application vous propose des créneaux adaptés aux disponibilités déclarées." />
+
 
       {/* ── Sélecteur de mode ── */}
       <div className="glass-panel rounded-2xl p-5 mb-4">

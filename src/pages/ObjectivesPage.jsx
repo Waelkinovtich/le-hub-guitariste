@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Target, Euro, Clock, Car, Fuel, Save, Loader2, Check, AlertCircle, ChevronDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import AideContextuelle from '../components/AideContextuelle'
 import { currentSchoolYear, allSchoolYears } from '../context/PeriodContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -131,6 +132,8 @@ export default function ObjectivesPage() {
           Ces données alimentent le simulateur de répartition d'heures.
         </p>
       </div>
+      <AideContextuelle texte="Définissez ici votre revenu mensuel cible et votre plafond d'heures par semaine. Ces chiffres alimentent directement le Simulateur de répartition, qui calcule combien d'heures allouer à chaque école pour atteindre vos objectifs." />
+
 
       {/* ── Sélecteur d'année ── */}
       <div className="glass-panel rounded-2xl p-5 mb-4">

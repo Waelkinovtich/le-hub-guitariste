@@ -11,6 +11,7 @@ import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
 import LessonStatusModal from '../../components/LessonStatusModal'
 import AddLessonModal from '../../components/AddLessonModal'
 import DeleteLessonModal from '../../components/DeleteLessonModal'
+import AideContextuelle from '../../components/AideContextuelle'
 
 const PERIODS = [
   { value: 'aujourd_hui', label: "Aujourd'hui" },
@@ -122,6 +123,7 @@ export default function ÉmargementPage() {
           Exporter en PDF
         </button>
       </header>
+      <AideContextuelle texte="L'émargement vous permet de valider ou signaler chaque cours : présence de l'élève, annulation, absence. Les cours marqués Annulé par le professeur alimentent la page Heures à rattraper, qui calcule le solde de cours dûs à chaque école." />
 
       {periodCtx.mode !== 'toutes' && (
         <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/20 text-xs text-guitar-400">

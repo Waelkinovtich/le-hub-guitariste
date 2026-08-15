@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import { fetchCancelledLessons } from '../../services/lessons'
@@ -123,8 +123,11 @@ function RattrapagePanel({ lesson, teacherId, zone, onConfirmed, onClose }) {
     setLoading(false)
   }, [lesson.studentId, lesson.lessonDate, lesson.lessonTime, teacherId, zone])
 
-  // Déclenche le chargement une seule fois à la montée
-  useMemo(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // Déclenche le chargement une seule fois à la montée du composant.
+  // useEffect (et non useMemo) est correct ici : c'est un effet de bord réseau,
+  // pas un calcul mémoïsé. useMemo peut s'exécuter plusieurs fois en Strict Mode.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [])
 
   const confirmRattrapage = async ({ lessonDate, lessonTime }) => {
     setConfirming(true)
@@ -322,8 +325,11 @@ export default function RattrapagePage() {
 
   const { global: globalStats, parÉcole, parÉlève } = useMemo(() => {
     const all = lessons ?? []
-    const annulés   = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu')
-    const rattrapés = all.filter((l) => l.status === 'rattrape'    && l.lessonType !== 'cesu')
+    // Exclut les cours CESU : pas d'obligation de rattrapage contractuelle pour CESU.
+    // lessonType (type global de l'élève) OU contextType (contexte spécifique du cours)
+    // peuvent signaler un cours CESU, notamment pour les élèves à double casquette.
+    const annulés   = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu' && l.contextType !== 'cesu')
+    const rattrapés = all.filter((l) => l.status === 'rattrape'    && l.lessonType !== 'cesu' && l.contextType !== 'cesu')
 
     let totalAnnulé  = 0
     let totalRattrapé = 0

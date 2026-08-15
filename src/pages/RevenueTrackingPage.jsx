@@ -89,7 +89,7 @@ function EntryForm({ schools, teacherId, initialData, onSaved, onCancel }) {
           <label className="block text-xs text-muted-foreground mb-1">École / Employeur</label>
           <select value={form.school_id} onChange={f('school_id')} className={inputCls}>
             <option value="">— Autre / Particulier CESU —</option>
-            {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {schools.map((s) => <option key={s.id} value={s.id}>{s.name}{s.structure_type === 'particulier_cesu' ? ' (CESU)' : ''}</option>)}
           </select>
         </div>
         {!form.school_id && (
@@ -149,17 +149,35 @@ function EntryForm({ schools, teacherId, initialData, onSaved, onCancel }) {
 
 // ─── Tableau de répartition par école ─────────────────────────────────────────
 
+// Badge affiché dans le tableau de répartition pour les employeurs CESU.
+// Un employeur CESU (structure_type = 'particulier_cesu') n'est PAS une école
+// de musique : ce badge permet au professeur de distinguer visuellement ses
+// deux types de sources de revenus sans avoir à ouvrir chaque fiche.
+function CesuBadge() {
+  return (
+    <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-guitar-600/10 text-guitar-400 border border-guitar-600/20">
+      CESU
+    </span>
+  )
+}
+
 function BreakdownTable({ entries }) {
   const bySchool = useMemo(() => {
     const map = {}
     entries.forEach((e) => {
       const key = e.school_id ?? '__hors_ecole__'
       const label = e.school_name ?? e.label ?? 'Hors école / Particulier'
-      if (!map[key]) map[key] = { label, amount: 0, hours: 0 }
+      // school_structure = 'particulier_cesu' si l'entrée est liée à un employeur CESU
+      const isCesu = e.school_structure === 'particulier_cesu'
+      if (!map[key]) map[key] = { label, amount: 0, hours: 0, isCesu }
       map[key].amount += Number(e.amount) || 0
       map[key].hours  += Number(e.hours)  || 0
     })
-    return Object.values(map).sort((a, b) => b.amount - a.amount)
+    // Tri : CESU en dernier, puis par montant décroissant dans chaque groupe
+    return Object.values(map).sort((a, b) => {
+      if (a.isCesu !== b.isCesu) return a.isCesu ? 1 : -1
+      return b.amount - a.amount
+    })
   }, [entries])
 
   if (bySchool.length === 0) return null
@@ -180,7 +198,10 @@ function BreakdownTable({ entries }) {
             const avgRate = row.hours > 0 ? row.amount / row.hours : null
             return (
               <tr key={i} className="border-b border-border-subtle last:border-0">
-                <td className="px-4 py-3 font-medium">{row.label}</td>
+                <td className="px-4 py-3 font-medium">
+                  {row.label}
+                  {row.isCesu && <CesuBadge />}
+                </td>
                 <td className="px-4 py-3 text-right text-guitar-400 font-medium">{fmtAmount(row.amount)}</td>
                 <td className="px-4 py-3 text-right text-muted-foreground">{row.hours > 0 ? fmtHours(row.hours) : '—'}</td>
                 <td className="px-4 py-3 text-right text-muted-foreground hidden sm:table-cell">
@@ -309,6 +330,8 @@ export default function RevenueTrackingPage() {
           </button>
         )}
       </header>
+
+      <AideContextuelle texte="Saisissez ici les virements reçus de chaque école ou employeur CESU. Ces entrées manuelles constituent votre registre de revenus : elles ne sont pas calculées automatiquement depuis le planning. Les employeurs CESU sont identifiés par un badge dans le tableau de répartition." />
 
       {/* Formulaire */}
       {showForm && (
