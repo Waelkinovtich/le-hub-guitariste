@@ -103,6 +103,14 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
   useEffect(() => teardownRecording, [])
 
   const startRecording = async () => {
+    // Cause réelle du bug de régression : un navigateur n'autorise qu'une
+    // seule instance SpeechRecognition active à la fois sur la page. Si
+    // "Recommencer" est cliqué avant que l'ancienne reconnaissance ait fini
+    // de s'arrêter (cycle asynchrone), l'ancienne instance reste active et
+    // bloque silencieusement la nouvelle : aucune erreur, mais plus aucun
+    // événement onresult ne remonte. On force donc l'arrêt de tout ce qui
+    // pourrait encore tourner avant de démarrer un nouveau cycle.
+    teardownRecording()
     setVoiceError('')
     setPlaybackError('')
     setFrozenTranscript(null)
@@ -153,11 +161,19 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
         liveTranscriptRef.current = liveTranscriptRef.current ? `${liveTranscriptRef.current} ${text}` : text
       }
       r.onend = () => {
-        if (recorderRef.current?.state === 'recording') { try { r.start() } catch {} }
+        // recognitionRef.current === r : garde-fou pour ne jamais relancer une
+        // instance devenue obsolète (remplacée entre-temps par une nouvelle
+        // dictée) — les deux systèmes (audio et reconnaissance) doivent
+        // rester indépendants sans se marcher dessus.
+        if (recorderRef.current?.state === 'recording' && recognitionRef.current === r) {
+          try { r.start() } catch { /* déjà relancée par ailleurs */ }
+        }
       }
       r.onerror = () => {}
-      r.start()
       recognitionRef.current = r
+      // Une erreur ici ne doit jamais empêcher l'enregistrement audio (déjà
+      // démarré ci-dessus) de continuer : les deux systèmes sont indépendants.
+      try { r.start() } catch { /* la dictée ne démarre pas, l'audio continue normalement */ }
     }
 
     setElapsed(0)
