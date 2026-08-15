@@ -5,16 +5,28 @@ import {
   Star, Plus, Trash2, MapPin, ChevronRight,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../context/AuthContext'
 import {
   fetchSchoolProfile, updateSchoolProfile,
   fetchHourlyRates, upsertHourlyRate,
-  currentSchoolYear, computePriorityScore, isScoreIncomplete,
+  currentSchoolYear, computePriorityScore, computeScoreBreakdown, isScoreIncomplete,
+  calculerRendementHoraireNetReel, isSalaryFixed,
 } from '../services/schools'
 import {
   fetchStudentsPaidBySchool, fetchStudentsAttachedToSchool,
   fetchTeacherStudents, addStudentContext,
 } from '../services/students'
 import AddStudentModal from '../components/AddStudentModal'
+
+// Libellés courts des 5 catégories du score pondéré, pour l'affichage du détail
+// (voir computeScoreBreakdown dans services/schools.js).
+const SCORE_CATEGORY_LABELS = {
+  fiabilite:    'Fiabilité des heures',
+  remuneration: 'Rémunération réelle',
+  distance:     'Distance/trajet',
+  perspectives: 'Perspectives & stabilité',
+  ambiance:     'Ambiance humaine',
+}
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -47,12 +59,10 @@ const PAYMENT_SMOOTHING_OPTIONS = [
   { value: 'a_la_seance',                                    label: 'À la séance (sans lissage)' },
 ]
 
-const SALARY_IS_FIXED = (v) => v === 'Lissé (même montant chaque mois)'
-
 const HOURS_STABILITY_OPTIONS = [
-  { value: 'Heures garanties / bloquées',        label: 'Heures garanties / bloquées' },
-  { value: 'Recalcul chaque rentrée de septembre', label: 'Recalcul chaque rentrée de septembre' },
-  { value: 'Variable en cours d\'année',          label: "Variable en cours d'année" },
+  { value: 'Heures garanties / bloquées',          label: 'Volume fixe non-négociable' },
+  { value: 'Recalcul chaque rentrée de septembre', label: 'Renégocié chaque année' },
+  { value: 'Variable en cours d\'année',           label: "Variable en cours d'année" },
 ]
 
 const PAYMENT_DELAY_OPTIONS = [
@@ -462,6 +472,7 @@ function HourlyRateForm({ schoolId, teacherId, currentYear, existingRate, onSave
 export default function SchoolDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { user } = useAuth() // poids de pondération + domicile, pour le score et le rendement net réel
 
   const [school, setSchool]           = useState(null)
   const [rates, setRates]             = useState([])
@@ -555,9 +566,13 @@ export default function SchoolDetailPage() {
 
   const data          = editing ? draft : school
   const isCesu        = data.structure_type === 'particulier_cesu'
-  const score         = computePriorityScore(school)
-  const currentRate   = rates.find((r) => r.school_year === curYear)
-  const missingRate   = !currentRate || (currentRate.net_hourly_rate == null && currentRate.gross_hourly_rate == null)
+  const currentRate    = rates.find((r) => r.school_year === curYear)
+  const missingRate    = !currentRate || (currentRate.net_hourly_rate == null && currentRate.gross_hourly_rate == null)
+  const scoreOptions   = { profile: user, netHourlyRate: currentRate?.net_hourly_rate, weights: user?.scoreWeights }
+  const score          = computePriorityScore(school, scoreOptions)
+  const scoreBreakdown = computeScoreBreakdown(school, scoreOptions)
+  // Indicateur direct, en NET, indépendant du score pondéré (voir schools.js).
+  const rendementNetReel = calculerRendementHoraireNetReel(school, { netHourlyRate: currentRate?.net_hourly_rate })
   const historyRates  = rates.filter((r) => r.school_year !== curYear)
 
   // Téléphones : tableau jsonb ou tableau vide
@@ -642,6 +657,11 @@ export default function SchoolDetailPage() {
               <span className="text-xs text-guitar-400 flex items-center gap-1 font-medium">
                 <Star className="w-3.5 h-3.5" fill="currentColor" />
                 Score de priorité : {score}/5
+              </span>
+            )}
+            {rendementNetReel != null && (
+              <span className="text-xs text-green-600 dark:text-green-400 font-medium" title="Taux net effectif, ajusté par la fiabilité des heures de cette structure">
+                ≈ {rendementNetReel.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h net réel
               </span>
             )}
           </div>
@@ -771,7 +791,6 @@ export default function SchoolDetailPage() {
                   value={data.contract_type}
                   onChange={(v) => {
                     set('contract_type')(v)
-                    if (v !== 'CDI') set('hours_stability')(null)
                     if (v !== 'Autre') set('contract_type_detail')(null)
                   }}
                   options={CONTRACT_TYPES}
@@ -779,14 +798,18 @@ export default function SchoolDetailPage() {
               : <span className="text-foreground">{val(data.contract_type)}</span>
             }
           </Field>
-          {(data.contract_type === 'CDI') && (
-            <Field label="Stabilité des heures" hint="Indique si tes heures sont garanties ou peuvent être révisées, pour t'aider à prioriser les écoles les plus stables.">
-              {editing
-                ? <SelectInput value={data.hours_stability} onChange={set('hours_stability')} options={HOURS_STABILITY_OPTIONS} />
-                : <span className="text-foreground">{val(data.hours_stability)}</span>
-              }
-            </Field>
-          )}
+          {/* Volume d'heures garanti — indépendant du type de contrat (un CESU ou un
+              CDD peuvent aussi avoir des heures fixes) ; sous-facteur de la catégorie
+              "Fiabilité des heures" du score de priorité (voir schools.js). */}
+          <Field
+            label="Volume d'heures garanti"
+            hint="Ex : 6h30 garanties, jamais plus jamais moins — distingue un volume vraiment fixe d'un volume qui bouge chaque rentrée ou en cours d'année."
+          >
+            {editing
+              ? <SelectInput value={data.hours_stability} onChange={set('hours_stability')} options={HOURS_STABILITY_OPTIONS} />
+              : <span className="text-foreground">{val(data.hours_stability)}</span>
+            }
+          </Field>
         </div>
 
         {data.contract_type === 'Autre' && (
@@ -848,7 +871,7 @@ export default function SchoolDetailPage() {
                   value={data.payment_smoothing}
                   onChange={(v) => {
                     set('payment_smoothing')(v)
-                    if (!SALARY_IS_FIXED(v)) set('fixed_monthly_salary')(null)
+                    if (!isSalaryFixed(v)) set('fixed_monthly_salary')(null)
                   }}
                   options={PAYMENT_SMOOTHING_OPTIONS}
                 />
@@ -862,7 +885,7 @@ export default function SchoolDetailPage() {
         </div>
 
         {/* Montant mensuel fixe — visible uniquement si lissage actif */}
-        {SALARY_IS_FIXED(data.payment_smoothing) && (
+        {isSalaryFixed(data.payment_smoothing) && (
           <Field
             label="Montant mensuel net fixe"
             hint={
@@ -902,7 +925,7 @@ export default function SchoolDetailPage() {
               data.payment_smoothing
                 ? (PAYMENT_SMOOTHING_OPTIONS.find((o) => o.value === data.payment_smoothing)?.label ?? data.payment_smoothing)
                 : null,
-              SALARY_IS_FIXED(data.payment_smoothing) && data.fixed_monthly_salary != null
+              isSalaryFixed(data.payment_smoothing) && data.fixed_monthly_salary != null
                 ? `${fmtMoney(data.fixed_monthly_salary)} net`
                 : null,
             ].filter(Boolean).join(' · ')}
@@ -1112,19 +1135,39 @@ export default function SchoolDetailPage() {
           }
         </Field>
 
-        <Field label="Score de priorité calculé">
+        {/* Correction manuelle de la catégorie "Fiabilité des heures" du score pondéré
+            (voir schools.js/calculerFiabiliteHeures) — remplace le calcul automatique et
+            n'est jamais recalculée ni écrasée tant qu'elle reste saisie. */}
+        <Field
+          label="Correction manuelle de fiabilité"
+          hint="Remplace le calcul automatique (basé sur le type de structure et le volume d'heures) si ton vécu de cette école dit autre chose — ex : un CESU historiquement stable, ou une école dont les annulations ne sont jamais rattrapées malgré son statut. Laisse vide pour garder le calcul automatique."
+        >
+          {editing
+            ? <StarRating value={data.manual_reliability_override} onChange={set('manual_reliability_override')} />
+            : data.manual_reliability_override != null
+              ? <StarRating value={data.manual_reliability_override} disabled />
+              : <span className="text-muted-foreground italic">Calcul automatique (aucune correction saisie)</span>
+          }
+        </Field>
+
+        <Field label="Score de priorité pondéré">
           <span className="text-foreground">
             {score != null
               ? <>
-                  {score} / 5{isScoreIncomplete(school) && <span className="ml-2 text-xs text-muted-foreground italic">(score incomplet — renseignez plus de 4 notes)</span>}
-                  <br />
-                  <span className="text-xs text-muted-foreground">
-                    Moyenne des notes renseignées
-                    {school.contract_type ? ` · bonus contrat (${school.contract_type}${school.hours_stability ? ' · ' + school.hours_stability : ''})` : ''}
-                    {school.latitude && school.longitude ? ' · pénalité distance' : ''}
-                  </span>
+                  {score} / 5{isScoreIncomplete(school, scoreOptions) && <span className="ml-2 text-xs text-muted-foreground italic">(score incomplet — moins de 4 catégories renseignées)</span>}
+                  <div className="mt-2 space-y-1">
+                    {Object.entries(scoreBreakdown).map(([cat, val]) => (
+                      <div key={cat} className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">{SCORE_CATEGORY_LABELS[cat]}</span>
+                        <span className={val != null ? 'text-foreground font-medium' : 'text-muted italic'}>
+                          {val != null ? `${val} / 5` : 'non renseigné'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted mt-2">Pondération réglable dans Réglages → Priorisation des écoles.</p>
                 </>
-              : 'Aucune note renseignée'
+              : 'Aucune donnée renseignée pour l’instant'
             }
           </span>
         </Field>

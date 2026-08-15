@@ -1,10 +1,21 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { geocodeAddress } from '../../utils/geocode'
-import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, HelpCircle, CalendarDays, Copy, RefreshCw } from 'lucide-react'
+import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, HelpCircle, CalendarDays, Copy, RefreshCw, SlidersHorizontal } from 'lucide-react'
 import { useTheme, THEMES } from '../../hooks/useTheme'
 import { fetchMileageRates, upsertMileageRate, deleteMileageRate, seedDefaultRates } from '../../services/mileageRates'
+import { DEFAULT_SCORE_WEIGHTS } from '../../services/schools'
+
+// Les 5 catégories du score pondéré (voir services/schools.js) — ordre d'affichage
+// des curseurs dans la section "Priorisation des écoles" ci-dessous.
+const SCORE_WEIGHT_SLIDERS = [
+  { key: 'fiabilite',    label: 'Fiabilité des heures' },
+  { key: 'remuneration', label: 'Rémunération réelle (net)' },
+  { key: 'distance',     label: 'Distance / trajet' },
+  { key: 'perspectives', label: 'Perspectives & stabilité' },
+  { key: 'ambiance',     label: 'Ambiance & conditions humaines' },
+]
 
 const ZONES = [
   { value: 'A', label: 'Zone A', description: 'Académies de Paris, Versailles, Créteil…' },
@@ -53,6 +64,14 @@ export default function SettingsPage() {
   const [navApp, setNavAppState]   = useState(user?.navApp ?? 'google_maps')
   const [savingNav, setSavingNav]   = useState(false)
   const [savedNav, setSavedNav]     = useState(false)
+
+  // ── Priorisation des écoles (poids du score, voir services/schools.js) ────
+  const [weights, setWeightsState] = useState(user?.scoreWeights ?? DEFAULT_SCORE_WEIGHTS)
+  const [savingWeights, setSavingWeights] = useState(false)
+  const [savedWeights, setSavedWeights]   = useState(false)
+  // Ref synchrone : évite de lire un état React potentiellement pas encore
+  // re-rendu au moment du relâchement du curseur (pointerup juste après change).
+  const weightsRef = useRef(weights)
 
   // ── Zone scolaire ──────────────────────────────────────────────────────────
   const [zone, setZone]         = useState(user?.schoolZone ?? 'B')
@@ -237,6 +256,30 @@ export default function SettingsPage() {
     if (err) return
     setUser((prev) => ({ ...prev, navApp: chosen }))
     setSavedNav(true); setTimeout(() => setSavedNav(false), 2000)
+  }
+
+  // Met à jour l'affichage du curseur immédiatement (fluide pendant le glisser),
+  // et garde une copie synchrone dans la ref pour la sauvegarde au relâchement.
+  function updateWeight(key, value) {
+    const next = { ...weightsRef.current, [key]: value }
+    weightsRef.current = next
+    setWeightsState(next)
+  }
+
+  async function handleSaveWeights() {
+    setSavingWeights(true)
+    const w = weightsRef.current
+    const { error: err } = await supabase.from('profiles').update({
+      score_weight_fiabilite:    w.fiabilite,
+      score_weight_remuneration: w.remuneration,
+      score_weight_distance:     w.distance,
+      score_weight_perspectives: w.perspectives,
+      score_weight_ambiance:     w.ambiance,
+    }).eq('id', user.id)
+    setSavingWeights(false)
+    if (err) return
+    setUser((prev) => ({ ...prev, scoreWeights: w }))
+    setSavedWeights(true); setTimeout(() => setSavedWeights(false), 2000)
   }
 
   // ── Handlers calendrier ───────────────────────────────────────────────────
@@ -868,6 +911,51 @@ export default function SettingsPage() {
         {savedNav && (
           <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
             <Check className="w-3.5 h-3.5" />Préférence enregistrée.
+          </p>
+        )}
+      </section>
+
+      {/* ── Priorisation des écoles ───────────────────────────────────────────── */}
+      <section className="glass-panel rounded-2xl p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-9 h-9 rounded-xl bg-guitar-600/15 flex items-center justify-center">
+            <SlidersHorizontal className="w-4 h-4 text-guitar-400" />
+          </div>
+          <div>
+            <h2 className="font-semibold">Priorisation des écoles</h2>
+            <p className="text-sm text-muted-foreground">Réglez l'importance de chaque critère dans le classement de vos écoles</p>
+          </div>
+        </div>
+
+        <p className="text-xs text-muted-foreground mb-5 bg-surface-raised rounded-lg px-3 py-2 border border-border-subtle">
+          Plus un curseur est élevé, plus ce critère pèse dans le score de chaque école. Ajustez-les selon ce qui compte le plus pour vous en ce moment — il n'y a pas de réglage universel, seulement le vôtre.
+        </p>
+
+        <div className="space-y-4">
+          {SCORE_WEIGHT_SLIDERS.map(({ key, label }) => (
+            <div key={key}>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs text-muted-foreground">{label}</label>
+                <span className="text-xs font-medium text-guitar-400">{weights[key]}</span>
+              </div>
+              <input
+                type="range" min="0" max="100" step="5"
+                value={weights[key]}
+                onChange={(e) => updateWeight(key, Number(e.target.value))}
+                onPointerUp={handleSaveWeights}
+                onKeyUp={handleSaveWeights}
+                className="w-full accent-guitar-600"
+              />
+            </div>
+          ))}
+        </div>
+
+        {(savingWeights || savedWeights) && (
+          <p className="text-xs mt-3 flex items-center gap-1 text-muted-foreground">
+            {savingWeights
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Sauvegarde…</>
+              : <span className="text-green-600 dark:text-green-400 flex items-center gap-1"><Check className="w-3.5 h-3.5" />Pondération enregistrée.</span>
+            }
           </p>
         )}
       </section>

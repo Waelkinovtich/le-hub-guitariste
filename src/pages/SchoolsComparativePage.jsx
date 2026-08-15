@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Loader2, AlertCircle, ChevronUp, ChevronDown, Download, Star, AlertTriangle, EyeOff } from 'lucide-react'
-import { fetchSchoolsOverview, currentSchoolYear, computePriorityScore } from '../services/schools'
+import { fetchSchoolsOverview, currentSchoolYear } from '../services/schools'
 import { supabase } from '../lib/supabase'
 
 // ─── CSV export ───────────────────────────────────────────────────────────────
@@ -15,7 +15,8 @@ function buildCsv(schools) {
     { key: 'current_weekly_hours',       label: 'Heures actuelles (h/semaine)' },
     { key: 'desired_weekly_hours',       label: 'Heures souhaitées (h/semaine)' },
     { key: 'currentNetRate',             label: `Taux net ${currentSchoolYear()} (€/h)` },
-    { key: 'priorityScore',              label: 'Score priorité' },
+    { key: 'netHourlyYieldReal',         label: 'Rendement net réel (€/h)' },
+    { key: 'priorityScore',              label: 'Score priorité pondéré' },
     { key: 'manual_priority_rating',     label: 'Priorité manuelle' },
     { key: 'premises_quality_rating',    label: 'Qualité locaux' },
     { key: 'work_atmosphere_rating',     label: 'Ambiance' },
@@ -98,8 +99,9 @@ const COLUMNS = [
   { key: 'current_weekly_hours', label: 'Heures act.' },
   { key: 'desired_weekly_hours', label: 'Heures souh.' },
   { key: 'currentNetRate',       label: 'Taux net' },
+  { key: 'netHourlyYieldReal',   label: '≈ Net réel/h' },
   { key: 'contract_type',        label: 'Contrat' },
-  { key: 'priorityScore',        label: 'Score' },
+  { key: 'priorityScore',        label: 'Score pondéré' },
   { key: 'tags',                 label: 'Mots-clés' },
 ]
 
@@ -263,6 +265,12 @@ export default function SchoolsComparativePage() {
                       {school.desired_weekly_hours != null ? `${school.desired_weekly_hours} h` : '—'}
                     </td>
                     <td className="px-4 py-3">{fmtRate(school.currentNetRate)}</td>
+                    <td className="px-4 py-3 text-green-600 dark:text-green-400 font-medium">
+                      {school.netHourlyYieldReal != null
+                        ? `≈ ${school.netHourlyYieldReal.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h`
+                        : <span className="text-muted-foreground font-normal">—</span>
+                      }
+                    </td>
                     <td className="px-4 py-3">
                       {school.contract_type
                         ? <div className="text-xs space-y-0.5">

@@ -2,17 +2,22 @@ import { useState, useEffect, useMemo } from 'react'
 import { School, Plus, Trash2, Loader2, AlertCircle, Users, ChevronRight, AlertTriangle, Star, TableProperties, Info, Home } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { fetchTeacherSchools, createSchool, deleteSchool, currentSchoolYear, computePriorityScore, isScoreIncomplete } from '../services/schools'
+import { useAuth } from '../context/AuthContext'
+import { fetchTeacherSchools, createSchool, deleteSchool, currentSchoolYear, computePriorityScore, isScoreIncomplete, calculerRendementHoraireNetReel } from '../services/schools'
 import { fetchContextCountsBySchool } from '../services/students'
 import { getSchoolColor } from '../utils/schoolColors'
 import AideContextuelle from '../components/AideContextuelle'
 
 export default function SchoolsPage() {
   const navigate = useNavigate()
+  const { user } = useAuth() // poids de pondération + domicile, pour le score et le rendement net réel
   const [teacherId, setTeacherId] = useState(null)
   const [schools, setSchools] = useState([])
   const [studentCounts, setStudentCounts] = useState({})
   const [missingRates, setMissingRates] = useState(new Set())
+  // Taux net de l'année en cours par école — nécessaire au calcul de la catégorie
+  // "Rémunération réelle" et du rendement horaire net réel (voir services/schools.js).
+  const [netRates, setNetRates] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [newName, setNewName] = useState('')
@@ -50,6 +55,9 @@ export default function SchoolsPage() {
 
           const withRate = new Set((ratesRes.data ?? []).filter((r) => r.net_hourly_rate != null || r.gross_hourly_rate != null).map((r) => r.school_id))
           setMissingRates(new Set(ids.filter((id) => !withRate.has(id))))
+          const rateMap = {}
+          ;(ratesRes.data ?? []).forEach((r) => { rateMap[r.school_id] = r.net_hourly_rate })
+          setNetRates(rateMap)
         }
       } catch (err) {
         setError(err.message)
@@ -98,19 +106,16 @@ export default function SchoolsPage() {
     setDeletingId(null)
   }
 
-  // Filtre par type, puis tri par score descendant (nulls en dernier)
+  // Filtre par type, puis tri par score pondéré descendant (nulls en dernier)
   const sortedSchools = useMemo(() => {
     const filtered = filterType === 'ecole'
       ? schools.filter((s) => s.structure_type !== 'particulier_cesu')
       : filterType === 'cesu'
         ? schools.filter((s) => s.structure_type === 'particulier_cesu')
         : schools
-    return [...filtered].sort((a, b) => {
-      const sa = computePriorityScore(a) ?? -Infinity
-      const sb = computePriorityScore(b) ?? -Infinity
-      return sb - sa
-    })
-  }, [schools, filterType])
+    const scoreOf = (s) => computePriorityScore(s, { profile: user, netHourlyRate: netRates[s.id], weights: user?.scoreWeights }) ?? -Infinity
+    return [...filtered].sort((a, b) => scoreOf(b) - scoreOf(a))
+  }, [schools, filterType, user, netRates])
 
   const schoolNames = schools.map((s) => s.name)
 
@@ -222,8 +227,11 @@ export default function SchoolsPage() {
             const count = studentCounts[school.id] ?? 0
             const isDeleting = deletingId === school.id
             const noRate = missingRates.has(school.id)
-            const score = computePriorityScore(school)
-            const incomplete = score != null && isScoreIncomplete(school)
+            const scoreOptions = { profile: user, netHourlyRate: netRates[school.id], weights: user?.scoreWeights }
+            const score = computePriorityScore(school, scoreOptions)
+            const incomplete = score != null && isScoreIncomplete(school, scoreOptions)
+            // Indicateur direct, en net, indépendant du score pondéré (voir schools.js).
+            const rendementNetReel = calculerRendementHoraireNetReel(school, { netHourlyRate: netRates[school.id] })
             return (
               <div
                 key={school.id}
@@ -271,6 +279,11 @@ export default function SchoolsPage() {
                         </p>
                       ) : (
                         <p className="text-xs text-muted-foreground italic">Score incomplet</p>
+                      )}
+                      {rendementNetReel != null && (
+                        <p className="text-xs text-green-600 dark:text-green-400 font-medium" title="Taux net effectif, ajusté par la fiabilité des heures">
+                          ≈ {rendementNetReel.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h net réel
+                        </p>
                       )}
                     </div>
                   </div>

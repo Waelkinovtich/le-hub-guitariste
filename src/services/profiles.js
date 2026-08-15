@@ -1,11 +1,12 @@
 import { supabase } from '../lib/supabase'
 import { TABLES } from '../lib/tables'
 import { fullName } from '../utils/format'
+import { extractScoreWeights } from './schools'
 
 export async function fetchProfile(userId) {
   const { data, error } = await supabase
     .from(TABLES.profiles)
-    .select('id, role, first_name, last_name, email, phone, school_zone, nav_app, assistance_mode, created_at')
+    .select('id, role, first_name, last_name, email, phone, school_zone, nav_app, assistance_mode, created_at, home_latitude, home_longitude, score_weight_fiabilite, score_weight_remuneration, score_weight_distance, score_weight_perspectives, score_weight_ambiance')
     .eq('id', userId)
     .maybeSingle()
 
@@ -29,6 +30,11 @@ export function mapProfileToUser(profile) {
     schoolZone:     profile.school_zone ?? 'B',
     navApp:         profile.nav_app ?? 'google_maps',
     assistanceMode: profile.assistance_mode ?? false,
+    // Domicile et poids de pondération du score de priorité des écoles
+    // (voir services/schools.js — calculerDistanceScore, DEFAULT_SCORE_WEIGHTS).
+    homeLatitude:  profile.home_latitude  ?? null,
+    homeLongitude: profile.home_longitude ?? null,
+    scoreWeights:  extractScoreWeights(profile),
   }
 }
 

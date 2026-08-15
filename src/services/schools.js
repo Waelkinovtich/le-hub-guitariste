@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 export async function fetchTeacherSchools(teacherId) {
   const { data, error } = await supabase
     .from('schools')
-    .select('id, name, structure_type, current_weekly_hours, desired_weekly_hours, manual_priority_rating, premises_quality_rating, work_atmosphere_rating, student_engagement_rating, team_stability_rating, equipment_rating, growth_perspective_rating, contract_type, hours_stability, access_restriction_type, latitude, longitude, tags, contract_end_date')
+    .select('id, name, structure_type, current_weekly_hours, desired_weekly_hours, manual_priority_rating, premises_quality_rating, work_atmosphere_rating, student_engagement_rating, team_stability_rating, equipment_rating, growth_perspective_rating, parking_rating, contract_type, contract_start_date, payment_smoothing, fixed_monthly_salary, hours_stability, access_restriction_type, manual_reliability_override, latitude, longitude, tags, contract_end_date')
     .eq('teacher_id', teacherId)
     .order('name')
   if (error) throw new Error(error.message)
@@ -65,6 +65,9 @@ const PROFILE_COLUMNS = [
   'vacation_zone_override', 'access_restriction_type', 'access_restriction_detail',
   // Priorité & nouvelles notes v2
   'manual_priority_rating', 'equipment_rating', 'growth_perspective_rating',
+  // Correction manuelle de fiabilité — voir calculerFiabiliteHeures ci-dessous.
+  // NULL = calcul automatique ; n'est jamais écrit par l'app hors saisie utilisateur.
+  'manual_reliability_override',
   'tags', 'notes',
   // Historique de collaboration.
   // contract_first_date = date du tout premier cours (peut précéder le contrat actuel),
@@ -132,6 +135,42 @@ export async function upsertHourlyRate(schoolId, teacherId, schoolYear, rates) {
   return data
 }
 
+// ─── Profil professeur — poids de pondération du score ───────────────────────
+
+// Colonnes "profiles" nécessaires au calcul du score (poids + domicile pour la distance).
+const PROFILE_SCORE_COLUMNS = [
+  'home_latitude', 'home_longitude',
+  'score_weight_fiabilite', 'score_weight_remuneration', 'score_weight_distance',
+  'score_weight_perspectives', 'score_weight_ambiance',
+].join(', ')
+
+// Poids par défaut (somme = 100) — voir la justification complète dans
+// migration-scoring-parametrable.sql (bloc 1). Résumé : fiabilité et
+// rémunération réelle légèrement favorisées (répondent le plus directement à
+// l'objectif "moins d'heures, plus d'argent") ; distance reste substantielle
+// (coût réel en temps) ; perspectives et ambiance à parts égales, ajustables
+// par l'utilisateur si son propre contexte les rend prioritaires.
+export const DEFAULT_SCORE_WEIGHTS = {
+  fiabilite:    25,
+  remuneration: 25,
+  distance:     20,
+  perspectives: 15,
+  ambiance:     15,
+}
+
+/** Normalise une ligne "profiles" (snake_case, brute ou via mapProfileToUser) en poids utilisables. */
+export function extractScoreWeights(profile) {
+  if (!profile) return DEFAULT_SCORE_WEIGHTS
+  if (profile.scoreWeights) return profile.scoreWeights // déjà normalisé (objet user de AuthContext)
+  return {
+    fiabilite:    profile.score_weight_fiabilite    ?? DEFAULT_SCORE_WEIGHTS.fiabilite,
+    remuneration: profile.score_weight_remuneration ?? DEFAULT_SCORE_WEIGHTS.remuneration,
+    distance:     profile.score_weight_distance     ?? DEFAULT_SCORE_WEIGHTS.distance,
+    perspectives: profile.score_weight_perspectives ?? DEFAULT_SCORE_WEIGHTS.perspectives,
+    ambiance:     profile.score_weight_ambiance     ?? DEFAULT_SCORE_WEIGHTS.ambiance,
+  }
+}
+
 // ─── Vue d'ensemble ───────────────────────────────────────────────────────────
 
 export async function fetchSchoolsOverview(teacherId) {
@@ -145,9 +184,10 @@ export async function fetchSchoolsOverview(teacherId) {
 
   const schoolIds = schools.map((s) => s.id)
 
-  const [countsRes, ratesRes] = await Promise.all([
+  const [countsRes, ratesRes, profileRes] = await Promise.all([
     supabase.from('students').select('school_id').eq('teacher_id', teacherId).in('school_id', schoolIds),
     supabase.from('schools_hourly_rates').select('school_id, school_year, net_hourly_rate').in('school_id', schoolIds),
+    supabase.from('profiles').select(PROFILE_SCORE_COLUMNS).eq('id', teacherId).maybeSingle(),
   ])
 
   const currentYear = currentSchoolYear()
@@ -157,12 +197,20 @@ export async function fetchSchoolsOverview(teacherId) {
   ;(countsRes.data ?? []).forEach((r) => { if (r.school_id) countMap[r.school_id] = (countMap[r.school_id] ?? 0) + 1 })
   ;(ratesRes.data ?? []).forEach((r) => { if (r.school_year === currentYear) rateMap[r.school_id] = r.net_hourly_rate })
 
-  return schools.map((s) => ({
-    ...s,
-    studentCount: countMap[s.id] ?? 0,
-    currentNetRate: rateMap[s.id],
-    priorityScore: computePriorityScore(s),
-  }))
+  const profile = profileRes.data ?? null
+  const weights = extractScoreWeights(profile)
+
+  return schools.map((s) => {
+    const netHourlyRate = rateMap[s.id]
+    return {
+      ...s,
+      studentCount: countMap[s.id] ?? 0,
+      currentNetRate: netHourlyRate,
+      priorityScore: computePriorityScore(s, { profile, netHourlyRate, weights }),
+      // Indicateur direct, indépendant du score pondéré — voir calculerRendementHoraireNetReel.
+      netHourlyYieldReal: calculerRendementHoraireNetReel(s, { netHourlyRate }),
+    }
+  })
 }
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
@@ -174,96 +222,272 @@ export function currentSchoolYear() {
   return month >= 8 ? `${year}-${year + 1}` : `${year - 1}-${year}`
 }
 
-/**
- * Score de priorité (sur 5, arrondi au dixième).
- *
- * BASE — moyenne des notes 1-5 renseignées parmi :
- *   premises_quality_rating, work_atmosphere_rating,
- *   student_engagement_rating, manual_priority_rating,
- *   equipment_rating, growth_perspective_rating
- *   (poids égal ; les nulls sont exclus sans pénalité)
- *
- * BONUS CONTRAT :
- *   CDI + "Heures garanties / bloquées"  → +0,50
- *   CDI + autre hours_stability          → +0,25
- *   CDI sans hours_stability             → +0,25
- *   CDD / Autre / non renseigné         →  0,00
- *
- * BONUS DISTANCE (si home_lat/lon et school lat/lon renseignés) :
- *   pénalité proportionnelle à la distance Haversine
- *   0–5 km → 0,00 | 5–15 km → -0,10 | 15–30 km → -0,20 | > 30 km → -0,30
- *
- * RESTRICTIONS D'ACCÈS :
- *   "Rattrapages uniquement pendant les vacances scolaires" → +0,10
- *   "Rattrapages uniquement en dehors des vacances"         → -0,10
- *
- * Résultat final = Math.min(5, Math.max(1, base + bonus)), ou null si aucune note renseignée.
- * Les champs non renseignés n'ont JAMAIS d'impact négatif.
- */
-export function computePriorityScore(school, profile = null) {
-  const ratings = [
-    school.premises_quality_rating,
-    school.work_atmosphere_rating,
-    school.student_engagement_rating,
-    school.team_stability_rating,
-    school.manual_priority_rating,
-    school.equipment_rating,
-    school.growth_perspective_rating,
-  ].filter((v) => v != null && v >= 1 && v <= 5)
-
-  if (ratings.length === 0) return null
-
-  const base = ratings.reduce((a, b) => a + b, 0) / ratings.length
-
-  // ── Bonus contrat ────────────────────────────────────────────────────────
-  let bonus = 0
-  if (school.contract_type === 'CDI') {
-    bonus = school.hours_stability === 'Heures garanties / bloquées' ? 0.5 : 0.25
-  }
-
-  // ── Pénalité distance (Haversine) ────────────────────────────────────────
-  // Pour un particulier CESU le trajet concerne un seul élève isolé (sans
-  // mutualisation), donc la pénalité distance est doublée.
-  const homeLat  = profile?.home_latitude  ?? null
-  const homeLon  = profile?.home_longitude ?? null
-  const schoolLat = school.latitude  ?? null
-  const schoolLon = school.longitude ?? null
-  if (homeLat && homeLon && schoolLat && schoolLon) {
-    const R = 6371
-    const dLat = (schoolLat - homeLat) * Math.PI / 180
-    const dLon = (schoolLon - homeLon) * Math.PI / 180
-    const a = Math.sin(dLat / 2) ** 2 +
-              Math.cos(homeLat * Math.PI / 180) * Math.cos(schoolLat * Math.PI / 180) *
-              Math.sin(dLon / 2) ** 2
-    const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-    const isCesu = school.structure_type === 'particulier_cesu'
-    const penaltyMultiplier = isCesu ? 2 : 1
-    if      (distKm > 30) bonus -= 0.30 * penaltyMultiplier
-    else if (distKm > 15) bonus -= 0.20 * penaltyMultiplier
-    else if (distKm >  5) bonus -= 0.10 * penaltyMultiplier
-    // 0-5 km → pénalité nulle
-  }
-
-  // ── Restrictions d'accès (codes courts depuis migration-cesu-refonte.sql) ──
-  if (school.access_restriction_type === 'vacances_uniquement') {
-    bonus += 0.10 // souplesse valorisée (rattrapages en vacances)
-  } else if (school.access_restriction_type === 'hors_vacances_uniquement') {
-    bonus -= 0.10 // contrainte pénalisée légèrement
-  }
-
-  return Math.round(Math.min(5, Math.max(1, base + bonus)) * 10) / 10
+// Valeur exacte stockée en base pour "salaire lissé sur 12 mois" (montant fixe
+// chaque mois, indépendant des heures travaillées). Source unique utilisée à
+// la fois par l'UI (SchoolDetailPage) et par le calcul du rendement réel —
+// évite toute divergence entre les deux si la valeur venait à changer.
+export const PAYMENT_SMOOTHING_FIXED_VALUE = 'Lissé (même montant chaque mois)'
+export function isSalaryFixed(paymentSmoothing) {
+  return paymentSmoothing === PAYMENT_SMOOTHING_FIXED_VALUE
 }
 
-/** Retourne true si le score est incomplet (moins de 5 notes renseignées sur 7). */
-export function isScoreIncomplete(school) {
-  const ratings = [
+// ═══════════════════════════════════════════════════════════════════════════
+// Score de priorité — 5 catégories pondérables
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// CONTEXTE : l'ancienne formule mélangeait tout dans un score unique dominé
+// par le taux horaire brut, ce qui avantageait mécaniquement les CESU alors
+// qu'elles sont réellement MOINS fiables financièrement (un cours CESU annulé
+// n'est jamais rattrapé ni payé, contrairement à une école où l'annulation
+// déclenche presque toujours un rattrapage). Les 5 fonctions ci-dessous sont
+// pures, indépendantes et testables séparément ; chacune retourne une note
+// 1-5 (ou null si aucune donnée ne permet de la calculer). Elles sont ensuite
+// combinées par computePriorityScore() selon les poids choisis par
+// l'utilisateur (Réglages > Priorisation des écoles).
+//
+// Note manquante = neutre (3/5) dans la moyenne pondérée finale : un champ non
+// renseigné ne doit jamais avantager ni pénaliser artificiellement une école.
+
+const SCORE_NEUTRE = 3
+
+// ─── 1. Fiabilité des heures ──────────────────────────────────────────────────
+
+// Base automatique selon le type de structure : une école/association a un
+// fonctionnement institutionnel (paie régulière, rattrapages organisés) bien
+// plus fiable qu'un particulier CESU, où un cours annulé n'est ni rattrapé ni
+// payé — c'est précisément le biais que cette refonte du score corrige.
+const FIABILITE_BASE_PAR_STRUCTURE = { particulier_cesu: 2.5, autre: 3 }
+const FIABILITE_BASE_INSTITUTION = 4 // association, municipale, conservatoire, privee
+
+/**
+ * Calcul automatique de la fiabilité des heures (1-5), avant toute correction
+ * manuelle. Séparée de calculerFiabiliteHeures() pour rester testable seule.
+ */
+function calculerFiabiliteHeuresAuto(school) {
+  const base = FIABILITE_BASE_PAR_STRUCTURE[school.structure_type] ?? FIABILITE_BASE_INSTITUTION
+
+  // hours_stability : sous-facteur de cette catégorie (voir migration-scoring-
+  // parametrable.sql bloc 3 pour la justification de ce choix d'architecture).
+  let ajustement = 0
+  if (school.hours_stability === 'Heures garanties / bloquées') ajustement += 1
+  else if (school.hours_stability === "Variable en cours d'année") ajustement -= 1
+  // "Recalcul chaque rentrée de septembre" : neutre — une renégociation
+  // annuelle prévisible n'est pas un signe d'instabilité en soi.
+
+  if (school.access_restriction_type === 'vacances_uniquement') ajustement += 0.2
+  else if (school.access_restriction_type === 'hors_vacances_uniquement') ajustement -= 0.2
+
+  return Math.min(5, Math.max(1, base + ajustement))
+}
+
+/**
+ * Fiabilité des heures (1-5). Une correction manuelle déjà saisie
+ * (manual_reliability_override) remplace TOUJOURS le calcul automatique et
+ * n'est jamais recalculée ni écrasée : cette fonction ne fait que la lire,
+ * aucun code de l'application n'écrit dans cette colonne hors saisie
+ * utilisateur explicite (voir SchoolDetailPage.jsx).
+ */
+export function calculerFiabiliteHeures(school) {
+  if (school.manual_reliability_override != null) return school.manual_reliability_override
+  return Math.round(calculerFiabiliteHeuresAuto(school) * 10) / 10
+}
+
+// ─── 2. Rémunération réelle (en net) ──────────────────────────────────────────
+
+// Repères de rémunération nette (€/h) pour convertir un taux horaire en note
+// 1-5. Fourchette usuelle observée pour un professeur de guitare indépendant
+// en France, toutes structures confondues — à ajuster si le marché évolue.
+const TAUX_NET_REPERE_BAS = 15   // → note 1
+const TAUX_NET_REPERE_HAUT = 35  // → note 5
+
+/**
+ * Rémunération réelle (1-5), en NET conformément à la règle d'affichage
+ * financier du produit — jamais le taux brut, qui ne reflète pas ce que le
+ * professeur touche réellement. netHourlyRate provient de schools_hourly_rates
+ * (année en cours) et doit être transmis par l'appelant.
+ */
+export function calculerRemunerationReelle(school, { netHourlyRate = null } = {}) {
+  if (netHourlyRate == null) return null
+
+  const ratio = (netHourlyRate - TAUX_NET_REPERE_BAS) / (TAUX_NET_REPERE_HAUT - TAUX_NET_REPERE_BAS)
+  let score = 1 + ratio * 4
+
+  // Prévisibilité du revenu : un salaire mensuel fixe lissé garantit le même
+  // montant chaque mois quel que soit le nombre d'heures réellement
+  // travaillées — une sécurité que le taux horaire seul ne reflète pas.
+  if (isSalaryFixed(school.payment_smoothing) && school.fixed_monthly_salary != null) score += 0.3
+
+  // Un CDI protège mieux le revenu dans la durée (préavis, continuité) qu'un
+  // CDD ou une vacation ponctuelle.
+  if (school.contract_type === 'CDI') score += 0.2
+
+  return Math.round(Math.min(5, Math.max(1, score)) * 10) / 10
+}
+
+// ─── 3. Distance / trajet ──────────────────────────────────────────────────────
+
+// Mêmes seuils que l'ancienne pénalité Haversine, reformulés en note absolue
+// 1-5 (catégorie à part entière) plutôt qu'en malus additif sur un score unique.
+function distanceKmToScore(distKm) {
+  if (distKm <= 5)  return 5
+  if (distKm <= 15) return 4
+  if (distKm <= 30) return 3
+  if (distKm <= 50) return 2
+  return 1
+}
+
+/**
+ * Distance/trajet (1-5) via la formule de Haversine entre le domicile
+ * (profile.home_latitude/home_longitude, ou homeLatitude/homeLongitude si
+ * profile vient de mapProfileToUser) et l'école. null si l'une des deux
+ * paires de coordonnées manque — catégorie alors neutre dans le score global.
+ */
+export function calculerDistanceScore(school, profile = null) {
+  const homeLat   = profile?.home_latitude  ?? profile?.homeLatitude  ?? null
+  const homeLon   = profile?.home_longitude ?? profile?.homeLongitude ?? null
+  const schoolLat = school.latitude  ?? null
+  const schoolLon = school.longitude ?? null
+  if (!homeLat || !homeLon || !schoolLat || !schoolLon) return null
+
+  const R = 6371
+  const dLat = (schoolLat - homeLat) * Math.PI / 180
+  const dLon = (schoolLon - homeLon) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(homeLat * Math.PI / 180) * Math.cos(schoolLat * Math.PI / 180) *
+            Math.sin(dLon / 2) ** 2
+  const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+
+  // Pour un particulier CESU, le trajet dessert un seul élève isolé (pas de
+  // mutualisation avec d'autres cours sur place) : la distance pèse donc
+  // davantage, modélisée par une distance "perçue" doublée.
+  const isCesu = school.structure_type === 'particulier_cesu'
+  return distanceKmToScore(isCesu ? distKm * 2 : distKm)
+}
+
+// ─── 4. Perspectives et stabilité ──────────────────────────────────────────────
+
+/**
+ * Perspectives et stabilité (1-5) : moyenne de growth_perspective_rating et
+ * team_stability_rating, ajustée d'un bonus d'ancienneté de la collaboration
+ * (contract_start_date) — une collaboration qui dure a déjà fait ses preuves.
+ */
+export function calculerPerspectivesStabilite(school) {
+  const notes = [school.growth_perspective_rating, school.team_stability_rating]
+    .filter((v) => v != null && v >= 1 && v <= 5)
+  let score = notes.length > 0 ? notes.reduce((a, b) => a + b, 0) / notes.length : null
+
+  if (school.contract_start_date) {
+    const ansMs = Date.now() - new Date(school.contract_start_date).getTime()
+    const ans = ansMs / (365.25 * 24 * 3600 * 1000)
+    const bonusAnciennete = ans >= 5 ? 0.3 : ans >= 2 ? 0.15 : 0
+    if (bonusAnciennete > 0) score = (score ?? SCORE_NEUTRE) + bonusAnciennete
+  }
+
+  if (score == null) return null
+  return Math.round(Math.min(5, Math.max(1, score)) * 10) / 10
+}
+
+// ─── 5. Ambiance et conditions humaines ────────────────────────────────────────
+
+/**
+ * Ambiance et conditions humaines (1-5) : moyenne simple des notes étoiles
+ * renseignées parmi locaux, ambiance de travail, engagement des élèves,
+ * matériel et parking. Catégorie séparée à dessein (voir CONTEXTE MÉTIER) :
+ * un environnement toxique doit pouvoir peser autant qu'un bon salaire, pas
+ * être noyé dans une moyenne générale qui l'invisibiliserait.
+ */
+export function calculerAmbianceHumaine(school) {
+  const notes = [
     school.premises_quality_rating,
     school.work_atmosphere_rating,
     school.student_engagement_rating,
-    school.team_stability_rating,
-    school.manual_priority_rating,
     school.equipment_rating,
-    school.growth_perspective_rating,
+    school.parking_rating,
   ].filter((v) => v != null && v >= 1 && v <= 5)
-  return ratings.length < 5
+  if (notes.length === 0) return null
+  return Math.round((notes.reduce((a, b) => a + b, 0) / notes.length) * 10) / 10
+}
+
+// ─── Combinaison pondérée ───────────────────────────────────────────────────
+
+/** Détail des 5 sous-scores (pour affichage comparatif / fiche école). */
+export function computeScoreBreakdown(school, options = {}) {
+  const { profile = null, netHourlyRate = null } = options
+  return {
+    fiabilite:    calculerFiabiliteHeures(school),
+    remuneration: calculerRemunerationReelle(school, { netHourlyRate }),
+    distance:     calculerDistanceScore(school, profile),
+    perspectives: calculerPerspectivesStabilite(school),
+    ambiance:     calculerAmbianceHumaine(school),
+  }
+}
+
+/**
+ * Score de priorité pondéré (1-5, arrondi au dixième), ou null si aucune des
+ * 5 catégories n'est calculable (école tout juste créée, rien de renseigné).
+ * options.weights : { fiabilite, remuneration, distance, perspectives, ambiance }
+ * — voir DEFAULT_SCORE_WEIGHTS et extractScoreWeights().
+ */
+export function computePriorityScore(school, options = {}) {
+  const { profile = null, netHourlyRate = null, weights = DEFAULT_SCORE_WEIGHTS } = options
+  const sousScores = computeScoreBreakdown(school, { profile, netHourlyRate })
+
+  if (Object.values(sousScores).every((v) => v == null)) return null
+
+  const poidsTotal = Object.values(weights).reduce((a, b) => a + b, 0)
+  if (poidsTotal === 0) return null // les 5 curseurs à zéro : aucun classement possible
+
+  const total = Object.keys(weights).reduce(
+    (sum, cat) => sum + weights[cat] * (sousScores[cat] ?? SCORE_NEUTRE),
+    0
+  )
+  return Math.round((total / poidsTotal) * 10) / 10
+}
+
+/** true si moins de 4 des 5 catégories reposent sur une donnée réelle (score trop incomplet pour être fiable). */
+export function isScoreIncomplete(school, options = {}) {
+  const sousScores = computeScoreBreakdown(school, options)
+  const renseignees = Object.values(sousScores).filter((v) => v != null).length
+  return renseignees < 4
+}
+
+// ─── Indicateur direct : rendement horaire net réel ─────────────────────────
+
+const SEMAINES_PAR_MOIS = 52 / 12 // ≈ 4,33 — conversion standard hebdomadaire → mensuelle
+
+/**
+ * Rendement horaire net réel estimé (€/h) — indicateur simple et direct,
+ * INDÉPENDANT du score pondéré, répondant à la question centrale du produit :
+ * "combien je gagne vraiment de l'heure ici ?".
+ *
+ * - Taux de référence : le montant mensuel net fixe rapporté aux heures
+ *   réellement travaillées si le salaire est lissé (plus représentatif qu'un
+ *   taux horaire affiché quand le salaire ne varie pas avec les heures du
+ *   mois), sinon le taux horaire net de l'année en cours.
+ * - Facteur de fiabilité : une heure statistiquement peu fiable (CESU annulée
+ *   = jamais rattrapée ni payée) vaut moins qu'une heure garantie en école —
+ *   mais seule la FRÉQUENCE des heures effectivement payées est en jeu, pas
+ *   le taux affiché lui-même (une structure peu fiable ne paie pas moins cher
+ *   quand le cours a bien lieu). La note de fiabilité (1-5) est donc mappée
+ *   sur un facteur modéré [0,7 ; 1,0], pas [0 ; 1] : même la structure la
+ *   moins fiable paie plein tarif quand elle paie.
+ *
+ * Retourne null si aucune donnée de rémunération n'est disponible.
+ */
+export function calculerRendementHoraireNetReel(school, options = {}) {
+  const { netHourlyRate = null } = options
+  const heures = school.current_weekly_hours
+
+  const tauxDepuisSalaireFixe =
+    isSalaryFixed(school.payment_smoothing) && school.fixed_monthly_salary != null && heures > 0
+      ? school.fixed_monthly_salary / (heures * SEMAINES_PAR_MOIS)
+      : null
+
+  const tauxEffectif = tauxDepuisSalaireFixe ?? netHourlyRate
+  if (tauxEffectif == null) return null
+
+  const fiabilite = calculerFiabiliteHeures(school)
+  const facteurFiabilite = 0.7 + (fiabilite - 1) * (0.3 / 4) // 1→0,70 … 5→1,00
+
+  return Math.round(tauxEffectif * facteurFiabilite * 100) / 100
 }
