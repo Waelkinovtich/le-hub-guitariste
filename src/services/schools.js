@@ -482,7 +482,9 @@ export function isScoreIncomplete(school, options = {}) {
 
 // ─── Indicateur direct : rendement horaire net réel ─────────────────────────
 
-const SEMAINES_PAR_MOIS = 52 / 12 // ≈ 4,33 — conversion standard hebdomadaire → mensuelle
+// Exportée : réutilisée par SimulationPage.jsx pour la même conversion
+// hebdo → mensuel, afin d'éviter une valeur magique dupliquée (4,33).
+export const SEMAINES_PAR_MOIS = 52 / 12 // ≈ 4,33 — conversion standard hebdomadaire → mensuelle
 
 // Facteur de fiabilité minimal (structure la moins fiable, note 1/5) : une
 // heure statistiquement peu fiable (CESU annulée = jamais rattrapée ni payée)

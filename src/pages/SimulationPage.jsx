@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { BarChart2, Target, Loader2, AlertCircle, Star, Clock, Euro, TrendingUp, Info, ChevronDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { fetchSchoolsOverview, currentSchoolYear } from '../services/schools'
+import { fetchSchoolsOverview, currentSchoolYear, SEMAINES_PAR_MOIS } from '../services/schools'
 import { allSchoolYears } from '../context/PeriodContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -39,11 +39,24 @@ function ScoreDots({ score }) {
 // ─── Moteur de simulation ─────────────────────────────────────────────────────
 
 /**
- * Répartit les heures hebdomadaires entre les écoles selon leur score de priorité.
- * Les écoles sans score sont exclues de la simulation mais affichées en bas.
+ * Répartit les heures hebdomadaires entre les écoles selon leur score de priorité
+ * pondéré (priorityScore, voir services/schools.js — 5 catégories, poids réglables
+ * dans Réglages > Priorisation des écoles). Les écoles sans score sont exclues de
+ * la simulation mais affichées en bas.
  *
- * @param {Array}  schools           — tableau d'écoles avec priorityScore et currentNetRate
- * @param {number} plafondHebdo      — heures max par semaine
+ * Le revenu mensuel estimé est calculé à partir de netHourlyYieldReal (rendement
+ * horaire net réel, déjà ajusté par la fiabilité de la structure — voir
+ * calculerRendementHoraireNetReel) plutôt que du taux saisi brut (currentNetRate) :
+ * c'est la même logique que celle affichée sur SchoolsPage.jsx et
+ * SchoolsComparativePage.jsx, pour que la projection de revenu ne surestime pas
+ * silencieusement ce qu'une structure peu fiable (CESU, annulations non
+ * rattrapées) rapporte réellement. netHourlyYieldReal couvre aussi le cas d'un
+ * salaire mensuel fixe lissé sans taux horaire saisi, que currentNetRate seul
+ * manquerait — currentNetRate reste un repli défensif si jamais l'un est
+ * disponible sans l'autre.
+ *
+ * @param {Array}  schools            — tableau d'écoles (voir fetchSchoolsOverview)
+ * @param {number} plafondHebdo       — heures max par semaine
  * @param {number} revenuMensuelCible — revenu net mensuel visé
  * @returns {Array} écoles enrichies de { heuresHebdoProposees, revenuMensuelEstime }
  */
@@ -58,9 +71,10 @@ function simuler(schools, plafondHebdo, revenuMensuelCible) {
   const totalScore = evaluees.reduce((acc, s) => acc + s.priorityScore, 0)
 
   const resultats = evaluees.map(s => {
-    const ratio    = s.priorityScore / totalScore
-    const hebdo    = Math.round(ratio * plafondHebdo * 4) / 4   // arrondi au quart d'heure
-    const mensuel  = s.currentNetRate ? hebdo * 4.33 * s.currentNetRate : null
+    const ratio     = s.priorityScore / totalScore
+    const hebdo     = Math.round(ratio * plafondHebdo * 4) / 4   // arrondi au quart d'heure
+    const tauxRetenu = s.netHourlyYieldReal ?? s.currentNetRate
+    const mensuel   = tauxRetenu ? hebdo * SEMAINES_PAR_MOIS * tauxRetenu : null
     return { ...s, heuresHebdoProposees: hebdo, revenuMensuelEstime: mensuel }
   })
 
@@ -224,7 +238,7 @@ export default function SimulationPage() {
               )}
             </div>
 
-            {simulation.some(s => s.heuresHebdoProposees != null && !s.currentNetRate) && (
+            {simulation.some(s => s.heuresHebdoProposees != null && !s.netHourlyYieldReal) && (
               <p className="mt-4 text-xs text-muted-foreground flex items-start gap-1.5">
                 <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                 Certaines écoles n'ont pas de taux horaire renseigné pour {schoolYear} — leur revenu estimé n'apparaît pas.
@@ -257,8 +271,13 @@ function Stat({ icon: Icon, label, value, highlight }) {
 
 function SchoolRow({ school, plafond }) {
   const navigate = useNavigate()
-  const { name, priorityScore, heuresHebdoProposees, revenuMensuelEstime, currentNetRate } = school
+  const { name, priorityScore, heuresHebdoProposees, revenuMensuelEstime, currentNetRate, netHourlyYieldReal } = school
   const pct = plafond && heuresHebdoProposees ? Math.round((heuresHebdoProposees / plafond) * 100) : 0
+  // Fiabilité réduite (CESU par défaut, ou correction manuelle à la baisse) : le
+  // revenu estimé ci-dessus tient déjà compte de la décote — cette ligne rend
+  // l'ajustement visible plutôt que de le laisser implicite dans le total,
+  // cohérent avec l'affichage "taux saisi / taux réel" de SchoolsPage.jsx.
+  const fiabiliteReduite = currentNetRate != null && netHourlyYieldReal != null && netHourlyYieldReal !== currentNetRate
 
   return (
     <div className="px-5 py-4">
@@ -278,7 +297,12 @@ function SchoolRow({ school, plafond }) {
           {revenuMensuelEstime != null && (
             <p className="text-xs text-muted-foreground">{fmt(revenuMensuelEstime, '€ / mois')}</p>
           )}
-          {heuresHebdoProposees != null && !currentNetRate && (
+          {fiabiliteReduite && (
+            <p className="text-xs text-muted italic" title="Revenu déjà réduit du risque d'annulation non rattrapée pour cette structure">
+              ≈ {fmt(netHourlyYieldReal, '€/h réel', 2)} (saisi : {fmt(currentNetRate, '€/h', 2)})
+            </p>
+          )}
+          {heuresHebdoProposees != null && !netHourlyYieldReal && (
             <p className="text-xs text-muted italic">Taux inconnu</p>
           )}
         </div>
