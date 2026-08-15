@@ -37,9 +37,16 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
 
   // ── Dictée vocale (notes uniquement, audio strictement local) ──────────────
   const [recording, setRecording] = useState(false)
+  // true entre le clic sur "Arrêter" et la finalisation réelle du blob audio
+  // (onstop est asynchrone — surtout sur Safari, qui peut prendre un instant
+  // pour finaliser l'encodage). Évite d'afficher une erreur prématurée.
+  const [processing, setProcessing] = useState(false)
   const [audioUrl, setAudioUrl] = useState(null)
   const [elapsed, setElapsed] = useState(0)
   const [voiceError, setVoiceError] = useState('')
+  // Erreur de LECTURE confirmée (après finalisation du blob), distincte de
+  // voiceError qui couvre l'accès micro.
+  const [playbackError, setPlaybackError] = useState('')
   const recorderRef = useRef(null)
   const chunksRef = useRef([])
   const recognitionRef = useRef(null)
@@ -48,8 +55,20 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
 
   const hasSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition)
 
+  // Coupe proprement micro / reconnaissance / minuteur, quelle que soit la
+  // raison (arrêt manuel ou démontage du formulaire pendant un enregistrement).
+  const teardownRecording = () => {
+    clearInterval(timerRef.current)
+    try { recognitionRef.current?.stop() } catch { /* déjà arrêtée */ }
+    try { if (recorderRef.current?.state !== 'inactive') recorderRef.current?.stop() } catch { /* déjà arrêté */ }
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+  }
+
+  useEffect(() => teardownRecording, [])
+
   const startRecording = async () => {
     setVoiceError('')
+    setPlaybackError('')
     if (audioUrl) { URL.revokeObjectURL(audioUrl); setAudioUrl(null) }
     chunksRef.current = []
     let stream
@@ -65,8 +84,17 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
     rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
     rec.onstop = () => {
       stream.getTracks().forEach((t) => t.stop())
-      const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+      // Le blob doit être étiqueté avec le type MIME réellement produit par
+      // le MediaRecorder (rec.mimeType), pas un type codé en dur : Safari
+      // n'encode généralement pas en audio/webm (souvent audio/mp4), et un
+      // Blob mal étiqueté échoue au décodage dans l'élément <audio>.
+      const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' })
       setAudioUrl(URL.createObjectURL(blob))
+      setProcessing(false)
+    }
+    rec.onerror = () => {
+      setProcessing(false)
+      setVoiceError("L'enregistrement audio a échoué. Réessayez.")
     }
     rec.start()
 
@@ -96,6 +124,11 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
   const stopRecording = () => {
     clearInterval(timerRef.current)
     try { recognitionRef.current?.stop() } catch {}
+    // recording passe à false immédiatement mais audioUrl n'est prêt qu'une
+    // fois onstop déclenché (asynchrone) : "processing" comble cet
+    // intervalle pour que l'UI n'affiche ni le bouton "Dicter" ni une
+    // erreur tant que le blob n'est pas réellement finalisé.
+    setProcessing(true)
     recorderRef.current?.stop()
     setRecording(false)
   }
@@ -103,6 +136,7 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
   const deleteRecording = () => {
     if (audioUrl) URL.revokeObjectURL(audioUrl)
     setAudioUrl(null)
+    setPlaybackError('')
   }
 
   const fmtElapsed = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
@@ -167,11 +201,13 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
             key={val}
             type="button"
             onClick={() => setType(val)}
+            disabled={recording || processing}
+            title={(recording || processing) ? 'Arrêtez la dictée en cours avant de changer de type' : undefined}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium transition-all ${
               type === val
                 ? 'border-guitar-600/40 bg-guitar-600/15 text-guitar-400'
                 : 'border-border-subtle bg-surface text-muted-foreground hover:border-border hover:text-foreground'
-            }`}
+            } ${(recording || processing) ? 'opacity-40 cursor-not-allowed' : ''}`}
           >
             <Icon className="w-3.5 h-3.5" />
             {label}
@@ -221,7 +257,7 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
         {/* Dictée vocale — notes uniquement, audio local */}
         {type === 'note' && (
           <div className="space-y-2">
-            {!recording && !audioUrl && (
+            {!recording && !processing && !audioUrl && (
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -253,9 +289,21 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
                 </button>
               </div>
             )}
-            {audioUrl && !recording && (
+            {processing && !recording && (
+              <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-surface border border-border-subtle">
+                <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin flex-shrink-0" />
+                <span className="text-xs text-muted-foreground">Finalisation de l'enregistrement…</span>
+              </div>
+            )}
+            {audioUrl && !recording && !processing && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-surface border border-border-subtle">
-                <audio src={audioUrl} controls className="flex-1 h-8 min-w-0" style={{ accentColor: 'var(--guitar-600)' }} />
+                <audio
+                  src={audioUrl}
+                  controls
+                  className="flex-1 h-8 min-w-0"
+                  style={{ accentColor: 'var(--guitar-600)' }}
+                  onError={() => setPlaybackError("Erreur sur le fichier audio — l'enregistrement n'a pas pu être lu. Vous pouvez recommencer.")}
+                />
                 <button
                   type="button"
                   onClick={deleteRecording}
@@ -273,6 +321,12 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
                   <Mic className="w-3.5 h-3.5" />
                 </button>
               </div>
+            )}
+            {playbackError && (
+              <p className="text-xs text-guitar-400 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                {playbackError}
+              </p>
             )}
             {voiceError && (
               <p className="text-xs text-guitar-400 flex items-center gap-1.5">
