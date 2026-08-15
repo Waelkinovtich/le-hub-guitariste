@@ -17,6 +17,7 @@ import {
   fetchTeacherStudents, addStudentContext,
 } from '../services/students'
 import AddStudentModal from '../components/AddStudentModal'
+import PhoneActions from '../components/PhoneActions'
 
 // Libellés courts des 5 catégories du score pondéré, pour l'affichage du détail
 // (voir computeScoreBreakdown dans services/schools.js).
@@ -778,7 +779,10 @@ export default function SchoolDetailPage() {
             ? <PhoneList phones={phones} onChange={set('director_phones')} />
             : phones.length > 0
               ? <div className="space-y-1">{phones.map((p, i) => (
-                  <p key={i} className="text-foreground text-sm">{p.label ? <span className="text-muted-foreground mr-2">{p.label}</span> : null}{p.number}</p>
+                  <p key={i} className="text-foreground text-sm">
+                    {p.label ? <span className="text-muted-foreground mr-2">{p.label}</span> : null}
+                    <PhoneActions number={p.number} />
+                  </p>
                 ))}</div>
               : <span className="text-muted-foreground">Non renseigné</span>
           }
@@ -871,6 +875,19 @@ export default function SchoolDetailPage() {
           {editing
             ? <SelectInput value={data.payment_delay} onChange={set('payment_delay')} options={PAYMENT_DELAY_OPTIONS} />
             : <span className="text-foreground">{val(data.payment_delay)}</span>
+          }
+        </Field>
+
+        {/* Sous-facteur de la catégorie "Rémunération réelle" du score pondéré
+            (voir calculerRemunerationReelle, schools.js) — pas une 6e catégorie
+            à part, même choix que hours_stability pour la fiabilité des heures. */}
+        <Field
+          label="Sérieux administratif et paiement"
+          hint="Régularité des paiements et réactivité administrative : papiers, contrats, retards."
+        >
+          {editing
+            ? <StarRating value={data.administrative_reliability_rating} onChange={set('administrative_reliability_rating')} />
+            : <StarRating value={data.administrative_reliability_rating} disabled />
           }
         </Field>
 

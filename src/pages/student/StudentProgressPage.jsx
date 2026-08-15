@@ -1,4 +1,5 @@
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
+import PhoneActions from '../../components/PhoneActions'
 import { useStudentRecord } from '../../hooks/useStudentRecord'
 import { formatDateFr } from '../../utils/format'
 
@@ -52,7 +53,7 @@ export default function StudentProgressPage() {
         <ul className="mt-6 space-y-2 text-sm text-muted-foreground">
           <li>Instrument : {student.instrument ?? '—'}</li>
           <li>Email : {student.email ?? '—'}</li>
-          <li>Téléphone : {student.phone ?? '—'}</li>
+          <li>Téléphone : {student.phone ? <PhoneActions number={student.phone} /> : '—'}</li>
         </ul>
       </div>
     </div>

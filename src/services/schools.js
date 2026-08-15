@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 export async function fetchTeacherSchools(teacherId) {
   const { data, error } = await supabase
     .from('schools')
-    .select('id, name, structure_type, current_weekly_hours, desired_weekly_hours, manual_priority_rating, premises_quality_rating, work_atmosphere_rating, student_engagement_rating, team_stability_rating, equipment_rating, growth_perspective_rating, parking_rating, contract_type, contract_start_date, payment_smoothing, fixed_monthly_salary, hours_stability, access_restriction_type, manual_reliability_override, latitude, longitude, tags, contract_end_date')
+    .select('id, name, structure_type, current_weekly_hours, desired_weekly_hours, manual_priority_rating, premises_quality_rating, work_atmosphere_rating, student_engagement_rating, team_stability_rating, equipment_rating, growth_perspective_rating, parking_rating, contract_type, contract_start_date, payment_smoothing, fixed_monthly_salary, hours_stability, access_restriction_type, manual_reliability_override, administrative_reliability_rating, latitude, longitude, tags, contract_end_date')
     .eq('teacher_id', teacherId)
     .order('name')
   if (error) throw new Error(error.message)
@@ -54,7 +54,9 @@ const PROFILE_COLUMNS = [
   // Contrat
   'contract_start_date', 'notice_period', 'contract_type', 'contract_type_detail', 'hours_stability',
   // Rémunération — payment_delay remplace payment_delay_days
-  'payment_delay', 'payment_duration', 'payment_smoothing', 'fixed_monthly_salary',
+  // administrative_reliability_rating : sous-facteur de calculerRemunerationReelle,
+  // voir la fonction dans schools.js pour la justification de ce choix.
+  'payment_delay', 'payment_duration', 'payment_smoothing', 'fixed_monthly_salary', 'administrative_reliability_rating',
   // Heures
   'current_weekly_hours', 'desired_weekly_hours',
   // Locaux
@@ -307,6 +309,14 @@ export function calculerFiabiliteHeures(school) {
 const TAUX_NET_REPERE_BAS = 15   // → note 1
 const TAUX_NET_REPERE_HAUT = 35  // → note 5
 
+// Poids du sous-facteur "Sérieux administratif et paiement" (note manuelle
+// 1-5, administrative_reliability_rating) dans l'ajustement du score : un
+// écart de 2 points par rapport au neutre (3) déplace le score de 0,4 au
+// maximum — du même ordre de grandeur que les bonus CDI/salaire fixe
+// ci-dessous, sans les dominer.
+const POIDS_SERIEUX_ADMINISTRATIF = 0.2
+const NOTE_NEUTRE_1_A_5 = 3
+
 /**
  * Rémunération réelle (1-5), en NET conformément à la règle d'affichage
  * financier du produit — jamais le taux brut, qui ne reflète pas ce que le
@@ -327,6 +337,18 @@ export function calculerRemunerationReelle(school, { netHourlyRate = null } = {}
   // Un CDI protège mieux le revenu dans la durée (préavis, continuité) qu'un
   // CDD ou une vacation ponctuelle.
   if (school.contract_type === 'CDI') score += 0.2
+
+  // Sérieux administratif et paiement (note manuelle) : sous-facteur de cette
+  // catégorie plutôt qu'une 6e catégorie pondérable indépendante — même choix
+  // d'architecture que hours_stability pour la fiabilité des heures (voir
+  // migration-scoring-parametrable.sql bloc 3) : la question posée ("est-ce
+  // que je touche vraiment cet argent, sans retard ni relance ?") relève de
+  // la rémunération réelle, pas d'une dimension à part. Non renseignée =
+  // neutre, aucun bonus ni malus (cohérent avec le traitement des autres
+  // sous-scores manquants — voir SCORE_NEUTRE en tête de fichier).
+  if (school.administrative_reliability_rating != null) {
+    score += (school.administrative_reliability_rating - NOTE_NEUTRE_1_A_5) * POIDS_SERIEUX_ADMINISTRATIF
+  }
 
   return Math.round(Math.min(5, Math.max(1, score)) * 10) / 10
 }

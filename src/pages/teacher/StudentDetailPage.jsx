@@ -9,17 +9,20 @@ import {
 } from '../../services/students'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
 import AddStudentModal from '../../components/AddStudentModal'
+import PhoneActions from '../../components/PhoneActions'
 import { getSchoolColor } from '../../utils/schoolColors'
 import StudentGroupHistory from '../groupes/StudentGroupHistory'
 
 // ─── Composants de présentation ───────────────────────────────────────────────
 
-function ContactLine({ icon: Icon, value }) {
+// phone : bascule le contenu vers PhoneActions (numéro + liens appeler/SMS)
+// plutôt qu'un simple texte — email et autres valeurs restent inchangés.
+function ContactLine({ icon: Icon, value, phone = false }) {
   if (!value) return null
   return (
     <div className="flex items-center gap-2 text-sm">
       <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-      <span>{value}</span>
+      {phone ? <PhoneActions number={value} /> : <span>{value}</span>}
     </div>
   )
 }
@@ -224,7 +227,7 @@ export default function StudentDetailPage() {
 
       <Section title="Contact élève">
         <div className="space-y-2">
-          <ContactLine icon={Phone} value={student.studentPhone || student.phone} />
+          <ContactLine icon={Phone} value={student.studentPhone || student.phone} phone />
           <ContactLine icon={Mail} value={student.email} />
           {!student.studentPhone && !student.phone && !student.email && (
             <p className="text-sm text-muted-foreground">Aucun contact renseigné</p>
@@ -235,7 +238,7 @@ export default function StudentDetailPage() {
       {hasParent1 && (
         <Section title={student.parent1Name || 'Parent / Tuteur 1'}>
           <div className="space-y-2">
-            <ContactLine icon={Phone} value={student.parent1Phone} />
+            <ContactLine icon={Phone} value={student.parent1Phone} phone />
             <ContactLine icon={Mail} value={student.parent1Email} />
           </div>
         </Section>
@@ -244,7 +247,7 @@ export default function StudentDetailPage() {
       {hasParent2 && (
         <Section title={student.parent2Name || 'Parent / Tuteur 2'}>
           <div className="space-y-2">
-            <ContactLine icon={Phone} value={student.parent2Phone} />
+            <ContactLine icon={Phone} value={student.parent2Phone} phone />
             <ContactLine icon={Mail} value={student.parent2Email} />
           </div>
         </Section>

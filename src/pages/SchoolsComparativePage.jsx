@@ -91,6 +91,36 @@ function fmtRate(v) {
   return <span>{Number(v).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h</span>
 }
 
+// ─── Synthèse d'alignement avec les priorités actuelles ──────────────────────
+//
+// Ancrée sur le MAXIMUM du score pondéré observé parmi les écoles actuellement
+// affichées (filtre type + "terminées masquées" déjà appliqués) plutôt que sur
+// une moyenne : "à quel point suis-je proche de ma meilleure option actuelle ?"
+// est une question plus directement actionnable que "au-dessus ou en dessous
+// de la moyenne". Le score pondéré dépend déjà des curseurs de Réglages >
+// Priorisation des écoles (voir services/schools.js), donc ce ratio reflète
+// bien l'alignement avec les priorités DU MOMENT, pas une notation absolue.
+//
+// Seuils choisis simplement, sans pondération cachée : au moins 90 % du
+// maximum affiché = bon alignement, au moins 60 % = partiel, en dessous = peu
+// aligné. Formulation neutre et factuelle, jamais moralisatrice.
+const SEUIL_ALIGNEMENT_BON = 0.9
+const SEUIL_ALIGNEMENT_PARTIEL = 0.6
+
+function classerAlignementPriorites(score, maxScoreAffiche) {
+  if (score == null || !maxScoreAffiche) {
+    return { label: 'Données insuffisantes', className: 'text-muted-foreground italic' }
+  }
+  const ratio = score / maxScoreAffiche
+  if (ratio >= SEUIL_ALIGNEMENT_BON) {
+    return { label: 'Correspond bien à tes priorités actuelles', className: 'text-green-600 dark:text-green-400' }
+  }
+  if (ratio >= SEUIL_ALIGNEMENT_PARTIEL) {
+    return { label: 'Partiellement en ligne avec tes priorités', className: 'text-amber-600 dark:text-amber-400' }
+  }
+  return { label: 'Peu aligné avec tes priorités actuelles', className: 'text-muted-foreground' }
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const COLUMNS = [
@@ -157,6 +187,13 @@ export default function SchoolsComparativePage() {
       return sortDir === 'asc' ? av - bv : bv - av
     })
   }, [schools, sortCol, sortDir, filterType, hideTerminated])
+
+  // Référence pour la synthèse d'alignement (voir classerAlignementPriorites) :
+  // le meilleur score pondéré parmi les écoles actuellement affichées.
+  const maxScoreAffiche = useMemo(() => {
+    const scores = sorted.map((s) => s.priorityScore).filter((v) => v != null)
+    return scores.length > 0 ? Math.max(...scores) : null
+  }, [sorted])
 
   const curYear = currentSchoolYear()
 
@@ -254,16 +291,24 @@ export default function SchoolsComparativePage() {
                     </button>
                   </th>
                 ))}
-                <th className="px-4 py-3 font-medium">Fiche</th>
+                {/* Colonne de synthèse, non triable (c'est une phrase, pas une valeur
+                    comparable) — voir classerAlignementPriorites ci-dessus. */}
+                <th className="px-4 py-3 font-medium">Alignement priorités</th>
               </tr>
             </thead>
             <tbody>
               {sorted.map((school, i) => {
-                const missingRate = school.currentNetRate == null
+                const alignement = classerAlignementPriorites(school.priorityScore, maxScoreAffiche)
                 return (
                   <tr
                     key={school.id}
-                    className={`border-b border-border-subtle last:border-0 hover:bg-surface-overlay/50 transition-colors ${i % 2 === 0 ? '' : 'bg-surface-raised/20'}`}
+                    onClick={() => navigate(`/admin/ecoles/${school.id}`)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/admin/ecoles/${school.id}`) }}
+                    role="button"
+                    tabIndex={0}
+                    // Ligne entièrement cliquable (cohérent avec le survol qui l'illumine
+                    // déjà) : plus besoin d'un bouton "Ouvrir" séparé et redondant.
+                    className={`cursor-pointer border-b border-border-subtle last:border-0 hover:bg-surface-overlay/50 transition-colors ${i % 2 === 0 ? '' : 'bg-surface-raised/20'}`}
                   >
                     <td className="px-4 py-3 font-medium">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -324,13 +369,8 @@ export default function SchoolsComparativePage() {
                         : <span className="text-xs text-muted">—</span>
                       }
                     </td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => navigate(`/admin/ecoles/${school.id}`)}
-                        className="text-xs text-guitar-400 hover:underline"
-                      >
-                        Ouvrir
-                      </button>
+                    <td className={`px-4 py-3 text-xs ${alignement.className}`}>
+                      {alignement.label}
                     </td>
                   </tr>
                 )
