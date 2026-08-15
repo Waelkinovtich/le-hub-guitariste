@@ -18,6 +18,7 @@ import {
 } from '../services/students'
 import AddStudentModal from '../components/AddStudentModal'
 import PhoneActions from '../components/PhoneActions'
+import EmailActions from '../components/EmailActions'
 
 // Libellés courts des 5 catégories du score pondéré, pour l'affichage du détail
 // (voir computeScoreBreakdown dans services/schools.js).
@@ -791,7 +792,9 @@ export default function SchoolDetailPage() {
         <Field label="E-mail de la direction">
           {editing
             ? <TextInput value={data.director_email} onChange={set('director_email')} placeholder="direction@…" type="email" />
-            : <span className="text-foreground">{val(data.director_email)}</span>
+            : data.director_email
+              ? <EmailActions email={data.director_email} />
+              : <span className="text-muted-foreground">Non renseigné</span>
           }
         </Field>
 

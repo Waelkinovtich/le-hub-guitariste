@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import PhoneActions from '../components/PhoneActions'
+import EmailActions from '../components/EmailActions'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -22,9 +23,10 @@ function fmtAvailabilities(avail) {
 
 // ─── Composants d'affichage ───────────────────────────────────────────────────
 
-// phone : bascule value vers PhoneActions (numéro + liens appeler/SMS) au
-// lieu d'un simple texte — les autres champs (email, adresse…) sont inchangés.
-function InfoRow({ icon: Icon, label, value, phone = false }) {
+// phone/email : bascule value vers PhoneActions/EmailActions (appui long →
+// appeler/SMS/mail) au lieu d'un simple texte — les autres champs (adresse…)
+// sont inchangés.
+function InfoRow({ icon: Icon, label, value, phone = false, email = false }) {
   if (!value && value !== false) return null
   return (
     <div className="flex items-start gap-3">
@@ -33,7 +35,9 @@ function InfoRow({ icon: Icon, label, value, phone = false }) {
       </div>
       <div>
         <p className="text-xs text-muted-foreground mb-0.5">{label}</p>
-        <p className="text-sm text-foreground">{phone ? <PhoneActions number={value} /> : String(value)}</p>
+        <p className="text-sm text-foreground">
+          {phone ? <PhoneActions number={value} /> : email ? <EmailActions email={value} /> : String(value)}
+        </p>
       </div>
     </div>
   )
@@ -85,7 +89,7 @@ function DetailView({ response, onBack }) {
             <InfoRow icon={Clock} label="Créneau confirmé" value={`${response.assigned_day} ${response.assigned_time ?? ''}`.trim()} />
           )}
           <InfoRow icon={User}     label="Année de naissance" value={response.birth_year} />
-          <InfoRow icon={Mail}     label="Email"              value={response.email} />
+          <InfoRow icon={Mail}     label="Email"              value={response.email} email />
           <InfoRow icon={Phone}    label="Téléphone"          value={response.phone} phone />
           <InfoRow icon={School}   label="École"              value={response.school_name} />
           <InfoRow icon={MapPin}   label="Adresse"            value={response.address ?? response.city} />
@@ -114,7 +118,7 @@ function DetailView({ response, onBack }) {
                 <div className="glass-panel rounded-xl p-4 space-y-2">
                   <p className="text-sm font-medium text-foreground">{response.guardian1_name}</p>
                   {response.guardian1_phone && <p className="text-xs text-muted-foreground"><PhoneActions number={response.guardian1_phone} /></p>}
-                  {response.guardian1_email && <p className="text-xs text-muted-foreground">{response.guardian1_email}</p>}
+                  {response.guardian1_email && <p className="text-xs text-muted-foreground"><EmailActions email={response.guardian1_email} /></p>}
                   {response.guardian1_contact_purpose && (
                     <span className="inline-block text-xs px-2 py-0.5 rounded-md bg-surface border border-border text-muted-foreground">
                       {response.guardian1_contact_purpose}
@@ -126,7 +130,7 @@ function DetailView({ response, onBack }) {
                 <div className="glass-panel rounded-xl p-4 space-y-2">
                   <p className="text-sm font-medium text-foreground">{response.guardian2_name}</p>
                   {response.guardian2_phone && <p className="text-xs text-muted-foreground"><PhoneActions number={response.guardian2_phone} /></p>}
-                  {response.guardian2_email && <p className="text-xs text-muted-foreground">{response.guardian2_email}</p>}
+                  {response.guardian2_email && <p className="text-xs text-muted-foreground"><EmailActions email={response.guardian2_email} /></p>}
                   {response.guardian2_contact_purpose && (
                     <span className="inline-block text-xs px-2 py-0.5 rounded-md bg-surface border border-border text-muted-foreground">
                       {response.guardian2_contact_purpose}
