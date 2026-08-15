@@ -140,21 +140,31 @@ export default function PlanningPage() {
     return all
   }, [lessons, selectedDay, view, weekStart, weekEnd, hideEnvisages])
 
-  // Génère l'URL de navigation GPS selon la préférence du prof et la disponibilité des coordonnées
+  // Génère l'URL de navigation GPS selon la préférence du prof et la disponibilité des
+  // coordonnées. Un seul champ destination est renseigné : l'app de navigation démarre
+  // depuis la position actuelle de l'utilisateur. Le nom de l'école sert de repli quand
+  // les coordonnées (géocodage) manquent encore.
   const buildGpsUrl = (schoolName) => {
     if (!schoolName) return null
     const coords = schoolCoords[schoolName]
     const navApp = user.navApp ?? 'google_maps'
-    if (coords?.lat && coords?.lng) {
-      return navApp === 'waze'
+    const hasCoords = Boolean(coords?.lat && coords?.lng)
+    const encodedName = encodeURIComponent(schoolName)
+
+    if (navApp === 'waze') {
+      return hasCoords
         ? `https://waze.com/ul?ll=${coords.lat},${coords.lng}&navigate=yes`
-        : `https://maps.google.com/?daddr=${coords.lat},${coords.lng}`
+        : `https://waze.com/ul?q=${encodedName}`
     }
-    // Fallback : recherche par nom d'école
-    const encoded = encodeURIComponent(schoolName)
-    return navApp === 'waze'
-      ? `https://waze.com/ul?q=${encoded}`
-      : `https://maps.google.com/?q=${encoded}`
+    if (navApp === 'apple_maps') {
+      return hasCoords
+        ? `https://maps.apple.com/?daddr=${coords.lat},${coords.lng}`
+        : `https://maps.apple.com/?daddr=${encodedName}`
+    }
+    // google_maps — valeur par défaut
+    return hasCoords
+      ? `https://maps.google.com/?daddr=${coords.lat},${coords.lng}`
+      : `https://maps.google.com/?q=${encodedName}`
   }
 
   const togglePlanningStatus = async (lesson) => {

@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { StickyNote, CalendarDays, Plus, Trash2, Pencil, Check, Loader2, AlertCircle, X, ChevronDown, ChevronUp, Mic, MicOff, Square, Users, FileDown } from 'lucide-react'
+import { StickyNote, CalendarDays, Plus, Trash2, Pencil, Check, Loader2, AlertCircle, X, ChevronDown, ChevronUp, Mic, MicOff, Square, Users, FileDown, Download } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { exportEventRoutePDF } from '../utils/exportPDF'
+import { useAuth } from '../context/AuthContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,30 @@ function fmtDateShort(dateStr) {
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10)
+}
+
+// Extension de fichier réelle à partir du type MIME du blob audio : le
+// navigateur choisit lui-même le codec (webm/opus sur Chrome, mp4/AAC sur
+// Safari) — on ne doit jamais coder une extension en dur.
+function extensionFromMimeType(mimeType) {
+  const base = (mimeType || '').split(';')[0].trim()
+  const extensionsByMimeType = {
+    'audio/webm': 'webm',
+    'audio/ogg': 'ogg',
+    'audio/mp4': 'm4a',
+    'audio/mpeg': 'mp3',
+    'audio/wav': 'wav',
+  }
+  return extensionsByMimeType[base] ?? 'webm'
+}
+
+// Horodatage compact et sans caractères interdits dans un nom de fichier
+// (ni "/" ni ":"), utilisé pour nommer l'audio téléchargé.
+function fmtTimestampForFilename(date) {
+  const pad = (n) => String(n).padStart(2, '0')
+  const datePart = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  const timePart = `${pad(date.getHours())}h${pad(date.getMinutes())}`
+  return `${datePart}-${timePart}`
 }
 
 // ─── Formulaire d'ajout / d'édition ──────────────────────────────────────────
@@ -47,11 +72,22 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
   // Erreur de LECTURE confirmée (après finalisation du blob), distincte de
   // voiceError qui couvre l'accès micro.
   const [playbackError, setPlaybackError] = useState('')
+  // Transcription figée de LA dictée en cours, affichée sous le lecteur audio.
+  // null = aucun enregistrement finalisé pour l'instant.
+  const [frozenTranscript, setFrozenTranscript] = useState(null)
   const recorderRef = useRef(null)
   const chunksRef = useRef([])
   const recognitionRef = useRef(null)
   const timerRef = useRef(null)
   const streamRef = useRef(null)
+  // Accumulateur de transcription vivant pendant l'enregistrement en cours ;
+  // copié dans frozenTranscript une fois le blob audio réellement finalisé.
+  const liveTranscriptRef = useRef('')
+  // Type MIME réel produit par le MediaRecorder — nécessaire pour donner au
+  // fichier téléchargé la bonne extension (voir extensionFromMimeType).
+  const audioMimeTypeRef = useRef('')
+  // Horodatage de fin de dictée, utilisé pour nommer le fichier téléchargé.
+  const recordedAtRef = useRef(null)
 
   const hasSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition)
 
@@ -69,6 +105,8 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
   const startRecording = async () => {
     setVoiceError('')
     setPlaybackError('')
+    setFrozenTranscript(null)
+    liveTranscriptRef.current = ''
     if (audioUrl) { URL.revokeObjectURL(audioUrl); setAudioUrl(null) }
     chunksRef.current = []
     let stream
@@ -88,8 +126,13 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
       // le MediaRecorder (rec.mimeType), pas un type codé en dur : Safari
       // n'encode généralement pas en audio/webm (souvent audio/mp4), et un
       // Blob mal étiqueté échoue au décodage dans l'élément <audio>.
-      const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' })
+      audioMimeTypeRef.current = rec.mimeType || 'audio/webm'
+      const blob = new Blob(chunksRef.current, { type: audioMimeTypeRef.current })
       setAudioUrl(URL.createObjectURL(blob))
+      // Figé ici (finalisation réelle du blob), pas au clic sur "Arrêter" :
+      // la reconnaissance vocale peut encore livrer un résultat tardif entre
+      // les deux, notamment sur Safari.
+      setFrozenTranscript(liveTranscriptRef.current)
       setProcessing(false)
     }
     rec.onerror = () => {
@@ -107,6 +150,7 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
       r.onresult = (e) => {
         const text = Array.from(e.results).map((res) => res[0].transcript).join(' ')
         setContent((prev) => prev ? prev + ' ' + text : text)
+        liveTranscriptRef.current = liveTranscriptRef.current ? `${liveTranscriptRef.current} ${text}` : text
       }
       r.onend = () => {
         if (recorderRef.current?.state === 'recording') { try { r.start() } catch {} }
@@ -124,6 +168,7 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
   const stopRecording = () => {
     clearInterval(timerRef.current)
     try { recognitionRef.current?.stop() } catch {}
+    recordedAtRef.current = new Date()
     // recording passe à false immédiatement mais audioUrl n'est prêt qu'une
     // fois onstop déclenché (asynchrone) : "processing" comble cet
     // intervalle pour que l'UI n'affiche ni le bouton "Dicter" ni une
@@ -133,10 +178,29 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
     setRecording(false)
   }
 
+  // Supprime l'audio ET sa transcription figée ensemble : les deux décrivent
+  // la même prise, il n'y a pas de sens à en garder un sans l'autre.
   const deleteRecording = () => {
     if (audioUrl) URL.revokeObjectURL(audioUrl)
     setAudioUrl(null)
     setPlaybackError('')
+    setFrozenTranscript(null)
+    liveTranscriptRef.current = ''
+  }
+
+  // Téléchargement local du blob déjà en mémoire (aucun envoi réseau) : une
+  // fois le fichier sur le disque de l'utilisateur, l'app ne peut ni le
+  // rouvrir ni le supprimer à distance — limite technique du navigateur.
+  const downloadRecording = () => {
+    if (!audioUrl) return
+    const extension = extensionFromMimeType(audioMimeTypeRef.current)
+    const filename = `note-${fmtTimestampForFilename(recordedAtRef.current ?? new Date())}.${extension}`
+    const link = document.createElement('a')
+    link.href = audioUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
   }
 
   const fmtElapsed = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
@@ -296,30 +360,53 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
               </div>
             )}
             {audioUrl && !recording && !processing && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-surface border border-border-subtle">
-                <audio
-                  src={audioUrl}
-                  controls
-                  className="flex-1 h-8 min-w-0"
-                  style={{ accentColor: 'var(--guitar-600)' }}
-                  onError={() => setPlaybackError("Erreur sur le fichier audio — l'enregistrement n'a pas pu être lu. Vous pouvez recommencer.")}
-                />
-                <button
-                  type="button"
-                  onClick={deleteRecording}
-                  className="p-1.5 rounded-lg text-muted hover:text-guitar-400 hover:bg-guitar-600/10 transition-colors flex-shrink-0"
-                  title="Supprimer l'enregistrement"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={startRecording}
-                  className="p-1.5 rounded-lg text-muted hover:text-foreground hover:bg-surface-overlay transition-colors flex-shrink-0"
-                  title="Recommencer"
-                >
-                  <Mic className="w-3.5 h-3.5" />
-                </button>
+              <div className="space-y-2">
+                {/* 1. Audio */}
+                <div className="px-3 py-2 rounded-xl bg-surface border border-border-subtle">
+                  <audio
+                    src={audioUrl}
+                    controls
+                    className="w-full h-8"
+                    style={{ accentColor: 'var(--guitar-600)' }}
+                    onError={() => setPlaybackError("Erreur sur le fichier audio — l'enregistrement n'a pas pu être lu. Vous pouvez recommencer.")}
+                  />
+                </div>
+
+                {/* 2. Transcription — lecture seule, figée à la finalisation de l'audio */}
+                <div className="px-3 py-2.5 rounded-xl bg-surface border border-border-subtle">
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Transcription</p>
+                  <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+                    {frozenTranscript || 'Aucune transcription disponible pour cet enregistrement.'}
+                  </p>
+                </div>
+
+                {/* 3. Boutons */}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={downloadRecording}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Télécharger
+                  </button>
+                  <button
+                    type="button"
+                    onClick={deleteRecording}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-guitar-400 hover:border-guitar-600/30 transition-all"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Supprimer l'enregistrement
+                  </button>
+                  <button
+                    type="button"
+                    onClick={startRecording}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+                  >
+                    <Mic className="w-3.5 h-3.5" />
+                    Recommencer
+                  </button>
+                </div>
               </div>
             )}
             {playbackError && (
@@ -415,6 +502,8 @@ function NoteCard({ item, onEdit, onDelete }) {
  * teacherId   : nécessaire pour écrire dans event_participants (RLS)
  */
 function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
+  // Nom + contact du professeur pour l'en-tête professionnel du PDF exporté
+  const { user } = useAuth()
   const [showPanel, setShowPanel] = useState(false)
   // null = non chargé, [] = chargé mais vide, [uuid, …] = chargé avec données
   const [participantIds, setParticipantIds] = useState(null)
@@ -466,7 +555,13 @@ function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
   const handleExportPDF = () => {
     if (!participantIds) return
     const participantDetails = schoolStudents.filter((s) => participantIds.includes(s.id))
-    exportEventRoutePDF({ event: item, participants: participantDetails })
+    exportEventRoutePDF({
+      event: item,
+      participants: participantDetails,
+      teacherName: user?.name,
+      teacherPhone: user?.phone,
+      teacherEmail: user?.email,
+    })
   }
 
   const nbParticipants = participantIds?.length ?? null

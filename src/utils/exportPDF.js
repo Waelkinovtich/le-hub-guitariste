@@ -21,30 +21,54 @@ function toSafeFilename(str) {
 }
 
 const STATUS_LABELS = {
-  present: 'Pr\u00e9sent',
+  present: 'Présent',
   absent: 'Absent',
-  excuse: 'Excus\u00e9',
-  annulé_prof: 'Annul\u00e9 prof',
-  planifié: 'Planifi\u00e9',
+  excuse: 'Excusé',
+  annulé_prof: 'Annulé prof',
+  planifié: 'Planifié',
 }
 
-export function exportÉmargementPDF({ lessons, school, period, teacherName }) {
-  const doc = new jsPDF()
-
-  doc.setFontSize(18)
+// En-tête professionnel commun à tous les PDF générés : identité et contact
+// du professeur uniquement — jamais de logo ni de nom d'application. Ces
+// documents sont envoyés directement aux directeurs d'école partenaires.
+// Retourne la position Y (pt) juste après l'en-tête, pour enchaîner le
+// contenu propre à chaque document sans chevauchement.
+function drawProfessionalHeader(doc, { teacherName, teacherPhone, teacherEmail, documentTitle }) {
+  doc.setFontSize(15)
   doc.setTextColor(192, 57, 43)
-  doc.text('Hub du Guitariste', 14, 20)
+  doc.text(teacherName || 'Professeur de guitare', 14, 18)
 
+  const contact = [teacherPhone, teacherEmail].filter(Boolean).join('  •  ')
+  if (contact) {
+    doc.setFontSize(9)
+    doc.setTextColor(100, 100, 100)
+    doc.text(contact, 14, 24)
+  }
+
+  const titleY = contact ? 34 : 30
   doc.setFontSize(13)
   doc.setTextColor(0, 0, 0)
-  doc.text('Feuille d\u2019\u00e9margement', 14, 30)
+  doc.text(documentTitle, 14, titleY)
+
+  return titleY
+}
+
+export function exportÉmargementPDF({ lessons, school, period, teacherName, teacherPhone, teacherEmail }) {
+  const doc = new jsPDF()
+
+  let y = drawProfessionalHeader(doc, {
+    teacherName,
+    teacherPhone,
+    teacherEmail,
+    documentTitle: 'Feuille d’émargement',
+  })
+  y += 10
 
   doc.setFontSize(10)
   doc.setTextColor(100, 100, 100)
-  doc.text('Professeur : ' + (teacherName || ''), 14, 40)
-  doc.text('École : ' + (school || 'Tous'), 14, 47)
-  doc.text('P\u00e9riode : ' + period, 14, 54)
-  doc.text('G\u00e9n\u00e9r\u00e9 le : ' + new Date().toLocaleDateString('fr-FR'), 14, 61)
+  doc.text('École : ' + (school || 'Tous'), 14, y); y += 7
+  doc.text('Période : ' + period, 14, y); y += 7
+  doc.text('Généré le : ' + new Date().toLocaleDateString('fr-FR'), 14, y); y += 9
 
   const rows = lessons.map((l) => [
     l.dateLabel,
@@ -57,8 +81,8 @@ export function exportÉmargementPDF({ lessons, school, period, teacherName }) {
   ])
 
   autoTable(doc, {
-    startY: 70,
-    head: [['Date', 'Heure', 'Él\u00e8ve', 'Th\u00e8me', 'Dur\u00e9e', 'Statut', 'Motif']],
+    startY: y,
+    head: [['Date', 'Heure', 'Élève', 'Thème', 'Durée', 'Statut', 'Motif']],
     body: rows,
     headStyles: { fillColor: [192, 57, 43], textColor: 255, fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [245, 245, 245] },
@@ -76,7 +100,7 @@ export function exportÉmargementPDF({ lessons, school, period, teacherName }) {
   const finalY = doc.lastAutoTable.finalY + 10
   doc.setFontSize(10)
   doc.setTextColor(0, 0, 0)
-  doc.text('R\u00e9capitulatif : ' + total + ' cours — ' + presents + ' pr\u00e9sents — ' + absents + ' absents — ' + excuses + ' excus\u00e9s — ' + annulés + ' annul\u00e9s — Taux de pr\u00e9sence : ' + taux + '%', 14, finalY)
+  doc.text('Récapitulatif : ' + total + ' cours — ' + presents + ' présents — ' + absents + ' absents — ' + excuses + ' excusés — ' + annulés + ' annulés — Taux de présence : ' + taux + '%', 14, finalY)
 
   const filename = 'emargement_' + (school || 'tous').replace(/\s/g, '_') + '_' + period.replace(/\s/g, '_') + '.pdf'
   doc.save(filename)
@@ -86,29 +110,28 @@ export function exportÉmargementPDF({ lessons, school, period, teacherName }) {
 
 /**
  * Génère et télécharge la feuille de route d'un événement scolaire.
- * Même charte graphique que l'émargement (rouge hub-guitariste, autotable).
+ * Même charte graphique que l'émargement (en-tête professionnel, autotable).
  *
- * @param {object} event       - Ligne school_notes_events (title, school_name, event_date, content)
+ * @param {object} event        - Ligne school_notes_events (title, school_name, event_date, content)
  * @param {Array}  participants - Élèves sélectionnés : { first_name, last_name, email, phone }
- * @param {string} teacherName - Nom du professeur (facultatif)
+ * @param {string} teacherName  - Nom du professeur (facultatif)
+ * @param {string} teacherPhone - Téléphone du professeur (facultatif)
+ * @param {string} teacherEmail - Email du professeur (facultatif)
  */
-export function exportEventRoutePDF({ event, participants, teacherName }) {
+export function exportEventRoutePDF({ event, participants, teacherName, teacherPhone, teacherEmail }) {
   const doc = new jsPDF()
 
-  // ── En-tête rouge ──────────────────────────────────────────────────────────
-  doc.setFontSize(18)
-  doc.setTextColor(192, 57, 43)
-  doc.text('Hub du Guitariste', 14, 20)
-
-  doc.setFontSize(13)
-  doc.setTextColor(0, 0, 0)
-  doc.text('Feuille de route', 14, 30)
+  let y = drawProfessionalHeader(doc, {
+    teacherName,
+    teacherPhone,
+    teacherEmail,
+    documentTitle: 'Feuille de route',
+  })
+  y += 10
 
   // ── Métadonnées ────────────────────────────────────────────────────────────
   doc.setFontSize(10)
   doc.setTextColor(100, 100, 100)
-  let y = 40
-  if (teacherName) { doc.text('Professeur : ' + teacherName, 14, y); y += 7 }
   doc.text('Événement : ' + (event.title || ''), 14, y); y += 7
   doc.text('École : ' + (event.school_name || '—'), 14, y); y += 7
   doc.text('Date : ' + fmtDate(event.event_date), 14, y); y += 7

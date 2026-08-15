@@ -98,6 +98,8 @@ export default function ÉmargementPage() {
       school: filterSchool || 'Tous',
       period: range.label,
       teacherName: user.name,
+      teacherPhone: user.phone,
+      teacherEmail: user.email,
     })
   }
 

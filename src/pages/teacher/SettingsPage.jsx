@@ -840,10 +840,11 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
           {[
-            { value: 'google_maps', label: 'Google Maps', description: 'Application par défaut sur la plupart des appareils' },
-            { value: 'waze',        label: 'Waze',        description: 'Navigation communautaire avec trafic en temps réel' },
+            { value: 'google_maps', label: 'Google Maps',        description: 'Application par défaut sur la plupart des appareils' },
+            { value: 'waze',        label: 'Waze',                description: 'Navigation communautaire avec trafic en temps réel' },
+            { value: 'apple_maps',  label: 'Plans (Apple Maps)',  description: 'Intégré nativement sur iPhone, iPad et Mac' },
           ].map((app) => {
             const active = navApp === app.value
             return (
