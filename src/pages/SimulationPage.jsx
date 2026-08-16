@@ -53,50 +53,99 @@ function ScoreDots({ score }) {
 
 // ─── Moteur de simulation ─────────────────────────────────────────────────────
 
-/**
- * Répartit les heures hebdomadaires entre les écoles selon leur score de priorité
- * pondéré (priorityScore, voir services/schools.js — 5 catégories, poids réglables
- * dans Réglages > Priorisation des écoles). Les écoles sans score sont exclues de
- * la simulation mais affichées en bas.
- *
- * Le revenu mensuel estimé est calculé à partir de netHourlyYieldReal (rendement
- * horaire net réel, déjà ajusté par la fiabilité de la structure — voir
- * calculerRendementHoraireNetReel) plutôt que du taux saisi brut (currentNetRate) :
- * c'est la même logique que celle affichée sur SchoolsPage.jsx et
- * SchoolsComparativePage.jsx, pour que la projection de revenu ne surestime pas
- * silencieusement ce qu'une structure peu fiable (CESU, annulations non
- * rattrapées) rapporte réellement. netHourlyYieldReal couvre aussi le cas d'un
- * salaire mensuel fixe lissé sans taux horaire saisi, que currentNetRate seul
- * manquerait — currentNetRate reste un repli défensif si jamais l'un est
- * disponible sans l'autre.
- *
- * @param {Array}  schools            — tableau d'écoles (voir fetchSchoolsOverview)
- * @param {number} plafondHebdo       — heures max par semaine
- * @param {number} revenuMensuelCible — revenu net mensuel visé
- * @returns {Array} écoles enrichies de { heuresHebdoProposees, revenuMensuelEstime }
- */
-function simuler(schools, plafondHebdo, revenuMensuelCible) {
-  const evaluees  = schools.filter(s => s.priorityScore != null)
-  const nonNotees = schools.filter(s => s.priorityScore == null)
+// Valeur DB signalant un volume contractuel figé (ne jamais modifier dans le simulateur).
+// Source : HOURS_STABILITY_OPTIONS dans SchoolDetailPage.jsx.
+const HOURS_STABILITY_FIXE = 'Heures garanties / bloquées'
 
-  if (!evaluees.length || !plafondHebdo) {
-    return schools.map(s => ({ ...s, heuresHebdoProposees: null, revenuMensuelEstime: null }))
+/**
+ * Algorithme glouton de répartition des heures hebdomadaires par priorité.
+ *
+ * Principe en deux passes :
+ *   1. Écoles à volume fixe non-négociable (hours_stability === HOURS_STABILITY_FIXE) :
+ *      volume FIGÉ à current_weekly_hours, jamais touché par l'optimisation.
+ *      Le budget restant est calculé APRÈS déduction de ces volumes.
+ *   2. Écoles flexibles (évaluées, score connu) : remplissage glouton par score
+ *      décroissant. Chaque école reçoit au maximum desired_weekly_hours (son volume
+ *      cible, si renseigné), dans la limite du budget restant. La structure la mieux
+ *      classée est servie en premier — pas de lissage équitable.
+ *
+ * Les écoles sans score (non évaluées) et les écoles fixes sans volume saisi
+ * sont rendues telles quelles, avec heuresHebdoProposees = null.
+ *
+ * @param {Array}  schools       - tableau d'écoles (fetchSchoolsOverview) avec
+ *                                 hours_stability, current_weekly_hours,
+ *                                 desired_weekly_hours, priorityScore
+ * @param {number} plafondHebdo  - plafond total d'heures par semaine (prof)
+ * @returns {Array} écoles enrichies de { heuresHebdoProposees, volumeFixe, revenuMensuelEstime }
+ *   volumeFixe = true → affiché comme figé dans l'UI
+ */
+function repartirHeuresSelonPriorite(schools, plafondHebdo) {
+  // Arrondit h au multiple de GRANULARITE_HEURES le plus proche, sans dépasser max.
+  const arrondir = (h, max) => {
+    const brut = Math.round(h / GRANULARITE_HEURES) * GRANULARITE_HEURES
+    return max != null ? Math.min(brut, max) : brut
   }
 
-  const totalScore = evaluees.reduce((acc, s) => acc + s.priorityScore, 0)
+  // ── Passe 1 : volumes fixes ────────────────────────────────────────────────
+  // Ces écoles ont un contrat figé : le simulateur ne peut pas y toucher.
+  // current_weekly_hours peut être null si le volume n'a pas encore été saisi.
+  const fixes     = schools.filter(s => s.hours_stability === HOURS_STABILITY_FIXE)
+  const flexibles = schools.filter(s => s.hours_stability !== HOURS_STABILITY_FIXE && s.priorityScore != null)
+  const nonNotees = schools.filter(s => s.hours_stability !== HOURS_STABILITY_FIXE && s.priorityScore == null)
 
-  const resultats = evaluees.map(s => {
-    const ratio     = s.priorityScore / totalScore
-    const hebdo     = Math.round(ratio * plafondHebdo / GRANULARITE_HEURES) * GRANULARITE_HEURES
-    const tauxRetenu = s.netHourlyYieldReal ?? s.currentNetRate
-    const mensuel   = tauxRetenu ? hebdo * SEMAINES_PAR_MOIS * tauxRetenu : null
-    return { ...s, heuresHebdoProposees: hebdo, revenuMensuelEstime: mensuel }
+  const resultFixes = fixes.map(s => {
+    const hebdo = s.current_weekly_hours != null
+      ? arrondir(s.current_weekly_hours, null)
+      : null  // Volume non saisi : affiché comme "fixe — à renseigner"
+    return { ...s, heuresHebdoProposees: hebdo, volumeFixe: true }
+  })
+
+  // Budget restant après déduction des volumes figés
+  const totalFixes = resultFixes.reduce((acc, s) => acc + (s.heuresHebdoProposees ?? 0), 0)
+  let budgetRestant = Math.max(0, plafondHebdo - totalFixes)
+
+  // ── Passe 2 : remplissage glouton par score décroissant ────────────────────
+  // Tri par priorityScore décroissant : la meilleure école est servie en premier.
+  // On ne lisse pas équitablement — on priorise fort les mieux classées.
+  const flexiblesTriees = [...flexibles].sort((a, b) => b.priorityScore - a.priorityScore)
+  const resultFlexibles = flexiblesTriees.map(s => {
+    if (budgetRestant <= 0) return { ...s, heuresHebdoProposees: 0, volumeFixe: false }
+    // Plafond par structure : desired_weekly_hours si renseigné, sinon le budget entier
+    const plafondEcole = s.desired_weekly_hours ?? budgetRestant
+    const hebdo = arrondir(Math.min(plafondEcole, budgetRestant), null)
+    budgetRestant = Math.max(0, budgetRestant - hebdo)
+    return { ...s, heuresHebdoProposees: hebdo, volumeFixe: false }
   })
 
   return [
-    ...resultats,
-    ...nonNotees.map(s => ({ ...s, heuresHebdoProposees: null, revenuMensuelEstime: null })),
+    ...resultFixes,
+    ...resultFlexibles,
+    ...nonNotees.map(s => ({ ...s, heuresHebdoProposees: null, volumeFixe: false })),
   ]
+}
+
+/**
+ * Enrichit chaque école du résultat de simulation avec le revenu mensuel estimé.
+ * Séparé de repartirHeuresSelonPriorite pour garder la fonction pure sans
+ * dépendance à SEMAINES_PAR_MOIS (constante monétaire vs allocation d'heures).
+ *
+ * Utilise netHourlyYieldReal (rendement réel, décote fiabilité incluse) plutôt
+ * que currentNetRate brut — même logique que SchoolsPage/SchoolsComparativePage.
+ */
+function simuler(schools, plafondHebdo) {
+  if (!schools.length || !plafondHebdo) {
+    return schools.map(s => ({ ...s, heuresHebdoProposees: null, volumeFixe: false, revenuMensuelEstime: null }))
+  }
+
+  const avecHeures = repartirHeuresSelonPriorite(schools, plafondHebdo)
+
+  return avecHeures.map(s => {
+    const tauxRetenu = s.netHourlyYieldReal ?? s.currentNetRate
+    const mensuel = (tauxRetenu && s.heuresHebdoProposees != null && s.heuresHebdoProposees > 0)
+      ? s.heuresHebdoProposees * SEMAINES_PAR_MOIS * tauxRetenu
+      : null
+    return { ...s, revenuMensuelEstime: mensuel }
+  })
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -138,7 +187,6 @@ export default function SimulationPage() {
     return simuler(
       schools,
       objectives?.plafond_heures_hebdo ? parseFloat(objectives.plafond_heures_hebdo) : null,
-      objectives?.revenu_mensuel_cible  ? parseFloat(objectives.revenu_mensuel_cible)  : null,
     )
   }, [schools, objectives])
 
@@ -227,7 +275,7 @@ export default function SimulationPage() {
             <div className="px-5 py-4 border-b border-border-subtle">
               <p className="text-sm font-semibold text-foreground">Répartition simulée par école</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Proportionnelle au score de priorité · {fmt(plafond, 'h')} / semaine au total
+                Volumes fixes figés · flexibles par score décroissant · {fmt(plafond, 'h')} / semaine au total
               </p>
             </div>
 
@@ -287,7 +335,8 @@ function Stat({ icon: Icon, label, value, highlight }) {
 
 function SchoolRow({ school, plafond }) {
   const navigate = useNavigate()
-  const { name, priorityScore, heuresHebdoProposees, revenuMensuelEstime, currentNetRate, netHourlyYieldReal } = school
+  const { name, priorityScore, heuresHebdoProposees, revenuMensuelEstime,
+          currentNetRate, netHourlyYieldReal, volumeFixe } = school
   const pct = plafond && heuresHebdoProposees ? Math.round((heuresHebdoProposees / plafond) * 100) : 0
   // Fiabilité réduite (CESU par défaut, ou correction manuelle à la baisse) : le
   // revenu estimé ci-dessus tient déjà compte de la décote — cette ligne rend
@@ -305,8 +354,18 @@ function SchoolRow({ school, plafond }) {
     >
       <div className="flex items-start justify-between gap-4 mb-2">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-foreground truncate hover:text-guitar-400 transition-colors">{name}</p>
-          <ScoreDots score={priorityScore} />
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-medium text-foreground truncate hover:text-guitar-400 transition-colors">{name}</p>
+            {volumeFixe && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
+                🔒 Fixe
+              </span>
+            )}
+          </div>
+          {!volumeFixe && <ScoreDots score={priorityScore} />}
+          {volumeFixe && (
+            <p className="text-xs text-muted-foreground mt-0.5">Volume contractuel non-négociable</p>
+          )}
         </div>
         <div className="text-right shrink-0">
           {heuresHebdoProposees != null ? (
@@ -315,6 +374,8 @@ function SchoolRow({ school, plafond }) {
                 ? `${fmtHeures(heuresHebdoProposees)} / sem. → ${fmt(revenuMensuelEstime, '€ / mois')}`
                 : `${fmtHeures(heuresHebdoProposees)} / sem.`}
             </p>
+          ) : volumeFixe ? (
+            <span className="text-xs text-amber-400 italic">Volume fixe — à renseigner dans la fiche</span>
           ) : (
             <span className="text-muted italic text-xs">Non évalué</span>
           )}
@@ -323,16 +384,16 @@ function SchoolRow({ school, plafond }) {
               ≈ {fmt(netHourlyYieldReal, '€/h réel', 2)} (saisi : {fmt(currentNetRate, '€/h', 2)})
             </p>
           )}
-          {heuresHebdoProposees != null && !netHourlyYieldReal && (
+          {heuresHebdoProposees != null && heuresHebdoProposees > 0 && !netHourlyYieldReal && (
             <p className="text-xs text-muted italic">Taux inconnu</p>
           )}
         </div>
       </div>
 
-      {heuresHebdoProposees != null && (
+      {heuresHebdoProposees != null && heuresHebdoProposees > 0 && (
         <div className="h-1.5 rounded-full bg-surface-raised overflow-hidden">
           <div
-            className="h-full rounded-full guitar-gradient"
+            className={`h-full rounded-full ${volumeFixe ? 'bg-amber-500/60' : 'guitar-gradient'}`}
             style={{ width: `${pct}%`, transition: 'width 0.4s ease' }}
           />
         </div>

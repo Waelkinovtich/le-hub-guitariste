@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { StickyNote, CalendarDays, Plus, Trash2, Pencil, Check, Loader2, AlertCircle, X, ChevronDown, ChevronUp, Mic, MicOff, Square, Users, FileDown, Download } from 'lucide-react'
+import { StickyNote, CalendarDays, Plus, Trash2, Pencil, Check, Loader2, AlertCircle, X, ChevronDown, ChevronUp, Mic, MicOff, Square, Users, FileDown, Download, Music2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { exportEventRoutePDF } from '../utils/exportPDF'
 import { useAuth } from '../context/AuthContext'
@@ -47,6 +47,9 @@ function fmtTimestampForFilename(date) {
   const timePart = `${pad(date.getHours())}h${pad(date.getMinutes())}`
   return `${datePart}-${timePart}`
 }
+
+// Noms de jours en français, indexés par Date.getDay() (0=dimanche).
+const JOURS_SEMAINE = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi']
 
 // ─── Formulaire d'ajout / d'édition ──────────────────────────────────────────
 
@@ -525,6 +528,14 @@ function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
   const [participantIds, setParticipantIds] = useState(null)
   const [saving, setSaving] = useState(false)
 
+  // ── Propositions de créneaux de répétition ─────────────────────────────────
+  const [showRepetitionPanel, setShowRepetitionPanel] = useState(false)
+  // null = non calculé, [] = calculé sans résultat, [...] = propositions triées
+  const [repetitionProposals, setRepetitionProposals] = useState(null)
+  const [loadingProposals, setLoadingProposals] = useState(false)
+  // Clés des créneaux marqués "noté" par l'utilisateur (consultatif, jamais en DB)
+  const [confirmedSlots, setConfirmedSlots] = useState(new Set())
+
   // Élèves de l'école concernée (filtre par school_name si renseigné)
   const schoolStudents = useMemo(() => {
     if (!item.school_name || allStudents.length === 0) return allStudents
@@ -566,6 +577,70 @@ function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
       setParticipantIds((prev) => [...prev, studentId])
     }
     setSaving(false)
+  }
+
+  /**
+   * Récupère les leçons des participants dans les 6 prochaines semaines,
+   * groupe par (jour_semaine, heure_début) et retient les créneaux où
+   * au moins 2 participants sont déjà présents.
+   * Consultatif uniquement — aucune écriture en base.
+   */
+  const fetchRepetitionProposals = async () => {
+    if (!participantIds || participantIds.length < 2) return
+    setLoadingProposals(true)
+
+    const todayDate = new Date()
+    const endDate   = new Date(todayDate.getTime() + 42 * 86400000) // 6 semaines
+    const todayISO  = todayDate.toISOString().slice(0, 10)
+    const endISO    = endDate.toISOString().slice(0, 10)
+
+    const { data: lessons } = await supabase
+      .from('lessons')
+      .select('student_id, lesson_date, lesson_time, duration_minutes')
+      .in('student_id', participantIds)
+      .gte('lesson_date', todayISO)
+      .lte('lesson_date', endISO)
+
+    // Regroupement par (jour_semaine | heure_début)
+    const groups = {}
+    for (const l of lessons ?? []) {
+      const d   = new Date(l.lesson_date + 'T00:00:00')
+      const dow = d.getDay()
+      // Heure arrondie à l'heure (les répétitions se planifient à l'heure pile)
+      const heure = (l.lesson_time ?? '').slice(0, 5)
+      const key   = `${dow}|${heure}`
+      if (!groups[key]) groups[key] = { dow, heure, studentIds: new Set(), occurrences: 0 }
+      groups[key].studentIds.add(l.student_id)
+      groups[key].occurrences++
+    }
+
+    // Sélection des créneaux avec >= 2 participants, triés par couverture décroissante
+    const proposals = Object.values(groups)
+      .filter(g => g.studentIds.size >= 2)
+      .sort((a, b) => b.studentIds.size - a.studentIds.size || b.occurrences - a.occurrences)
+      .slice(0, 8)
+      .map(g => {
+        const prenoms = schoolStudents
+          .filter(s => g.studentIds.has(s.id))
+          .map(s => s.first_name)
+        return {
+          key:       `${g.dow}|${g.heure}`,
+          label:     `${JOURS_SEMAINE[g.dow]} à ${g.heure}`,
+          prenoms,
+          count:     g.studentIds.size,
+        }
+      })
+
+    setRepetitionProposals(proposals)
+    setLoadingProposals(false)
+  }
+
+  const handleProposerRepetitions = async () => {
+    // Première ouverture : charger les propositions
+    if (!showRepetitionPanel && repetitionProposals === null) {
+      await fetchRepetitionProposals()
+    }
+    setShowRepetitionPanel(v => !v)
   }
 
   const handleExportPDF = () => {
@@ -642,6 +717,7 @@ function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
 
       {/* ── Panel participants ── */}
       {showPanel && (
+        <>
         <div className="mt-3 space-y-3">
           {schoolStudents.length === 0 ? (
             <p className="text-xs text-muted-foreground italic">
@@ -684,7 +760,84 @@ function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
             <FileDown className="w-3.5 h-3.5" />
             Générer la feuille de route
           </button>
+
+          {/* Créneaux de répétition — seulement si >= 2 participants cochés */}
+          {participantIds && participantIds.length >= 2 && (
+            <button
+              type="button"
+              onClick={handleProposerRepetitions}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl border border-guitar-600/30 bg-guitar-600/5 text-xs font-medium text-guitar-400 hover:bg-guitar-600/10 transition-colors"
+            >
+              <Music2 className="w-3.5 h-3.5" />
+              {showRepetitionPanel ? 'Masquer les créneaux' : 'Proposer des créneaux de répétition'}
+            </button>
+          )}
         </div>
+
+        {/* ── Panel propositions de créneaux ── */}
+        {showRepetitionPanel && (
+
+          <div className="mt-3 pt-3 border-t border-border-subtle space-y-2">
+            <p className="text-xs font-semibold text-foreground">
+              Créneaux communs — {participantIds.length} participants
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Basé sur les cours planifiés dans les 6 prochaines semaines. Consultatif uniquement — aucune leçon créée automatiquement.
+            </p>
+
+            {loadingProposals && (
+              <div className="flex items-center gap-2 py-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Calcul des créneaux communs…</span>
+              </div>
+            )}
+
+            {!loadingProposals && repetitionProposals !== null && repetitionProposals.length === 0 && (
+              <p className="text-xs text-muted-foreground italic">
+                Aucun créneau commun trouvé dans les 6 prochaines semaines. Vérifiez que les leçons de ces élèves sont bien planifiées.
+              </p>
+            )}
+
+            {!loadingProposals && repetitionProposals !== null && repetitionProposals.length > 0 && (
+              <div className="space-y-1.5">
+                {repetitionProposals.map(p => (
+                  <div
+                    key={p.key}
+                    className={`flex items-center justify-between gap-3 px-3 py-2 rounded-xl border transition-all ${
+                      confirmedSlots.has(p.key)
+                        ? 'border-guitar-600/40 bg-guitar-600/10'
+                        : 'border-border-subtle bg-surface'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-foreground">{p.label}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {p.prenoms.join(', ')} — {p.count} élève{p.count > 1 ? 's' : ''}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmedSlots(prev => {
+                        const next = new Set(prev)
+                        if (next.has(p.key)) next.delete(p.key)
+                        else next.add(p.key)
+                        return next
+                      })}
+                      className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                        confirmedSlots.has(p.key)
+                          ? 'bg-guitar-600/20 text-guitar-400'
+                          : 'border border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
+                      }`}
+                    >
+                      {confirmedSlots.has(p.key) ? <><Check className="w-3 h-3" /> Noté</> : 'Confirmer'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        </>
       )}
     </div>
   )

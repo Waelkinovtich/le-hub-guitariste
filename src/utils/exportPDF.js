@@ -177,3 +177,81 @@ export function exportEventRoutePDF({ event, participants, teacherName, teacherP
   const safeDate  = (event.event_date || '').replace(/-/g, '')
   doc.save('feuille-de-route-' + safeTitre + (safeDate ? '-' + safeDate : '') + '.pdf')
 }
+
+// ─── Déplacements professionnels ──────────────────────────────────────────────
+
+const CATEGORY_LABELS_PDF = {
+  trajet_recurrent:  'Trajets récurrents (école)',
+  reunion_direction: 'Réunions / rendez-vous direction',
+  autre:             'Autres déplacements professionnels',
+}
+
+/**
+ * Génère un relevé PDF de déplacements professionnels, utilisable pour la
+ * déclaration fiscale (frais réels). Sobre : en-tête nom/contact prof,
+ * tableau autotable, récapitulatif km + coût. Sans logo ni marque app.
+ *
+ * @param {Array}  entries        - Entrées travel_entries filtrées à exporter
+ * @param {string|null} category  - Catégorie filtrée, ou null pour toutes
+ * @param {string} periodLabel    - Libellé humain de la période (ex : "2025-2026")
+ * @param {string} teacherName    - Nom du professeur (identité fiscale)
+ * @param {string} teacherEmail   - Email du professeur (facultatif)
+ */
+export function exportTravelPDF({ entries, category, periodLabel, teacherName, teacherEmail }) {
+  const doc = new jsPDF()
+  const catLabel = category ? (CATEGORY_LABELS_PDF[category] ?? category) : 'Tous déplacements'
+
+  let y = drawProfessionalHeader(doc, {
+    teacherName,
+    teacherPhone: null,
+    teacherEmail,
+    documentTitle: 'Déplacements professionnels',
+  })
+  y += 10
+
+  doc.setFontSize(10)
+  doc.setTextColor(100, 100, 100)
+  doc.text('Catégorie : ' + catLabel, 14, y); y += 7
+  doc.text('Période : ' + (periodLabel || 'Toutes périodes'), 14, y); y += 7
+  doc.text('Généré le : ' + new Date().toLocaleDateString('fr-FR'), 14, y); y += 7
+
+  const rows = entries.map(e => {
+    const dateStr = new Date(e.date + 'T00:00:00').toLocaleDateString('fr-FR', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+    })
+    const km   = Number(e.kilometres).toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 1 }) + ' km'
+    const cout = e.cout_calcule
+      ? Number(e.cout_calcule).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
+      : '—'
+    return [dateStr, e.motif || '—', km, cout]
+  })
+
+  autoTable(doc, {
+    startY: y + 4,
+    head: [['Date', 'Motif', 'Km', 'Coût estimé']],
+    body: rows.length > 0 ? rows : [['Aucun déplacement', '', '', '']],
+    headStyles:          { fillColor: [192, 57, 43], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles:  { fillColor: [245, 245, 245] },
+    styles:              { fontSize: 9, cellPadding: 3 },
+    columnStyles: { 0: { cellWidth: 24 }, 2: { cellWidth: 22 }, 3: { cellWidth: 26 } },
+  })
+
+  const totalKm   = entries.reduce((acc, e) => acc + Number(e.kilometres ?? 0), 0)
+  const totalCout = entries.filter(e => e.cout_calcule).reduce((acc, e) => acc + Number(e.cout_calcule), 0)
+
+  const finalY = doc.lastAutoTable.finalY + 10
+  doc.setFontSize(10)
+  doc.setTextColor(0, 0, 0)
+  const kmStr   = totalKm.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })
+  const coutStr = totalCout > 0
+    ? totalCout.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
+    : '—'
+  doc.text(
+    `Total : ${kmStr} km — Coût estimé : ${coutStr} — ${entries.length} déplacement${entries.length !== 1 ? 's' : ''}`,
+    14, finalY,
+  )
+
+  const safeCat  = toSafeFilename(catLabel)
+  const safeDate = new Date().toISOString().slice(0, 10)
+  doc.save('deplacements-' + safeCat + '-' + safeDate + '.pdf')
+}

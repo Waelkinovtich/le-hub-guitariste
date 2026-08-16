@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Car, Plus, Trash2, Loader2, AlertCircle, Check, Pencil, ChevronDown, Navigation, Users, Info, X } from 'lucide-react'
+import { Car, Plus, Trash2, Loader2, AlertCircle, Check, Pencil, ChevronDown, Navigation, Users, Info, X, FileDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { fetchMileageRates } from '../services/mileageRates'
 import { fetchTeacherSchools } from '../services/schools'
 import { usePeriod, filterLessonsByPeriod } from '../context/PeriodContext'
+import { exportTravelPDF } from '../utils/exportPDF'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -188,9 +189,11 @@ export default function TravelPage() {
   const [schools,  setSchools]  = useState([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState('')
-  const [showForm, setShowForm] = useState(false)
-  const [editing,  setEditing]  = useState(null)
-  const [deleting, setDeleting] = useState(null)
+  const [showForm,       setShowForm]       = useState(false)
+  const [editing,        setEditing]        = useState(null)
+  const [deleting,       setDeleting]       = useState(null)
+  // null = toutes catégories, sinon valeur de CATEGORIES.value
+  const [activeCategory, setActiveCategory] = useState(null)
 
   const schoolMap = useMemo(() => Object.fromEntries(schools.map(s => [s.id, s.name])), [schools])
 
@@ -219,10 +222,16 @@ export default function TravelPage() {
     })
   }, [entries, period])
 
+  // Deuxième passe de filtrage : par catégorie (pour l'affichage et l'export fiscal)
+  const displayedEntries = useMemo(() => {
+    if (!activeCategory) return filteredEntries
+    return filteredEntries.filter(e => e.category === activeCategory)
+  }, [filteredEntries, activeCategory])
+
   const totaux = useMemo(() => ({
-    km:   filteredEntries.reduce((acc, e) => acc + parseFloat(e.kilometres ?? 0), 0),
-    cout: filteredEntries.filter(e => e.cout_calcule).reduce((acc, e) => acc + parseFloat(e.cout_calcule ?? 0), 0),
-  }), [filteredEntries])
+    km:   displayedEntries.reduce((acc, e) => acc + parseFloat(e.kilometres ?? 0), 0),
+    cout: displayedEntries.filter(e => e.cout_calcule).reduce((acc, e) => acc + parseFloat(e.cout_calcule ?? 0), 0),
+  }), [displayedEntries])
 
   const handleSaved = (entry) => {
     setEntries(prev => {
@@ -246,6 +255,23 @@ export default function TravelPage() {
   const catLabel = (cat) => CATEGORIES.find(c => c.value === cat)?.label ?? cat
   const catIcon  = (cat) => CATEGORIES.find(c => c.value === cat)?.icon ?? '📍'
 
+  const handleExportPDF = () => {
+    // Libellé humain de la période à partir de mode + value (period.label n'existe pas)
+    let periodLabel = 'Toutes périodes'
+    if (period.mode === 'annee_scolaire' && period.value) periodLabel = `Année scolaire ${period.value}`
+    else if (period.mode === 'annee_civile' && period.value) periodLabel = `Année ${period.value}`
+    else if (period.mode === 'plage_personnalisee' && period.value?.from) {
+      periodLabel = `Du ${period.value.from} au ${period.value.to ?? '…'}`
+    }
+    exportTravelPDF({
+      entries:      displayedEntries,
+      category:     activeCategory,
+      periodLabel,
+      teacherName:  user?.name ?? user?.email ?? '',
+      teacherEmail: user?.email ?? '',
+    })
+  }
+
   return (
     <div className="p-6 max-w-2xl">
       <div className="mb-8">
@@ -255,26 +281,65 @@ export default function TravelPage() {
         </p>
       </div>
 
-      {/* ── Bandeau totaux ── */}
-      <div className="glass-panel rounded-2xl p-4 mb-6 flex items-center gap-6">
-        <div className="flex-1">
+      {/* ── Filtres catégorie ── */}
+      <div className="flex flex-wrap items-center gap-1.5 mb-4">
+        <button
+          type="button"
+          onClick={() => setActiveCategory(null)}
+          className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-all ${
+            !activeCategory
+              ? 'border-guitar-600/40 bg-guitar-600/15 text-guitar-400'
+              : 'border-border-subtle bg-surface text-muted-foreground hover:border-border hover:text-foreground'
+          }`}
+        >
+          Tous
+        </button>
+        {CATEGORIES.map(c => (
+          <button
+            key={c.value}
+            type="button"
+            onClick={() => setActiveCategory(prev => prev === c.value ? null : c.value)}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-all ${
+              activeCategory === c.value
+                ? 'border-guitar-600/40 bg-guitar-600/15 text-guitar-400'
+                : 'border-border-subtle bg-surface text-muted-foreground hover:border-border hover:text-foreground'
+            }`}
+          >
+            {c.icon} {c.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Bandeau totaux + export ── */}
+      <div className="glass-panel rounded-2xl p-4 mb-6 flex items-center gap-4 flex-wrap">
+        <div className="flex-1 min-w-0">
           <p className="text-xs text-muted-foreground mb-0.5">Kilométrage</p>
           <p className="text-xl font-semibold">
             {totaux.km.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })} km
           </p>
         </div>
-        <div className="w-px h-10 bg-border-subtle" />
-        <div className="flex-1">
+        <div className="w-px h-10 bg-border-subtle hidden sm:block" />
+        <div className="flex-1 min-w-0">
           <p className="text-xs text-muted-foreground mb-0.5">Coût estimé</p>
           <p className="text-xl font-semibold">
             {totaux.cout > 0 ? fmt(totaux.cout, '€') : '—'}
           </p>
         </div>
-        <div className="w-px h-10 bg-border-subtle" />
-        <div className="flex-1">
+        <div className="w-px h-10 bg-border-subtle hidden sm:block" />
+        <div className="flex-1 min-w-0">
           <p className="text-xs text-muted-foreground mb-0.5">Entrées</p>
-          <p className="text-xl font-semibold">{filteredEntries.length}</p>
+          <p className="text-xl font-semibold">{displayedEntries.length}</p>
         </div>
+        <button
+          type="button"
+          onClick={handleExportPDF}
+          disabled={displayedEntries.length === 0}
+          className="shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-all disabled:opacity-40"
+          title="Exporter en PDF (usage fiscal)"
+        >
+          <FileDown className="w-3.5 h-3.5" />
+          Exporter PDF
+        </button>
       </div>
 
       {/* ── Formulaire d'ajout ── */}
@@ -309,15 +374,17 @@ export default function TravelPage() {
         <div className="text-sm text-guitar-400 bg-guitar-600/10 border border-guitar-600/20 rounded-xl px-4 py-3 flex items-center gap-2">
           <AlertCircle className="w-4 h-4 shrink-0" />{error}
         </div>
-      ) : filteredEntries.length === 0 ? (
+      ) : displayedEntries.length === 0 ? (
         <div className="glass-panel rounded-2xl p-8 text-center">
           <Car className="w-10 h-10 text-muted mx-auto mb-3 opacity-50" />
-          <p className="text-sm text-muted-foreground">Aucun déplacement enregistré sur cette période.</p>
+          <p className="text-sm text-muted-foreground">
+            {activeCategory ? 'Aucun déplacement dans cette catégorie sur cette période.' : 'Aucun déplacement enregistré sur cette période.'}
+          </p>
           <p className="text-xs text-muted mt-1">Utilisez le bouton ci-dessus pour saisir votre premier trajet.</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {filteredEntries.map(entry => (
+          {displayedEntries.map(entry => (
             editing?.id === entry.id ? (
               <div key={entry.id} className="glass-panel rounded-2xl p-5">
                 <div className="flex items-center justify-between mb-4">
