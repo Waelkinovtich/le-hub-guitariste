@@ -98,9 +98,10 @@ export default function ÉmargementPage() {
       lessons,
       school: filterSchool || 'Tous',
       period: range.label,
-      teacherName: user.name,
-      teacherPhone: user.phone,
-      teacherEmail: user.email,
+      teacherName:    user.name,
+      teacherAddress: user.address,
+      teacherPhone:   user.phone,
+      teacherEmail:   user.email,
     })
   }
 

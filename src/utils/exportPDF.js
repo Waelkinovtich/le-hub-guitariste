@@ -66,14 +66,15 @@ function drawProfessionalHeader(doc, { teacherName, teacherPhone, teacherAddress
   return titleY
 }
 
-export function exportÉmargementPDF({ lessons, school, period, teacherName, teacherPhone, teacherEmail }) {
+export function exportÉmargementPDF({ lessons, school, period, teacherName, teacherAddress, teacherPhone, teacherEmail }) {
   const doc = new jsPDF()
 
   let y = drawProfessionalHeader(doc, {
     teacherName,
+    teacherAddress,
     teacherPhone,
     teacherEmail,
-    documentTitle: 'Feuille d’émargement',
+        documentTitle: "Feuille d’émargement",
   })
   y += 10
 
@@ -131,11 +132,12 @@ export function exportÉmargementPDF({ lessons, school, period, teacherName, tea
  * @param {string} teacherPhone - Téléphone du professeur (facultatif)
  * @param {string} teacherEmail - Email du professeur (facultatif)
  */
-export function exportEventRoutePDF({ event, participants, teacherName, teacherPhone, teacherEmail }) {
+export function exportEventRoutePDF({ event, participants, teacherName, teacherAddress, teacherPhone, teacherEmail }) {
   const doc = new jsPDF()
 
   let y = drawProfessionalHeader(doc, {
     teacherName,
+    teacherAddress,
     teacherPhone,
     teacherEmail,
     documentTitle: 'Feuille de route',

@@ -8,6 +8,7 @@ import { RotateCcw, CalendarDays, Search, Check, Loader2, AlertCircle, Star, X }
 import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
 import { supabase } from '../../lib/supabase'
 import { computeProposals } from '../../utils/scoringCreneaux'
+import AideContextuelle from '../../components/AideContextuelle'
 
 // ─── Helpers d'affichage ──────────────────────────────────────────────────────
 
@@ -381,6 +382,9 @@ export default function RattrapagePage() {
           </div>
         </div>
       </header>
+
+      <AideContextuelle texte="Cette page liste les cours que vous avez annulés et qui n'ont pas encore été rattrapés. Ils remontent automatiquement depuis votre Émargement. Sélectionnez un cours et proposez un créneau libre : une fois confirmé, le rattrapage s'ajoute à votre planning comme un cours habituel." />
+
 
       {periodCtx.mode !== 'toutes' && (
         <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/20 text-xs text-guitar-400">

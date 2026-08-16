@@ -17,6 +17,7 @@ import {
   fetchTeacherStudents, addStudentContext,
 } from '../services/students'
 import AddStudentModal from '../components/AddStudentModal'
+import AideContextuelle from '../components/AideContextuelle'
 import PhoneActions from '../components/PhoneActions'
 import EmailActions from '../components/EmailActions'
 
@@ -647,6 +648,8 @@ export default function SchoolDetailPage() {
         <ArrowLeft className="w-4 h-4" />
         Retour aux écoles
       </button>
+
+      <AideContextuelle texte="Cette fiche centralise tout ce qui concerne cette structure : élèves rattachés, taux horaires, notes sur les locaux et l'ambiance. Les appréciations et le volume d'heures que vous renseignez ici alimentent le score de priorité utilisé dans le Simulateur et le Comparatif." />
 
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>

@@ -6,6 +6,7 @@ import { fetchMileageRates } from '../services/mileageRates'
 import { fetchTeacherSchools } from '../services/schools'
 import { usePeriod, filterLessonsByPeriod } from '../context/PeriodContext'
 import { exportTravelPDF } from '../utils/exportPDF'
+import AideContextuelle from '../components/AideContextuelle'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -282,6 +283,8 @@ export default function TravelPage() {
           Traçabilité fiscale de vos déplacements. Coût calculé selon le barème kilométrique URSSAF sélectionné.
         </p>
       </div>
+
+      <AideContextuelle texte="Consignez chaque déplacement professionnel — trajet vers une école, réunion de direction, déplacement exceptionnel. En fin d'année, exportez en PDF pour votre déclaration de frais réels. Les barèmes kilométriques (URSSAF 2025) sont modifiables dans Réglages → Taux kilométriques." />
 
       {/* ── Filtres catégorie ── */}
       <div className="flex flex-wrap items-center gap-1.5 mb-4">

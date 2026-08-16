@@ -9,6 +9,7 @@ import {
 } from '../../services/students'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
 import AddStudentModal from '../../components/AddStudentModal'
+import AideContextuelle from '../../components/AideContextuelle'
 import PhoneActions from '../../components/PhoneActions'
 import EmailActions from '../../components/EmailActions'
 import { getSchoolColor } from '../../utils/schoolColors'
@@ -117,6 +118,8 @@ export default function StudentDetailPage() {
         <ArrowLeft className="w-4 h-4" />
         Retour aux élèves
       </button>
+
+      <AideContextuelle texte="Retrouvez ici le profil complet de cet élève : coordonnées, école de rattachement et historique des cours. Si un cours apparaît annulé ou manqué, consultez la page Heures à rattraper pour proposer un nouveau créneau de rattrapage." />
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">

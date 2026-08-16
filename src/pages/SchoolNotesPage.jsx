@@ -680,9 +680,10 @@ function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
     exportEventRoutePDF({
       event: item,
       participants: participantDetails,
-      teacherName: user?.name,
-      teacherPhone: user?.phone,
-      teacherEmail: user?.email,
+      teacherName:    user?.name,
+      teacherAddress: user?.address,
+      teacherPhone:   user?.phone,
+      teacherEmail:   user?.email,
     })
   }
 

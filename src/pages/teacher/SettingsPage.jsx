@@ -7,6 +7,7 @@ import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Brie
 import { useTheme, THEMES } from '../../hooks/useTheme'
 import { fetchMileageRates, upsertMileageRate, deleteMileageRate, seedDefaultRates } from '../../services/mileageRates'
 import { DEFAULT_SCORE_WEIGHTS } from '../../services/schools'
+import AideContextuelle from '../../components/AideContextuelle'
 
 // Les 5 catégories du score pondéré (voir services/schools.js) — ordre d'affichage
 // des curseurs dans la section "Priorisation des écoles" ci-dessous.
@@ -383,6 +384,8 @@ export default function SettingsPage() {
         <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Réglages</h1>
         <p className="text-muted-foreground mt-1">Personnalisez votre espace professeur</p>
       </header>
+
+      <AideContextuelle texte="Les réglages influencent toute l'application : l'adresse du domicile sert aux calculs de distance vers les écoles, la fiche contact alimente les en-têtes de vos PDF, et les curseurs de pondération modifient le classement dans le Simulateur. Vous n'avez pas besoin de revenir ici souvent." />
 
       {/* ── Localisation ─────────────────────────────────────────────────────── */}
       <section className="glass-panel rounded-2xl p-6">
