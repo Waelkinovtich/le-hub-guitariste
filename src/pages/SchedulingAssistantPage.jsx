@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { Loader2, Star, CalendarDays, AlertCircle, Check, Brain, Clock, School } from 'lucide-react'
 import HelpTooltip from '../components/HelpTooltip'
 import { computeProposals } from '../utils/scoringCreneaux'
+import { currentSchoolYear } from '../services/schools'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -222,7 +223,11 @@ export default function SchedulingAssistantPage() {
     setConfirming(true)
     try {
       const groupId = crypto.randomUUID()
-      const endDate = '2027-06-30'
+      // Fin de l'année scolaire en cours (ex: '2026-2027' → '2027-06-30').
+      // Recalculé à chaque confirmation : si on est en été, bascule automatiquement
+      // sur l'année suivante sans modifier le code.
+      const [, endYear] = currentSchoolYear().split('-').map(Number)
+      const endDate = `${endYear}-06-30`
       const rows = []
       let current = new Date(proposal.candidateDate + 'T00:00:00')
       const end = new Date(endDate + 'T00:00:00')

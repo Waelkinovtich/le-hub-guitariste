@@ -3,8 +3,34 @@ import { createClient } from '@supabase/supabase-js'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const VERCEL_URL = 'https://le-hub-guitariste.vercel.app'
-const FROM_EMAIL = 'waelkens.f@gmail.com'
+// URL de base pour les liens de sondage envoyés par e-mail.
+// SITE_URL : variable d'environnement à définir dans Vercel → Settings → Environment Variables
+//   pour l'environnement Production (valeur : https://le-hub-guitariste.vercel.app).
+// VERCEL_URL : injecté automatiquement par Vercel sur chaque déploiement (sans protocole),
+//   utilisé en repli pour les branches preview et les déploiements hors-production.
+// Fallback local pour le développement.
+const VERCEL_URL = process.env.SITE_URL
+  || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+  || 'http://localhost:5173'
+
+// Adresse expéditrice — doit correspondre au compte Gmail lié à GMAIL_REFRESH_TOKEN.
+// Configurable via FROM_EMAIL dans les variables d'environnement Vercel si le compte change.
+const FROM_EMAIL = process.env.FROM_EMAIL || 'waelkens.f@gmail.com'
+
+// Nom affiché dans le pied de page des e-mails.
+// Configurable via TEACHER_NAME dans les variables d'environnement Vercel.
+const TEACHER_NAME = process.env.TEACHER_NAME || 'Florent Waelkens'
+
+// ─── Année scolaire ───────────────────────────────────────────────────────────
+
+// Dupliqué depuis services/schools.js (inaccessible depuis l'API Vercel) :
+// retourne 'YYYY-YYYY+1' selon que le mois courant est avant ou après août.
+function annéeScolaireCourante() {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = now.getMonth() + 1
+  return m >= 8 ? `${y}-${y + 1}` : `${y - 1}-${y}`
+}
 
 // ─── Templates ────────────────────────────────────────────────────────────────
 
@@ -13,37 +39,39 @@ const BASE_STYLE   = 'font-family:sans-serif;color:#1a1a1a;max-width:580px;margi
 const FOOTER_STYLE = 'margin-top:32px;padding-top:20px;border-top:1px solid #e5e5e5;font-size:13px;color:#666;'
 
 function templateReinscription(surveyUrl) {
+  const année = annéeScolaireCourante()
   return {
-    subject: 'Sondage de rentrée 2026-2027',
+    subject: `Sondage de rentrée ${année}`,
     html: `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"></head>
 <body><div style="${BASE_STYLE}">
   <p>Bonjour,</p>
-  <p>La rentrée 2026-2027 avance à grands pas&nbsp;! Pour préparer au mieux cette nouvelle année, merci de remplir le formulaire en cliquant sur le lien ci-dessous.</p>
+  <p>La rentrée ${année} avance à grands pas&nbsp;! Pour préparer au mieux cette nouvelle année, merci de remplir le formulaire en cliquant sur le lien ci-dessous.</p>
   <p>Il vous permettra de renseigner vos disponibilités et de mettre à jour vos informations.</p>
   <p><strong>Important&nbsp;:</strong> ce sondage ne vaut pas réinscription et ne garantit aucun créneau. Il me sert uniquement à établir un pré-planning. Je reviendrai vers vous pour confirmer votre créneau définitif.</p>
   <p>Merci de cocher un maximum de créneaux possibles — cela m'aidera à trouver la meilleure organisation pour tout le monde.</p>
   <p style="margin:28px 0;"><a href="${surveyUrl}" style="${BUTTON_STYLE}">Remplir le sondage →</a></p>
   <p style="font-size:13px;color:#666;">Ce lien est personnel et expire dans 30 jours. Ne le partagez pas.<br>
   Lien direct&nbsp;: <a href="${surveyUrl}" style="color:#dc2626;">${surveyUrl}</a></p>
-  <div style="${FOOTER_STYLE}"><p><strong>Florent Waelkens</strong><br>Professeur de guitare</p></div>
+  <div style="${FOOTER_STYLE}"><p><strong>${TEACHER_NAME}</strong><br>Professeur de guitare</p></div>
 </div></body></html>`,
   }
 }
 
 function templateNouvelEleve(surveyUrl) {
+  const année = annéeScolaireCourante()
   return {
-    subject: 'Bienvenue — Sondage de rentrée 2026-2027',
+    subject: `Bienvenue — Sondage de rentrée ${année}`,
     html: `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"></head>
 <body><div style="${BASE_STYLE}">
   <p>Bonjour,</p>
-  <p>Je suis Florent Waelkens, professeur de guitare. Vous vous êtes inscrit dans une des écoles où j'enseigne pour l'année 2026-2027.</p>
+  <p>Je suis ${TEACHER_NAME}, professeur de guitare. Vous vous êtes inscrit dans une des écoles où j'enseigne pour l'année ${année}.</p>
   <p>Afin de préparer au mieux cette rentrée, je vous invite à remplir ce formulaire en cliquant sur le lien ci-dessous. Il me permettra de recueillir vos disponibilités et vos informations de contact.</p>
   <p><strong>Important&nbsp;:</strong> ce sondage ne vaut pas inscription et ne garantit aucun créneau. Il me sert uniquement à établir un pré-planning. Je reviendrai vers vous pour confirmer votre créneau définitif.</p>
   <p>Merci de cocher un maximum de créneaux possibles — cela m'aidera à trouver la meilleure organisation pour tout le monde.</p>
   <p style="margin:28px 0;"><a href="${surveyUrl}" style="${BUTTON_STYLE}">Remplir le sondage →</a></p>
   <p style="font-size:13px;color:#666;">Ce lien est personnel et expire dans 30 jours. Ne le partagez pas.<br>
   Lien direct&nbsp;: <a href="${surveyUrl}" style="color:#dc2626;">${surveyUrl}</a></p>
-  <div style="${FOOTER_STYLE}"><p><strong>Florent Waelkens</strong><br>Professeur de guitare</p></div>
+  <div style="${FOOTER_STYLE}"><p><strong>${TEACHER_NAME}</strong><br>Professeur de guitare</p></div>
 </div></body></html>`,
   }
 }
@@ -60,7 +88,7 @@ function templateSondageRapide(surveyUrl, surveyTitle) {
   <p style="margin:28px 0;"><a href="${surveyUrl}" style="${BUTTON_STYLE}">Répondre au sondage →</a></p>
   <p style="font-size:13px;color:#666;">Ce lien est personnel. Ne le partagez pas.<br>
   Lien direct&nbsp;: <a href="${surveyUrl}" style="color:#dc2626;">${surveyUrl}</a></p>
-  <div style="${FOOTER_STYLE}"><p><strong>Florent Waelkens</strong><br>Professeur de guitare</p></div>
+  <div style="${FOOTER_STYLE}"><p><strong>${TEACHER_NAME}</strong><br>Professeur de guitare</p></div>
 </div></body></html>`,
   }
 }

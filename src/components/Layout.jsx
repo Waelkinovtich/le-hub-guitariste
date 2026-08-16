@@ -28,9 +28,12 @@ export default function Layout() {
   }
 
   return (
-    // overflow-x-hidden : empêche le scroll horizontal page-entière causé par la
-    // transition de largeur de la sidebar ou par du contenu à largeur minimale contrainte.
-    <div className="min-h-screen flex overflow-x-hidden">
+    // h-screen (et non min-h-screen) : borne le conteneur exactement à la hauteur du
+    // viewport. Sans cette contrainte, un contenu long fait grandir ce div au-delà du
+    // viewport → le body défile → position:sticky de la sidebar est cassé par le
+    // overflow:hidden de son wrapper. Avec h-screen, seul <main> défile, jamais le body.
+    // overflow-x-hidden : empêche le scroll horizontal causé par la transition de largeur.
+    <div className="h-screen flex overflow-x-hidden">
       {/* Wrapper sidebar : transition de largeur → slide vers la gauche */}
       <div
         style={{
