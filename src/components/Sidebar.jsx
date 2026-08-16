@@ -124,7 +124,7 @@ function EcolesDropdown() {
   )
 }
 
-function SondagesDropdown() {
+function SondagesDropdown({ badges = {} }) {
   const location = useLocation()
   const isActive = location.pathname.startsWith('/admin/sondages')
     || location.pathname.startsWith('/admin/envoyer')
@@ -142,7 +142,11 @@ function SondagesDropdown() {
         <div className="flex items-center gap-3">
           <FileText className="w-4 h-4 shrink-0" />Messages &amp; Sondages
         </div>
-        {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+        <div className="flex items-center gap-1.5">
+          {/* Badge global visible même dropdown fermé */}
+          {!open && badges.sondages > 0 && <NavBadge count={badges.sondages} />}
+          {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+        </div>
       </button>
       {open && (
         <div className="mt-1 ml-4 pl-3 border-l border-border-subtle space-y-0.5">
@@ -154,7 +158,10 @@ function SondagesDropdown() {
                    : 'text-muted-foreground hover:text-foreground hover:bg-surface-overlay')
               }
             >
-              <link.icon className="w-3.5 h-3.5 shrink-0" />{link.label}
+              <link.icon className="w-3.5 h-3.5 shrink-0" />
+              {link.label}
+              {/* Badge sur "Réponses" uniquement (lien vers SurveyResultsPage) */}
+              {link.to === '/admin/sondages' && <NavBadge count={badges.sondages} />}
             </NavLink>
           ))}
         </div>
@@ -239,9 +246,53 @@ function PlanningDropdown() {
   )
 }
 
+// ─── Compteurs de badges pour les éléments de navigation ─────────────────────
+
+// Requêtes COUNT uniquement (head:true → aucune ligne transférée).
+// RLS garantit que chaque professeur ne voit que ses propres données.
+function useBadges(userId) {
+  const [badges, setBadges] = useState({ sondages: 0, rattrapage: 0 })
+
+  useEffect(() => {
+    if (!userId) return
+    let cancelled = false
+    Promise.all([
+      supabase
+        .from('survey_responses')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'attente'),
+      supabase
+        .from('lessons')
+        .select('*', { count: 'exact', head: true })
+        .eq('teacher_id', userId)
+        .eq('status', 'annule_prof'),
+    ]).then(([sondResp, rattResp]) => {
+      if (cancelled) return
+      setBadges({
+        sondages:   sondResp.count  ?? 0,
+        rattrapage: rattResp.count  ?? 0,
+      })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [userId])
+
+  return badges
+}
+
+// Badge numérique affiché sur un item de nav
+function NavBadge({ count }) {
+  if (!count) return null
+  return (
+    <span className="ml-auto shrink-0 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-guitar-600 text-white text-[10px] font-bold px-1">
+      {count > 99 ? '99+' : count}
+    </span>
+  )
+}
+
 // ─── Sidebar enseignant avec drag-and-drop ────────────────────────────────────
 
 function TeacherNav({ userId }) {
+  const badges = useBadges(userId)
   const [orderedIds, setOrderedIds] = useState(DEFAULT_ORDER)
   const [draggingId, setDraggingId] = useState(null)
   const [dragOverId, setDragOverId] = useState(null)
@@ -429,11 +480,25 @@ function TeacherNav({ userId }) {
                 <GripVertical className="w-3 h-3 text-muted" />
               </div>
 
-              {item.type === 'link' && (
+              {item.type === 'link' && item.id === 'rattrapage' ? (
+                <NavLink
+                  to={item.to} end={item.end}
+                  className={({ isActive }) =>
+                    'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ' +
+                    (isActive
+                      ? 'bg-guitar-600/15 text-guitar-400 border border-guitar-600/25'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-surface-overlay')
+                  }
+                >
+                  <item.icon className="w-4 h-4 shrink-0" />
+                  {item.label}
+                  <NavBadge count={badges.rattrapage} />
+                </NavLink>
+              ) : item.type === 'link' ? (
                 <NavItem to={item.to} icon={item.icon} label={item.label} end={item.end} />
-              )}
+              ) : null}
               {item.id === 'ecoles' && <EcolesDropdown />}
-              {item.id === 'sondages' && <SondagesDropdown />}
+              {item.id === 'sondages' && <SondagesDropdown badges={badges} />}
               {item.id === 'planning' && <PlanningDropdown />}
               {item.id === 'objectifs' && <ObjectifsDropdown />}
             </div>

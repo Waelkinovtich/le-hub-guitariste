@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
   Plus, Loader2, Trash2, Pencil, Check, X, AlertCircle,
-  Euro, Clock, ChevronDown, ChevronUp,
+  Euro, Clock, ChevronDown, ChevronUp, FileDown,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { fetchTeacherSchools, currentSchoolYear } from '../services/schools'
@@ -9,6 +9,36 @@ import {
   fetchIncomeEntries, createIncomeEntry, updateIncomeEntry, deleteIncomeEntry,
 } from '../services/revenue'
 import HelpTooltip from '../components/HelpTooltip'
+
+// ─── Export CSV ───────────────────────────────────────────────────────────────
+
+// Encode les lignes en CSV RFC 4180 (séparateur ';', BOM UTF-8 pour Excel FR)
+// et déclenche le téléchargement dans le navigateur sans passer par un serveur.
+function téléchargerCSV(lignes, nomFichier) {
+  const csv = lignes
+    .map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';'))
+    .join('\n')
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = nomFichier
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function exporterCSVRevenus(entries) {
+  const entête = ['Date', 'Source', 'Montant (€)', 'Heures', 'Année scolaire', 'Notes']
+  const lignes = entries.map(e => [
+    e.entry_date,
+    e.school_name ?? e.label ?? 'Particulier CESU',
+    e.amount != null ? Number(e.amount).toFixed(2) : '',
+    e.hours != null && e.hours !== '' ? Number(e.hours).toFixed(2) : '',
+    e.school_year ?? '',
+    e.notes ?? '',
+  ])
+  téléchargerCSV([entête, ...lignes], `revenus-${new Date().toISOString().slice(0, 10)}.csv`)
+}
 
 // ─── Utilitaires ──────────────────────────────────────────────────────────────
 
@@ -325,14 +355,25 @@ export default function RevenueTrackingPage() {
           </div>
           <p className="text-muted-foreground mt-1">Revenus et heures par école ou employeur, sans facturation (CESU+)</p>
         </div>
-        {!showForm && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => { setEditingEntry(null); setShowForm(true) }}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium shrink-0"
+            type="button"
+            onClick={() => exporterCSVRevenus(sorted)}
+            disabled={entries.length === 0}
+            title="Exporter l'historique en CSV (Excel compatible)"
+            className="inline-flex items-center gap-2 px-3 py-2.5 rounded-xl border border-border-subtle text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-all disabled:opacity-40"
           >
-            <Plus className="w-4 h-4" />Ajouter une entrée
+            <FileDown className="w-4 h-4" />CSV
           </button>
-        )}
+          {!showForm && (
+            <button
+              onClick={() => { setEditingEntry(null); setShowForm(true) }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium shrink-0"
+            >
+              <Plus className="w-4 h-4" />Ajouter une entrée
+            </button>
+          )}
+        </div>
       </header>
 
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart2, Target, Loader2, AlertCircle, Star, Clock, Euro, TrendingUp, Info, ChevronDown } from 'lucide-react'
+import { BarChart2, Target, AlertCircle, Star, Clock, Euro, TrendingUp, Info, ChevronDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'

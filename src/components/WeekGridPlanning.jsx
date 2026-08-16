@@ -1,5 +1,5 @@
 import { useRef, useState, useMemo, useCallback, useEffect } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Trash2, Copy } from 'lucide-react'
 import { updateLesson } from '../services/lessons'
 import { getSchoolColor } from '../utils/schoolColors'
 import DeleteLessonModal from './DeleteLessonModal'
@@ -62,7 +62,7 @@ function hasOverlap(lessonsByDay, excludeId, targetDay, targetStart, slotCount) 
  *   onNewLesson({ lessonDate, lessonTime, durationMinutes })
  *   onSelectLesson(lesson)
  */
-export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSelectLesson }) {
+export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSelectLesson, onDuplicate }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -433,8 +433,10 @@ export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSel
                         )}
                       </div>
 
-                      {/* Suppression rapide — visible au survol, n'interfère pas avec le
-                          drag ni l'ouverture de l'édition (propagation stoppée avant la carte) */}
+                      {/* Actions rapides (survol/focus) — propagation stoppée pour ne pas
+                          déclencher le drag ni l'ouverture de l'édition */}
+
+                      {/* Suppression */}
                       <button
                         type="button"
                         aria-label="Supprimer ce cours"
@@ -443,10 +445,26 @@ export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSel
                         onClick={(e) => { e.stopPropagation(); setDeleteLessonItem(lesson) }}
                         className="absolute top-0 right-0 z-20 p-0.5 rounded-bl-md bg-void/50 text-white/80
                                    opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity
-                                   focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400 rounded-bl-md"
+                                   focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
                       >
                         <Trash2 className="w-3 h-3" />
                       </button>
+
+                      {/* Duplication — pré-remplit élève/durée/sujet, date à préciser */}
+                      {onDuplicate && (
+                        <button
+                          type="button"
+                          aria-label="Dupliquer ce cours"
+                          title="Dupliquer ce cours (élève et durée pré-remplis)"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); onDuplicate(lesson) }}
+                          className="absolute bottom-0 right-0 z-20 p-0.5 rounded-tl-md bg-void/50 text-white/80
+                                     opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity
+                                     focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
                   )
                 })}

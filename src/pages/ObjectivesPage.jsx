@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Target, Euro, Clock, Car, Fuel, Save, Loader2, Check, AlertCircle, ChevronDown } from 'lucide-react'
+import { Euro, Clock, Car, Save, Loader2, Check, AlertCircle, ChevronDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'

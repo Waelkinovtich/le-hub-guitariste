@@ -68,7 +68,13 @@ export default function StudentsPage() {
         const contextMatch = s.contexts.some((c) => c.context_type === ctxType)
         if (!primaryMatch && !contextMatch) return false
       }
-      if (filterSchool && s.schoolName !== filterSchool) return false
+      if (filterSchool) {
+        // Vérifie aussi les contextes : un élève multi-casquette peut être rattaché à
+        // une école uniquement via student_contexts (lessonType principal ≠ 'ecole').
+        const primaryMatch = s.schoolName === filterSchool
+        const contextMatch = s.contexts.some((c) => c.school_name === filterSchool)
+        if (!primaryMatch && !contextMatch) return false
+      }
       if (filterAge) {
         const group = AGE_GROUPS.find((g) => g.value === filterAge)
         if (group) {

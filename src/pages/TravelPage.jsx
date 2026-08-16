@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Car, Plus, Trash2, Loader2, AlertCircle, Check, Pencil, ChevronDown, Navigation, Users, Info, X, FileDown } from 'lucide-react'
+import { Car, Plus, Trash2, Loader2, AlertCircle, Check, Pencil, ChevronDown, Info, X, FileDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { fetchMileageRates } from '../services/mileageRates'
@@ -17,6 +17,20 @@ const CATEGORIES = [
 ]
 
 const inputCls = 'w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600 transition-colors'
+
+// Encode les lignes en CSV RFC 4180 (séparateur ';', BOM UTF-8 pour Excel FR)
+function téléchargerCSV(lignes, nomFichier) {
+  const csv = lignes
+    .map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';'))
+    .join('\n')
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = nomFichier
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 function fmt(v, suffix = '') {
   if (v == null || isNaN(v)) return '—'
@@ -336,16 +350,40 @@ export default function TravelPage() {
           <p className="text-xs text-muted-foreground mb-0.5">Entrées</p>
           <p className="text-xl font-semibold">{displayedEntries.length}</p>
         </div>
-        <button
-          type="button"
-          onClick={handleExportPDF}
-          disabled={displayedEntries.length === 0}
-          className="shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-all disabled:opacity-40"
-          title="Exporter en PDF (usage fiscal)"
-        >
-          <FileDown className="w-3.5 h-3.5" />
-          Exporter PDF
-        </button>
+        <div className="flex gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              const entête = ['Date', 'Motif', 'Catégorie', 'École', 'Kilomètres', 'Coût (€)', 'Notes']
+              const lignes = displayedEntries.map(e => [
+                e.date,
+                e.motif,
+                catLabel(e.category),
+                e.school_id && schoolMap[e.school_id] ? schoolMap[e.school_id] : '',
+                e.kilometres != null ? Number(e.kilometres).toFixed(1) : '',
+                e.cout_calcule != null ? Number(e.cout_calcule).toFixed(2) : '',
+                e.notes ?? '',
+              ])
+              téléchargerCSV([entête, ...lignes], `déplacements-${new Date().toISOString().slice(0, 10)}.csv`)
+            }}
+            disabled={displayedEntries.length === 0}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-all disabled:opacity-40"
+            title="Exporter en CSV (compatible Excel)"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            CSV
+          </button>
+          <button
+            type="button"
+            onClick={handleExportPDF}
+            disabled={displayedEntries.length === 0}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-all disabled:opacity-40"
+            title="Exporter en PDF (usage fiscal)"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            PDF
+          </button>
+        </div>
       </div>
 
       {/* ── Formulaire d'ajout ── */}

@@ -39,7 +39,9 @@ export default function PlanningPage() {
   const [statusLesson, setStatusLesson] = useState(null)
   const [deleteLessonItem, setDeleteLessonItem] = useState(null)
   const [showIcsPanel, setShowIcsPanel] = useState(false)
-  const [newLessonDraft, setNewLessonDraft] = useState(null)
+  const [newLessonDraft, setNewLessonDraft]     = useState(null)
+  // Cours à dupliquer : pré-remplit élève/durée/sujet, date/heure laissés vides
+  const [duplicateDraft, setDuplicateDraft]     = useState(null)
   const [hideEnvisages, setHideEnvisages] = useState(false)
   const [togglingId, setTogglingId] = useState(null)
   // Coordonnées GPS des écoles indexées par nom (pour les boutons de navigation)
@@ -300,6 +302,13 @@ export default function PlanningPage() {
           lessons={displayedLessons}
           onNewLesson={(draft) => setNewLessonDraft(draft)}
           onSelectLesson={(lesson) => setEditLesson(lesson)}
+          onDuplicate={(lesson) => setDuplicateDraft({
+            studentId:       lesson.studentId,
+            durationMinutes: lesson.durationMinutes,
+            topic:           lesson.topic ?? '',
+            // lessonDate et lessonTime volontairement absents : l'utilisateur
+            // choisit lui-même la nouvelle date dans la modale.
+          })}
         />
       )}
       {view === 'semaine' && loading && <LoadingBlock label="Chargement du planning" />}
@@ -419,8 +428,9 @@ export default function PlanningPage() {
       ) : null}
 
       {showAddForm && <AddLessonModal teacherId={user.id} onClose={() => setShowAddForm(false)} onCreated={() => reload()} />}
-      {newLessonDraft && <AddLessonModal teacherId={user.id} lesson={newLessonDraft} onClose={() => setNewLessonDraft(null)} onCreated={() => { reload(); setNewLessonDraft(null) }} />}
-      {editLesson && <AddLessonModal teacherId={user.id} lesson={editLesson} onClose={() => setEditLesson(null)} onCreated={() => { reload(); setEditLesson(null) }} />}
+      {newLessonDraft  && <AddLessonModal teacherId={user.id} lesson={newLessonDraft}  onClose={() => setNewLessonDraft(null)}  onCreated={() => { reload(); setNewLessonDraft(null) }} />}
+      {duplicateDraft  && <AddLessonModal teacherId={user.id} lesson={duplicateDraft}  onClose={() => setDuplicateDraft(null)}  onCreated={() => { reload(); setDuplicateDraft(null) }} />}
+      {editLesson      && <AddLessonModal teacherId={user.id} lesson={editLesson}       onClose={() => setEditLesson(null)}      onCreated={() => { reload(); setEditLesson(null) }} />}
       {statusLesson && <LessonStatusModal lesson={statusLesson} onClose={() => setStatusLesson(null)} onUpdated={() => { reload(); setStatusLesson(null) }} />}
       {deleteLessonItem && <DeleteLessonModal lesson={deleteLessonItem} onClose={() => setDeleteLessonItem(null)} onDeleted={() => { reload(); setDeleteLessonItem(null) }} />}
     </div>

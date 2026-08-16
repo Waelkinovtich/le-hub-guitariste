@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Users, Mail, Plus, Trash2, CheckSquare, Square, Send, Loader2, Check, AlertCircle, School, UserCheck } from 'lucide-react'
+import { Users, Mail, Plus, Trash2, CheckSquare, Square, Send, Loader2, Check, AlertCircle, School, UserCheck, Bookmark, BookmarkPlus, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
@@ -59,15 +59,22 @@ export default function SendSurveyPage() {
   const [sending, setSending] = useState(false)
   const [sendResult, setSendResult] = useState(null)
 
+  // ── Préréglages destinataires ──────────────────────────────────────────────
+  const [presets, setPresets] = useState([])
+  const [savingPreset, setSavingPreset] = useState(false)
+  const [presetName, setPresetName] = useState('')
+  const [showPresetForm, setShowPresetForm] = useState(false)
+
   // ── Load students ──────────────────────────────────────────────────────────
 
   useEffect(() => {
     async function load() {
-      const { data } = await supabase
-        .from('students')
-        .select('id, first_name, last_name, email, school_name')
-        .order('last_name')
-      setStudents(data ?? [])
+      const [{ data: studentsData }, { data: presetsData }] = await Promise.all([
+        supabase.from('students').select('id, first_name, last_name, email, school_name').order('last_name'),
+        supabase.from('survey_recipient_presets').select('*').order('created_at', { ascending: true }),
+      ])
+      setStudents(studentsData ?? [])
+      setPresets(presetsData ?? [])
       setLoadingStudents(false)
     }
     load()
@@ -109,6 +116,47 @@ export default function SendSurveyPage() {
     setGeneratedLinks([])
     setSendResult(null)
     setGenError('')
+  }
+
+  // ── Préréglages ────────────────────────────────────────────────────────────
+
+  const appliquerPréréglage = (preset) => {
+    setMode(preset.mode)
+    setSelectedSchool(preset.school_name ?? null)
+    setManualSelected(new Set(preset.student_ids ?? []))
+    setNewEmails((preset.extra_emails ?? []).map(e => ({ email: e })))
+    setGeneratedLinks([])
+    setSendResult(null)
+    setGenError('')
+  }
+
+  const sauvegarderPréréglage = async () => {
+    if (!presetName.trim()) return
+    setSavingPreset(true)
+    const payload = {
+      teacher_id:   user.id,
+      name:         presetName.trim(),
+      mode,
+      school_name:  mode === 'ecole' ? selectedSchool : null,
+      student_ids:  mode === 'manuel' ? [...manualSelected] : null,
+      extra_emails: newEmails.map(e => e.email),
+    }
+    const { data, error } = await supabase
+      .from('survey_recipient_presets')
+      .insert(payload)
+      .select('*')
+      .single()
+    if (!error && data) {
+      setPresets(prev => [...prev, data])
+    }
+    setPresetName('')
+    setShowPresetForm(false)
+    setSavingPreset(false)
+  }
+
+  const supprimerPréréglage = async (id) => {
+    await supabase.from('survey_recipient_presets').delete().eq('id', id)
+    setPresets(prev => prev.filter(p => p.id !== id))
   }
 
   // ── Emails ad-hoc ──────────────────────────────────────────────────────────
@@ -214,6 +262,37 @@ export default function SendSurveyPage() {
         </p>
       </div>
 
+
+      {/* ── Préréglages de destinataires ── */}
+      {presets.length > 0 && (
+        <div className="glass-panel rounded-2xl p-4 mb-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Bookmark className="w-4 h-4 text-muted" />
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Préréglages enregistrés</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {presets.map(preset => (
+              <div key={preset.id} className="group flex items-center gap-1 pl-3 pr-1 py-1.5 rounded-xl border border-border-subtle bg-surface hover:border-guitar-600/30 transition-colors">
+                <button
+                  type="button"
+                  onClick={() => appliquerPréréglage(preset)}
+                  className="text-xs font-medium text-foreground hover:text-guitar-400 transition-colors"
+                >
+                  {preset.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => supprimerPréréglage(preset.id)}
+                  className="ml-1 p-0.5 rounded text-muted hover:text-guitar-400 opacity-0 group-hover:opacity-100 transition-all"
+                  title="Supprimer ce préréglage"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Sélecteur de mode ── */}
       <div className="glass-panel rounded-2xl p-5 mb-4">
@@ -437,6 +516,51 @@ export default function SendSurveyPage() {
           </div>
         )}
       </div>
+
+      {/* ── Enregistrer comme préréglage ── */}
+      {totalRecipients > 0 && (
+        <div className="mb-4">
+          {!showPresetForm ? (
+            <button
+              type="button"
+              onClick={() => setShowPresetForm(true)}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-guitar-400 transition-colors"
+            >
+              <BookmarkPlus className="w-3.5 h-3.5" />
+              Enregistrer cette sélection comme préréglage
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={presetName}
+                onChange={e => setPresetName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') sauvegarderPréréglage(); if (e.key === 'Escape') setShowPresetForm(false) }}
+                placeholder="Nom du préréglage (ex : École Sainte-Marie)"
+                maxLength={80}
+                autoFocus
+                className="flex-1 bg-surface border border-border-subtle rounded-xl px-3 py-2 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60 transition-colors"
+              />
+              <button
+                type="button"
+                onClick={sauvegarderPréréglage}
+                disabled={!presetName.trim() || savingPreset}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-guitar-600/40 bg-guitar-600/10 text-guitar-400 text-xs font-medium hover:bg-guitar-600/20 transition-colors disabled:opacity-40"
+              >
+                {savingPreset ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                Enregistrer
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowPresetForm(false); setPresetName('') }}
+                className="p-2 rounded-xl border border-border-subtle text-muted hover:text-foreground transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Récapitulatif + bouton générer ── */}
       {totalRecipients > 0 && (

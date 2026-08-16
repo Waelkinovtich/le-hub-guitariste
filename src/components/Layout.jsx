@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, Suspense } from 'react'
 import { Outlet } from 'react-router-dom'
 import { PanelLeft } from 'lucide-react'
 import Sidebar from './Sidebar'
+import { LoadingBlock } from './DataState'
 
 // Clé localStorage : persiste la préférence sans passer par la base de données
 const LS_KEY = 'sidebar_ouverte'
@@ -27,7 +28,9 @@ export default function Layout() {
   }
 
   return (
-    <div className="min-h-screen flex">
+    // overflow-x-hidden : empêche le scroll horizontal page-entière causé par la
+    // transition de largeur de la sidebar ou par du contenu à largeur minimale contrainte.
+    <div className="min-h-screen flex overflow-x-hidden">
       {/* Wrapper sidebar : transition de largeur → slide vers la gauche */}
       <div
         style={{
@@ -70,7 +73,13 @@ export default function Layout() {
 
       {/* Zone de contenu : occupe tout l'espace libéré par la sidebar */}
       <main className="flex-1 overflow-auto min-w-0">
-        <Outlet />
+        {/*
+          Suspense interne : la sidebar reste visible pendant le chargement
+          d'une page chargée en différé (React.lazy). Seul le contenu change.
+        */}
+        <Suspense fallback={<LoadingBlock />}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   )
