@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import { fetchTeacherSchools, createSchool, deleteSchool, currentSchoolYear, computePriorityScore, isScoreIncomplete, calculerRendementHoraireNetReel, calculerTauxNetEffectif } from '../services/schools'
 import { fetchContextCountsBySchool } from '../services/students'
 import { getSchoolColor } from '../utils/schoolColors'
-import AideContextuelle from '../components/AideContextuelle'
+import HelpTooltip from '../components/HelpTooltip'
 
 export default function SchoolsPage() {
   const navigate = useNavigate()
@@ -123,7 +123,10 @@ export default function SchoolsPage() {
     <div className="p-6 sm:p-8 max-w-2xl">
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Écoles et cours particuliers</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Écoles et cours particuliers</h1>
+            <HelpTooltip texte="Cliquez sur une fiche pour rattacher des élèves, mettre à jour les taux horaires ou noter les conditions de travail." />
+          </div>
           <p className="text-muted-foreground mt-1">Écoles de musique et familles en cours particulier (CESU)</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -145,11 +148,13 @@ export default function SchoolsPage() {
           </button>
         </div>
       </header>
-      <AideContextuelle texte="Chaque fiche représente une structure : école de musique ou employeur CESU (famille en cours particulier). Le score de priorité est calculé automatiquement depuis vos notes (locaux, ambiance, contrat...). Cliquez sur une fiche pour rattacher des élèves ou mettre à jour les taux horaires." />
 
       {/* Ajouter une école */}
       <div className="glass-panel rounded-2xl p-5 mb-6">
-        <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3">Ajouter une école ou un cours particulier</p>
+        <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+          Ajouter une école ou un cours particulier
+          <HelpTooltip texte="Le score de priorité est calculé automatiquement depuis vos notes (locaux, ambiance, contrat). Il alimente le Simulateur de répartition." position="right" />
+        </p>
         {/* Sélecteur de type */}
         <div className="flex gap-2 mb-3">
           {[

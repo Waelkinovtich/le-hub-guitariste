@@ -6,7 +6,7 @@ import { fetchMileageRates } from '../services/mileageRates'
 import { fetchTeacherSchools } from '../services/schools'
 import { usePeriod, filterLessonsByPeriod } from '../context/PeriodContext'
 import { exportTravelPDF } from '../utils/exportPDF'
-import AideContextuelle from '../components/AideContextuelle'
+import HelpTooltip from '../components/HelpTooltip'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -278,13 +278,14 @@ export default function TravelPage() {
   return (
     <div className="p-6 max-w-2xl">
       <div className="mb-8">
-        <h1 className="font-display text-3xl text-foreground mb-1">Déplacements professionnels</h1>
+        <div className="flex items-center gap-2 mb-1">
+          <h1 className="font-display text-3xl text-foreground">Déplacements professionnels</h1>
+          <HelpTooltip texte="Consignez chaque trajet professionnel — école, réunion, déplacement exceptionnel. En fin d'année, exportez en PDF pour votre déclaration de frais réels." />
+        </div>
         <p className="text-sm text-muted-foreground">
           Traçabilité fiscale de vos déplacements. Coût calculé selon le barème kilométrique URSSAF sélectionné.
         </p>
       </div>
-
-      <AideContextuelle texte="Consignez chaque déplacement professionnel — trajet vers une école, réunion de direction, déplacement exceptionnel. En fin d'année, exportez en PDF pour votre déclaration de frais réels. Les barèmes kilométriques (URSSAF 2025) sont modifiables dans Réglages → Taux kilométriques." />
 
       {/* ── Filtres catégorie ── */}
       <div className="flex flex-wrap items-center gap-1.5 mb-4">
@@ -350,7 +351,10 @@ export default function TravelPage() {
       {/* ── Formulaire d'ajout ── */}
       {showForm && !editing && (
         <div className="glass-panel rounded-2xl p-5 mb-6">
-          <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-4">Nouveau déplacement</p>
+          <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-4 flex items-center gap-1.5">
+            Nouveau déplacement
+            <HelpTooltip texte="Le coût est calculé automatiquement depuis le barème kilométrique configuré dans Réglages → Taux kilométriques." position="right" />
+          </p>
           <EntryForm
             schools={schools} rates={rates} teacherId={user.id}
             onSaved={handleSaved}

@@ -4,7 +4,7 @@ import { downloadIcs } from '../../utils/icsExport'
 import { currentSchoolYear } from '../../services/schools'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
 import { useAuth } from '../../context/AuthContext'
-import AideContextuelle from '../../components/AideContextuelle'
+import HelpTooltip from '../../components/HelpTooltip'
 import { useFetch } from '../../hooks/useFetch'
 import { fetchLessonsInRange, updateLessonPlanningStatus } from '../../services/lessons'
 import { fetchTeacherSchools } from '../../services/schools'
@@ -184,7 +184,10 @@ export default function PlanningPage() {
     <div className="p-6 sm:p-8 max-w-7xl">
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Planning</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Planning</h1>
+            <HelpTooltip texte="Un cours peut être envisagé (à confirmer), réalisé, annulé ou rattrapé. Cliquez dessus pour modifier son statut ou l'éditer. Les cours envisagés peuvent être masqués pour n'afficher que le planning ferme." />
+          </div>
           <p className="text-muted-foreground mt-1">{headerLabel}</p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -211,11 +214,13 @@ export default function PlanningPage() {
           </button>
         </div>
       </header>
-      <AideContextuelle texte="Le planning affiche vos cours semaine par semaine. Un cours peut être « envisagé » (créneau à confirmer), « réalisé », « annulé » ou « rattrapé ». Cliquez sur un cours pour mettre à jour son statut ou l'éditer. Les cours envisagés peuvent être masqués pour ne voir que le planning ferme." />
 
       {showIcsPanel && (
         <div className="glass-panel rounded-2xl p-4 mb-4">
-          <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3">Exporter mon planning (.ics)</p>
+          <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+            Exporter mon planning (.ics)
+            <HelpTooltip texte="Abonnez-vous depuis Google Calendar ou Apple Calendrier : vos cours se mettent à jour automatiquement dans votre agenda. Le lien est privé — ne le partagez pas." position="right" />
+          </p>
           <p className="text-xs text-muted-foreground mb-3">
             Génère un fichier importable directement dans Calendrier (macOS/iOS) par double-clic. Les cours annulés sont inclus.
           </p>

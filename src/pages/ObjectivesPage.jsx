@@ -2,21 +2,24 @@ import { useState, useEffect } from 'react'
 import { Target, Euro, Clock, Car, Fuel, Save, Loader2, Check, AlertCircle, ChevronDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import AideContextuelle from '../components/AideContextuelle'
+import HelpTooltip from '../components/HelpTooltip'
 import { currentSchoolYear, allSchoolYears } from '../context/PeriodContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const inputCls = 'w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600 transition-colors'
 
-function SectionHeader({ icon: Icon, title, subtitle }) {
+function SectionHeader({ icon: Icon, title, subtitle, help }) {
   return (
     <div className="flex items-start gap-3 mb-5">
       <div className="w-9 h-9 rounded-xl bg-surface-overlay border border-border flex items-center justify-center flex-shrink-0">
         <Icon className="w-4 h-4 text-muted" />
       </div>
       <div>
-        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+          {help && <HelpTooltip texte={help} position="right" />}
+        </div>
         {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
       </div>
     </div>
@@ -126,13 +129,15 @@ export default function ObjectivesPage() {
   return (
     <div className="p-6 max-w-xl">
       <div className="mb-8">
-        <h1 className="font-display text-3xl text-foreground mb-1">Objectifs</h1>
+        <div className="flex items-center gap-2 mb-1">
+          <h1 className="font-display text-3xl text-foreground">Objectifs</h1>
+          <HelpTooltip texte="Revenu cible et plafond horaire sont combinés dans le Simulateur pour calculer combien d'heures allouer à chaque école." />
+        </div>
         <p className="text-sm text-muted-foreground">
           Définissez vos cibles financières et vos contraintes de temps par année scolaire.
           Ces données alimentent le simulateur de répartition d'heures.
         </p>
       </div>
-      <AideContextuelle texte="Définissez ici votre revenu mensuel cible et votre plafond d'heures par semaine. Ces chiffres alimentent directement le Simulateur de répartition, qui calcule combien d'heures allouer à chaque école pour atteindre vos objectifs." />
 
 
       {/* ── Sélecteur d'année ── */}
@@ -167,6 +172,7 @@ export default function ObjectivesPage() {
               icon={Euro}
               title="Revenu cible"
               subtitle="Montant net mensuel que vous souhaitez atteindre."
+              help="Toutes sources confondues : écoles + cours particuliers CESU. Le Simulateur calcule combien d'heures allouer à chaque école pour atteindre ce montant."
             />
             <div className="space-y-4">
               <Field label="Revenu mensuel net cible" hint="€">
@@ -210,6 +216,7 @@ export default function ObjectivesPage() {
               icon={Car}
               title="Budget déplacements"
               subtitle="Vos contraintes de kilométrage et de carburant chaque mois."
+              help="Estimé depuis votre kilométrage mensuel moyen et le barème URSSAF. Configurez les taux dans Réglages → Taux kilométriques."
             />
             <div className="space-y-4">
               <Field label="Kilométrage mensuel maximum" hint="km">

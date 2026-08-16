@@ -8,6 +8,7 @@ import { fetchTeacherSchools, currentSchoolYear } from '../services/schools'
 import {
   fetchIncomeEntries, createIncomeEntry, updateIncomeEntry, deleteIncomeEntry,
 } from '../services/revenue'
+import HelpTooltip from '../components/HelpTooltip'
 
 // ─── Utilitaires ──────────────────────────────────────────────────────────────
 
@@ -318,7 +319,10 @@ export default function RevenueTrackingPage() {
     <div className="p-6 sm:p-8 max-w-5xl space-y-6">
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Suivi des revenus</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Suivi des revenus</h1>
+            <HelpTooltip texte="Saisissez ici les virements reçus de chaque école ou employeur CESU. Ces entrées sont manuelles — elles ne sont pas calculées automatiquement depuis le planning." />
+          </div>
           <p className="text-muted-foreground mt-1">Revenus et heures par école ou employeur, sans facturation (CESU+)</p>
         </div>
         {!showForm && (
@@ -331,7 +335,6 @@ export default function RevenueTrackingPage() {
         )}
       </header>
 
-      <AideContextuelle texte="Saisissez ici les virements reçus de chaque école ou employeur CESU. Ces entrées manuelles constituent votre registre de revenus : elles ne sont pas calculées automatiquement depuis le planning. Les employeurs CESU sont identifiés par un badge dans le tableau de répartition." />
 
       {/* Formulaire */}
       {showForm && (
@@ -402,7 +405,10 @@ export default function RevenueTrackingPage() {
       {/* Répartition par école */}
       {entries.length > 0 && (
         <div>
-          <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3">Répartition par école / source</p>
+          <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+            Répartition par école / source
+            <HelpTooltip texte="Les employeurs CESU (cours particuliers en famille) sont marqués d'un badge pour les distinguer des écoles de musique." position="right" />
+          </p>
           <BreakdownTable entries={entries} />
         </div>
       )}

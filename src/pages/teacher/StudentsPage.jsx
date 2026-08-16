@@ -5,7 +5,7 @@ import { usePeriod, filterStudentsByPeriod } from '../../context/PeriodContext'
 import AddStudentModal from '../../components/AddStudentModal'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
 import { useAuth } from '../../context/AuthContext'
-import AideContextuelle from '../../components/AideContextuelle'
+import HelpTooltip from '../../components/HelpTooltip'
 import { useFetch } from '../../hooks/useFetch'
 import { fetchTeacherStudents, fetchSchoolNames, fetchAllContextsByStudent } from '../../services/students'
 import { fetchUpcomingLessons, buildNextLessonByStudent, formatNextLessonLabel } from '../../services/lessons'
@@ -90,7 +90,10 @@ export default function StudentsPage() {
     <div className="p-6 sm:p-8 max-w-7xl">
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Élèves</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Élèves</h1>
+            <HelpTooltip texte="Cliquez sur une fiche pour voir l'historique de cours et le prochain cours prévu. Un élève peut cumuler deux contextes en parallèle : école de musique et cours particulier CESU." />
+          </div>
           <p className="text-muted-foreground mt-1">{filtered.length} / {rows.length} élève{rows.length !== 1 ? 's' : ''}</p>
         </div>
         <button type="button" onClick={() => setShowAddForm(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity">
@@ -98,7 +101,6 @@ export default function StudentsPage() {
           Ajouter un élève
         </button>
       </header>
-      <AideContextuelle texte="Vos élèves sont listés ici. Cliquez sur une fiche pour voir l'historique de cours, les contextes (école de musique, CESU) et le prochain cours prévu. Un élève peut avoir plusieurs casquettes : école ET cours particulier CESU, reflétant la réalité de votre activité." />
 
       <div className="flex flex-col sm:flex-row flex-wrap gap-3 mb-6">
         <div className="relative flex-1 min-w-48">

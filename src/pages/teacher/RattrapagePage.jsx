@@ -8,7 +8,7 @@ import { RotateCcw, CalendarDays, Search, Check, Loader2, AlertCircle, Star, X }
 import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
 import { supabase } from '../../lib/supabase'
 import { computeProposals } from '../../utils/scoringCreneaux'
-import AideContextuelle from '../../components/AideContextuelle'
+import HelpTooltip from '../../components/HelpTooltip'
 
 // ─── Helpers d'affichage ──────────────────────────────────────────────────────
 
@@ -377,13 +377,15 @@ export default function RattrapagePage() {
             <RotateCcw className="w-5 h-5 text-guitar-400" />
           </div>
           <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Heures à rattraper</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Heures à rattraper</h1>
+              <HelpTooltip texte="Cours annulés remontés automatiquement depuis l'Émargement. Sélectionnez-en un et proposez un créneau : le rattrapage s'ajoute au planning comme un cours normal." />
+            </div>
             <p className="text-muted-foreground mt-1">Cours annulés par le professeur</p>
           </div>
         </div>
       </header>
 
-      <AideContextuelle texte="Cette page liste les cours que vous avez annulés et qui n'ont pas encore été rattrapés. Ils remontent automatiquement depuis votre Émargement. Sélectionnez un cours et proposez un créneau libre : une fois confirmé, le rattrapage s'ajoute à votre planning comme un cours habituel." />
 
 
       {periodCtx.mode !== 'toutes' && (

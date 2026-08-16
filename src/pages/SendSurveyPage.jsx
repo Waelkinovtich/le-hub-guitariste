@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Users, Mail, Plus, Trash2, CheckSquare, Square, Send, Loader2, Check, AlertCircle, School, UserCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import AideContextuelle from '../components/AideContextuelle'
+import HelpTooltip from '../components/HelpTooltip'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -12,14 +12,17 @@ function isValidEmail(email) {
 
 // ─── Composants ───────────────────────────────────────────────────────────────
 
-function SectionHeader({ icon: Icon, title, subtitle }) {
+function SectionHeader({ icon: Icon, title, subtitle, help }) {
   return (
     <div className="flex items-start gap-3 mb-4">
       <div className="w-9 h-9 rounded-xl bg-surface-overlay border border-border flex items-center justify-center flex-shrink-0">
         <Icon className="w-4 h-4 text-muted" />
       </div>
       <div>
-        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+          {help && <HelpTooltip texte={help} position="right" />}
+        </div>
         {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
       </div>
     </div>
@@ -202,12 +205,14 @@ export default function SendSurveyPage() {
   return (
     <div className="p-6 max-w-2xl">
       <div className="mb-8">
-        <h1 className="font-display text-3xl text-foreground mb-1">Envoyer le sondage</h1>
+        <div className="flex items-center gap-2 mb-1">
+          <h1 className="font-display text-3xl text-foreground">Envoyer le sondage</h1>
+          <HelpTooltip texte="Une fois les réponses reçues, allez dans Planning intelligent : l'application vous propose des créneaux adaptés aux disponibilités déclarées par les élèves." />
+        </div>
         <p className="text-sm text-muted-foreground">
           Générez un lien unique par destinataire pour le sondage d'inscription.
         </p>
       </div>
-      <AideContextuelle texte="Cette page envoie à chaque élève un lien personnalisé vers le sondage de rentrée. Une fois les réponses reçues, rendez-vous dans Planning intelligent pour que l'application vous propose des créneaux adaptés aux disponibilités déclarées." />
 
 
       {/* ── Sélecteur de mode ── */}
@@ -216,6 +221,7 @@ export default function SendSurveyPage() {
           icon={Users}
           title="Destinataires"
           subtitle="Choisissez comment sélectionner les élèves à contacter."
+          help="Sélection manuelle : choisissez précisément qui reçoit le lien. Par école : utile pour cibler les élèves d'un seul employeur."
         />
 
         {/* Boutons de mode */}

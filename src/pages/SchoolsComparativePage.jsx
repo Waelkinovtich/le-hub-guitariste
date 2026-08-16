@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Loader2, AlertCircle, ChevronUp, ChevronDown, Download, Star, AlertTriangle, EyeOff, School, SlidersHorizontal } from 'lucide-react'
 import { fetchSchoolsOverview, currentSchoolYear } from '../services/schools'
-import AideContextuelle from '../components/AideContextuelle'
+import HelpTooltip from '../components/HelpTooltip'
 import { supabase } from '../lib/supabase'
 
 // ─── CSV export ───────────────────────────────────────────────────────────────
@@ -202,7 +202,10 @@ export default function SchoolsComparativePage() {
     <div className="p-6 sm:p-8 max-w-6xl">
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Comparatif des écoles</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Comparatif des écoles</h1>
+            <HelpTooltip texte="Cliquez sur une colonne pour trier. Si le classement ne reflète pas vos priorités, ajustez les curseurs dans Réglages → Priorisation des écoles." />
+          </div>
           <p className="text-muted-foreground mt-1">Triez par colonne — taux horaires pour l'année {curYear}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -259,8 +262,6 @@ export default function SchoolsComparativePage() {
           </button>
         </div>
       </header>
-
-      <AideContextuelle texte="Ce tableau compare toutes vos écoles sur les mêmes critères côte à côte. Cliquez sur une colonne pour trier. Si le classement ne reflète pas vos priorités du moment, ajustez les curseurs dans Réglages → Priorisation des écoles : les scores sont recalculés immédiatement." />
 
       {loading ? (
         <div className="flex items-center gap-2 text-muted-foreground text-sm py-12 justify-center">

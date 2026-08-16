@@ -17,7 +17,7 @@ import {
   fetchTeacherStudents, addStudentContext,
 } from '../services/students'
 import AddStudentModal from '../components/AddStudentModal'
-import AideContextuelle from '../components/AideContextuelle'
+import HelpTooltip from '../components/HelpTooltip'
 import PhoneActions from '../components/PhoneActions'
 import EmailActions from '../components/EmailActions'
 
@@ -135,10 +135,13 @@ function fmtDate(d) {
 
 // ─── Composants UI ────────────────────────────────────────────────────────────
 
-function Section({ title, children }) {
+function Section({ title, children, help }) {
   return (
     <div className="glass-panel rounded-2xl p-5">
-      <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-4">{title}</p>
+      <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-4 flex items-center gap-1.5">
+        {title}
+        {help && <HelpTooltip texte={help} position="right" />}
+      </p>
       <div className="space-y-4">{children}</div>
     </div>
   )
@@ -649,11 +652,12 @@ export default function SchoolDetailPage() {
         Retour aux écoles
       </button>
 
-      <AideContextuelle texte="Cette fiche centralise tout ce qui concerne cette structure : élèves rattachés, taux horaires, notes sur les locaux et l'ambiance. Les appréciations et le volume d'heures que vous renseignez ici alimentent le score de priorité utilisé dans le Simulateur et le Comparatif." />
-
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">{school.name}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">{school.name}</h1>
+            <HelpTooltip texte="Les notes sur les locaux, l'ambiance et le contrat alimentent le score de priorité visible dans le Simulateur et le Comparatif." />
+          </div>
           <div className="flex items-center gap-3 mt-1 flex-wrap">
             {school.structure_type && (
               <span className="text-xs text-muted-foreground bg-surface-raised px-2 py-0.5 rounded-full border border-border-subtle">
@@ -812,7 +816,7 @@ export default function SchoolDetailPage() {
       </Section>
 
       {/* ─── Section 2 : Contrat & rémunération ──────────────────────────────── */}
-      <Section title="Contrat & rémunération">
+      <Section title="Contrat & rémunération" help="Taux horaire brut et net saisis ici servent à calculer le revenu estimé dans le Simulateur.">
         <div className="grid sm:grid-cols-2 gap-3">
           <Field label="Type de contrat" hint="Nature du contrat qui te lie à cette structure.">
             {editing
@@ -1163,7 +1167,7 @@ export default function SchoolDetailPage() {
       </Section>
 
       {/* ─── Section 6 : Priorité, mots-clés & notes ─────────────────────────── */}
-      <Section title="Priorité & mots-clés">
+      <Section title="Priorité & mots-clés" help="Ces notes sont combinées avec le poids des curseurs de Réglages → Priorisation pour calculer le score de priorité de cette école.">
         <Field label="Perspectives d'évolution" hint="Probabilité d'augmentation d'heures ou d'ouverture de nouvelles classes à court terme.">
           {editing
             ? <StarRating value={data.growth_perspective_rating} onChange={set('growth_perspective_rating')} />

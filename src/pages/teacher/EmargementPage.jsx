@@ -11,7 +11,7 @@ import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
 import LessonStatusModal from '../../components/LessonStatusModal'
 import AddLessonModal from '../../components/AddLessonModal'
 import DeleteLessonModal from '../../components/DeleteLessonModal'
-import AideContextuelle from '../../components/AideContextuelle'
+import HelpTooltip from '../../components/HelpTooltip'
 
 const PERIODS = [
   { value: 'aujourd_hui', label: "Aujourd'hui" },
@@ -116,7 +116,10 @@ export default function ÉmargementPage() {
     <div className="p-6 sm:p-8 max-w-5xl">
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Émargement</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Émargement</h1>
+            <HelpTooltip texte="Validez chaque cours : présence de l'élève, annulation, absence. Les cours marqués « Annulé par le professeur » alimentent la page Heures à rattraper." />
+          </div>
           <p className="text-muted-foreground mt-1">Feuilles de présence et exports PDF</p>
         </div>
         <button type="button" onClick={handleExport} disabled={lessons.length === 0} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
@@ -124,7 +127,6 @@ export default function ÉmargementPage() {
           Exporter en PDF
         </button>
       </header>
-      <AideContextuelle texte="L'émargement vous permet de valider ou signaler chaque cours : présence de l'élève, annulation, absence. Les cours marqués Annulé par le professeur alimentent la page Heures à rattraper, qui calcule le solde de cours dûs à chaque école." />
 
       {periodCtx.mode !== 'toutes' && (
         <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/20 text-xs text-guitar-400">
@@ -234,7 +236,10 @@ export default function ÉmargementPage() {
 
           {groupSessions.length > 0 && (
             <div className="mt-8">
-              <h2 className="text-lg font-semibold mb-3">Séances de groupe</h2>
+              <div className="flex items-center gap-2 mb-3">
+                <h2 className="text-lg font-semibold">Séances de groupe</h2>
+                <HelpTooltip texte="Les séances de groupe regroupent plusieurs élèves sur un même créneau. Elles s'émargent comme les cours individuels." position="right" />
+              </div>
               <div className="glass-panel rounded-2xl overflow-hidden overflow-x-auto">
                 <table className="w-full text-sm min-w-[600px]">
                   <thead>

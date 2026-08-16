@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { BarChart2, Target, Loader2, AlertCircle, Star, Clock, Euro, TrendingUp, Info, ChevronDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import AideContextuelle from '../components/AideContextuelle'
+import HelpTooltip from '../components/HelpTooltip'
 import { fetchSchoolsOverview, currentSchoolYear, SEMAINES_PAR_MOIS } from '../services/schools'
 import { allSchoolYears } from '../context/PeriodContext'
 
@@ -206,13 +206,15 @@ export default function SimulationPage() {
   return (
     <div className="p-6 max-w-3xl">
       <div className="mb-8">
-        <h1 className="font-display text-3xl text-foreground mb-1">Simulateur de répartition</h1>
+        <div className="flex items-center gap-2 mb-1">
+          <h1 className="font-display text-3xl text-foreground">Simulateur de répartition</h1>
+          <HelpTooltip texte="Répartit vos heures entre les écoles selon leur score de priorité et votre plafond hebdomadaire. Le résultat est indicatif — aucun créneau n'est créé automatiquement." />
+        </div>
         <p className="text-sm text-muted-foreground">
           Estimation consultative de la répartition d'heures par école selon le score de priorité et vos objectifs.
           Aucun créneau n'est attribué automatiquement.
         </p>
       </div>
-      <AideContextuelle texte="Le simulateur répartit vos heures entre les écoles au prorata de leur score de priorité (calculé dans la fiche de chaque école) et de votre plafond hebdomadaire défini dans Objectifs. Le résultat est indicatif — aucun créneau n'est créé automatiquement." />
 
       {/* ── Sélecteur d'année ── */}
       <div className="flex items-center gap-3 mb-6">
@@ -231,7 +233,10 @@ export default function SimulationPage() {
 
       {/* ── Bandeau objectifs ── */}
       <div className="glass-panel rounded-2xl p-4 mb-6">
-        <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Objectifs {schoolYear}</p>
+        <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-3 flex items-center gap-1.5">
+          Objectifs {schoolYear}
+          <HelpTooltip texte="Revenu cible et plafond horaire configurés dans la page Objectifs. Modifiez-les là-bas, la simulation se recalcule." position="right" />
+        </p>
         {objectives ? (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Stat icon={Euro}     label="Revenu mensuel cible"  value={fmt(objectives.revenu_mensuel_cible, '€')} />

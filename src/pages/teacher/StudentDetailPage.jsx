@@ -9,7 +9,7 @@ import {
 } from '../../services/students'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
 import AddStudentModal from '../../components/AddStudentModal'
-import AideContextuelle from '../../components/AideContextuelle'
+import HelpTooltip from '../../components/HelpTooltip'
 import PhoneActions from '../../components/PhoneActions'
 import EmailActions from '../../components/EmailActions'
 import { getSchoolColor } from '../../utils/schoolColors'
@@ -29,10 +29,13 @@ function ContactLine({ icon: Icon, value, phone = false, email = false }) {
   )
 }
 
-function Section({ title, children }) {
+function Section({ title, children, help }) {
   return (
     <div className="glass-panel rounded-2xl p-5">
-      <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-4">{title}</p>
+      <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-4 flex items-center gap-1.5">
+        {title}
+        {help && <HelpTooltip texte={help} position="right" />}
+      </p>
       {children}
     </div>
   )
@@ -119,15 +122,16 @@ export default function StudentDetailPage() {
         Retour aux élèves
       </button>
 
-      <AideContextuelle texte="Retrouvez ici le profil complet de cet élève : coordonnées, école de rattachement et historique des cours. Si un cours apparaît annulé ou manqué, consultez la page Heures à rattraper pour proposer un nouveau créneau de rattrapage." />
-
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-semibold text-lg" style={{ backgroundColor: color }}>
             {student.firstName?.[0]}{student.lastName?.[0]}
           </div>
           <div>
-            <h1 className="text-2xl font-semibold">{student.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-semibold">{student.name}</h1>
+              <HelpTooltip texte="Coordonnées, école de rattachement et historique des cours. Si un cours est annulé, allez dans Heures à rattraper pour proposer un nouveau créneau." />
+            </div>
             {student.age && <p className="text-sm text-muted-foreground">{student.age} ans</p>}
           </div>
         </div>
@@ -143,7 +147,7 @@ export default function StudentDetailPage() {
         </div>
       </div>
 
-      <Section title="Cours">
+      <Section title="Cours" help="Historique de tous les cours de cet élève. Les cours annulés par le professeur apparaissent dans Heures à rattraper.">
         {/* Badges des types de cours */}
         <div className="mb-4">
           <p className="text-xs text-muted-foreground mb-2">Type{allContextTypes.size > 1 ? 's' : ''} de cours</p>

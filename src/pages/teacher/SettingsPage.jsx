@@ -3,11 +3,11 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { geocodeAddress } from '../../utils/geocode'
-import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, HelpCircle, CalendarDays, Copy, RefreshCw, SlidersHorizontal, TableProperties, School, Phone, Link } from 'lucide-react'
+import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, CalendarDays, Copy, RefreshCw, SlidersHorizontal, TableProperties, School, Phone, Link } from 'lucide-react'
 import { useTheme, THEMES } from '../../hooks/useTheme'
 import { fetchMileageRates, upsertMileageRate, deleteMileageRate, seedDefaultRates } from '../../services/mileageRates'
 import { DEFAULT_SCORE_WEIGHTS } from '../../services/schools'
-import AideContextuelle from '../../components/AideContextuelle'
+import HelpTooltip from '../../components/HelpTooltip'
 
 // Les 5 catégories du score pondéré (voir services/schools.js) — ordre d'affichage
 // des curseurs dans la section "Priorisation des écoles" ci-dessous.
@@ -65,10 +65,6 @@ export default function SettingsPage() {
   const [calendarToken, setCalendarToken]     = useState(null)
   const [generatingToken, setGeneratingToken] = useState(false)
   const [copiedCal, setCopiedCal]             = useState(false)
-
-  // ── Mode Assistance ────────────────────────────────────────────────────────
-  const [assistanceMode, setAssistanceModeState] = useState(user?.assistanceMode ?? false)
-  const [savingAssistance, setSavingAssistance]   = useState(false)
 
   // ── Application GPS ────────────────────────────────────────────────────────
   const [navApp, setNavAppState]   = useState(user?.navApp ?? 'google_maps')
@@ -306,15 +302,6 @@ export default function SettingsPage() {
     return { cost: (km * match.rate_per_km).toFixed(2), rate: match.rate_per_km, label: match.label }
   })()
 
-  async function handleToggleAssistance() {
-    const next = !assistanceMode
-    setAssistanceModeState(next)
-    setSavingAssistance(true)
-    const { error: err } = await supabase.from('profiles').update({ assistance_mode: next }).eq('id', user.id)
-    setSavingAssistance(false)
-    if (!err) setUser((prev) => ({ ...prev, assistanceMode: next }))
-  }
-
   async function handleSaveNavApp(value) {
     setSavingNav(true)
     const chosen = value ?? navApp
@@ -385,8 +372,6 @@ export default function SettingsPage() {
         <p className="text-muted-foreground mt-1">Personnalisez votre espace professeur</p>
       </header>
 
-      <AideContextuelle texte="Les réglages influencent toute l'application : l'adresse du domicile sert aux calculs de distance vers les écoles, la fiche contact alimente les en-têtes de vos PDF, et les curseurs de pondération modifient le classement dans le Simulateur. Vous n'avez pas besoin de revenir ici souvent." />
-
       {/* ── Localisation ─────────────────────────────────────────────────────── */}
       <section className="glass-panel rounded-2xl p-6">
         <div className="flex items-center gap-3 mb-5">
@@ -394,7 +379,10 @@ export default function SettingsPage() {
             <MapPin className="w-4 h-4 text-guitar-400" />
           </div>
           <div>
-            <h2 className="font-semibold">Localisation</h2>
+            <div className="flex items-center gap-1.5">
+              <h2 className="font-semibold">Localisation</h2>
+              <HelpTooltip texte="L'adresse est géocodée pour calculer la distance Haversine entre votre domicile et chaque école. Elle apparaît aussi dans l'en-tête de vos PDF." position="right" />
+            </div>
             <p className="text-sm text-muted-foreground">Adresse du domicile et zone scolaire pour les calculs de trajet et les vacances</p>
           </div>
         </div>
@@ -491,7 +479,10 @@ export default function SettingsPage() {
             <Phone className="w-4 h-4 text-guitar-400" />
           </div>
           <div>
-            <h2 className="font-semibold">Fiche contact</h2>
+            <div className="flex items-center gap-1.5">
+              <h2 className="font-semibold">Fiche contact</h2>
+              <HelpTooltip texte="Ces coordonnées sont intégrées automatiquement dans l'en-tête de tous vos PDF (émargement, trajet, feuille de route) et dans les sondages envoyés aux familles." position="right" />
+            </div>
             <p className="text-sm text-muted-foreground">Coordonnées réutilisées automatiquement dans les PDF, sondages et exports</p>
           </div>
         </div>
@@ -774,7 +765,10 @@ export default function SettingsPage() {
               <Route className="w-4 h-4 text-guitar-400" />
             </div>
             <div>
-              <h2 className="font-semibold">Taux kilométriques</h2>
+              <div className="flex items-center gap-1.5">
+                <h2 className="font-semibold">Taux kilométriques</h2>
+                <HelpTooltip texte="Ces barèmes sont utilisés dans la page Déplacements professionnels pour estimer le coût de chaque trajet en voiture, moto ou vélo." position="right" />
+              </div>
               <p className="text-sm text-muted-foreground">Barèmes pour le calcul des indemnités de déplacement</p>
             </div>
           </div>
@@ -1103,7 +1097,10 @@ export default function SettingsPage() {
               <SlidersHorizontal className="w-4 h-4 text-guitar-400" />
             </div>
             <div>
-              <h2 className="font-semibold">Priorisation des écoles</h2>
+              <div className="flex items-center gap-1.5">
+                <h2 className="font-semibold">Priorisation des écoles</h2>
+                <HelpTooltip texte="Ces poids modifient le classement en temps réel dans la liste des Écoles, le Comparatif et le Simulateur. Un critère à 0 est ignoré." position="right" />
+              </div>
               <p className="text-sm text-muted-foreground">Réglez l'importance de chaque critère dans le classement de vos écoles</p>
             </div>
           </div>
@@ -1235,37 +1232,6 @@ export default function SettingsPage() {
         )}
       </section>
 
-      {/* ── Mode Assistance ──────────────────────────────────────────────────── */}
-      <section className="glass-panel rounded-2xl p-6">
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-9 h-9 rounded-xl bg-guitar-600/15 flex items-center justify-center">
-            <HelpCircle className="w-4 h-4 text-guitar-400" />
-          </div>
-          <div>
-            <h2 className="font-semibold">Mode Assistance</h2>
-            <p className="text-sm text-muted-foreground">Affiche des encadrés d'aide sur les pages principales pour vous guider dans l'application</p>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={handleToggleAssistance}
-          disabled={savingAssistance}
-          className={'w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-colors ' +
-            (assistanceMode
-              ? 'border-guitar-600/60 bg-guitar-600/10'
-              : 'border-border-subtle hover:bg-surface-overlay')}
-        >
-          <div className="flex items-center gap-3">
-            {/* Indicateur visuel ON / OFF */}
-            <div className={`w-10 h-5 rounded-full transition-colors relative ${assistanceMode ? 'bg-guitar-600' : 'bg-muted'}`}>
-              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${assistanceMode ? 'translate-x-5' : 'translate-x-0.5'}`} />
-            </div>
-            <span className="text-sm font-medium">{assistanceMode ? 'Activé' : 'Désactivé'}</span>
-          </div>
-          {savingAssistance && <Loader2 className="w-4 h-4 animate-spin text-guitar-400" />}
-        </button>
-      </section>
     </div>
   )
 }
