@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { Plus, Users, Music2, Trash2, CalendarDays } from 'lucide-react'
+import HelpTooltip from '../../components/HelpTooltip'
 import CreateGroupModal from './CreateGroupModal'
 import { usePeriod } from '../../context/PeriodContext'
 
@@ -53,7 +54,10 @@ export default function GroupesPage() {
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-display">Groupes et Répétitions</h1>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-display">Groupes et Répétitions</h1>
+            <HelpTooltip texte="Regroupez vos élèves par cours collectif, répétition ou ensemble. Les absences sont enregistrées par séance et visibles dans la fiche de chaque élève." />
+          </div>
           <p className="text-sm text-muted mt-1">Gérez vos cours collectifs, répétitions et ensembles</p>
         </div>
         <button onClick={() => setShowCreate(true)}

@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import { Users, Calendar, BookOpen, TrendingUp } from 'lucide-react'
+import HelpTooltip from '../../components/HelpTooltip'
 import StatCard from '../../components/StatCard'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
 import { useAuth } from '../../context/AuthContext'
@@ -73,7 +74,10 @@ export default function TeacherDashboard() {
   return (
     <div className="p-6 sm:p-8 max-w-7xl">
       <header className="mb-8">
-        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Tableau de bord</h1>
+        <div className="flex items-center gap-1.5">
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Tableau de bord</h1>
+          <HelpTooltip texte="Vue d'ensemble de votre activité : élèves actifs, cours de la semaine et prochains cours. Alimentez les pages Élèves et Planning pour que ces chiffres restent à jour." />
+        </div>
         <p className="text-muted-foreground mt-1">Vue d&apos;ensemble de votre activité pédagogique</p>
       </header>
 

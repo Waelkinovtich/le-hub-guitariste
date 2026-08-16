@@ -29,10 +29,13 @@ export function useLongPressAction() {
 
   return {
     open,
-    close: () => setOpen(false),
+    close:    () => setOpen(false),
+    // Ouverture immédiate — utilisée par la navigation clavier (Enter/Espace)
+    // pour éviter d'attendre le timeout de 500 ms conçu pour les pointeurs.
+    openNow:  () => setOpen(true),
     triggerProps: {
       onPointerDown,
-      onPointerUp: clearTimer,
+      onPointerUp:    clearTimer,
       onPointerLeave: clearTimer,
       onPointerCancel: clearTimer,
     },

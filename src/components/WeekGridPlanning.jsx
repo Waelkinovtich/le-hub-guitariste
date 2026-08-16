@@ -437,10 +437,13 @@ export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSel
                           drag ni l'ouverture de l'édition (propagation stoppée avant la carte) */}
                       <button
                         type="button"
+                        aria-label="Supprimer ce cours"
                         title="Supprimer ce cours"
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => { e.stopPropagation(); setDeleteLessonItem(lesson) }}
-                        className="absolute top-0 right-0 z-20 p-0.5 rounded-bl-md bg-void/50 text-white/80 opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity"
+                        className="absolute top-0 right-0 z-20 p-0.5 rounded-bl-md bg-void/50 text-white/80
+                                   opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity
+                                   focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400 rounded-bl-md"
                       >
                         <Trash2 className="w-3 h-3" />
                       </button>

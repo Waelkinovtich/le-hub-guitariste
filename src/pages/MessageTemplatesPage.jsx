@@ -3,6 +3,7 @@ import {
   Plus, Pencil, Trash2, Check, X, Loader2, Copy,
   AlertCircle, MessageSquare, AlertTriangle, CheckSquare, Square,
 } from 'lucide-react'
+import HelpTooltip from '../components/HelpTooltip'
 import { supabase } from '../lib/supabase'
 import { fetchTeacherStudents } from '../services/students'
 import {
@@ -445,7 +446,10 @@ export default function MessageTemplatesPage() {
     <div className="p-6 sm:p-8 max-w-3xl space-y-6">
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Modèles de messages</h1>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Modèles de messages</h1>
+            <HelpTooltip texte="Rédigez un modèle une seule fois avec des variables ({prenom}, {ecole}…). Lors de l'envoi depuis la page Inscription, chaque message est personnalisé automatiquement." position="bottom" />
+          </div>
           <p className="text-muted-foreground mt-1">
             Rédigez vos messages-types une fois, réutilisez-les en un clic avec les données de chaque élève.
           </p>

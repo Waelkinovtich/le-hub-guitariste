@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Plus, Trash2, Send, BarChart2, ChevronDown, ChevronUp, Loader2, Check, AlertCircle, X } from 'lucide-react'
+import HelpTooltip from '../components/HelpTooltip'
 import { supabase } from '../lib/supabase'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -298,7 +299,10 @@ export default function ManageSurveysPage() {
   return (
     <div className="p-6 max-w-2xl">
       <div className="mb-8">
-        <h1 className="font-display text-3xl text-foreground mb-1">Sondages rapides</h1>
+        <div className="flex items-center gap-1.5">
+          <h1 className="font-display text-3xl text-foreground mb-1">Sondages rapides</h1>
+          <HelpTooltip texte="Créez un sondage à choix multiples et partagez-en le lien par SMS ou e-mail. Les réponses s'agrègent en temps réel dans la page Réponses." position="bottom" />
+        </div>
         <p className="text-sm text-muted-foreground">Créez et envoyez des sondages ponctuels à vos élèves.</p>
       </div>
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { Loader2, Star, CalendarDays, AlertCircle, Check, Brain, Clock, School } from 'lucide-react'
+import HelpTooltip from '../components/HelpTooltip'
 import { computeProposals } from '../utils/scoringCreneaux'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -265,7 +266,10 @@ export default function SchedulingAssistantPage() {
             <Brain className="w-5 h-5 text-guitar-400" />
           </div>
           <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Planning intelligent</h1>
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Planning intelligent</h1>
+              <HelpTooltip texte="Génère des propositions de créneaux en croisant vos disponibilités, celles des élèves et les contraintes de chaque école. Configurez les créneaux dans la page Créneaux écoles." position="bottom" />
+            </div>
             <p className="text-muted-foreground mt-0.5">Propositions de créneaux basées sur les disponibilités et le contexte</p>
           </div>
         </div>

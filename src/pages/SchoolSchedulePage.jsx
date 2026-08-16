@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { School, ChevronLeft, Plus, Save, Loader2, Check, Trash2, Pencil } from 'lucide-react'
+import HelpTooltip from '../components/HelpTooltip'
 import { supabase } from '../lib/supabase'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -258,7 +259,10 @@ export default function SchoolSchedulePage() {
     return (
       <div className="p-6 max-w-2xl">
         <div className="flex items-start justify-between mb-1">
-          <h1 className="font-display text-3xl text-foreground">Configuration des écoles</h1>
+          <div className="flex items-center gap-1.5">
+            <h1 className="font-display text-3xl text-foreground">Configuration des écoles</h1>
+            <HelpTooltip texte="Définissez ici vos créneaux disponibles par école et par jour. Ces données alimentent le Planning intelligent et le calcul du temps total par établissement." position="bottom" />
+          </div>
           <YearSelect value={schoolYear} onChange={setSchoolYear} />
         </div>
         <p className="text-sm text-muted-foreground mb-6">Sélectionnez une école pour configurer ses jours et créneaux.</p>

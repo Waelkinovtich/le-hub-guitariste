@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import HelpTooltip from '../components/HelpTooltip'
 import PhoneActions from '../components/PhoneActions'
 import EmailActions from '../components/EmailActions'
 
@@ -622,7 +623,10 @@ export default function SurveyResultsPage() {
   return (
     <div className="p-6 max-w-2xl">
       <div className="mb-8">
-        <h1 className="font-display text-3xl text-foreground mb-1">Réponses au sondage</h1>
+        <div className="flex items-center gap-1.5">
+          <h1 className="font-display text-3xl text-foreground mb-1">Réponses au sondage</h1>
+          <HelpTooltip texte="Chaque réponse correspond à un formulaire d'inscription rempli par une famille. Cliquez sur une ligne pour voir le détail complet avec les disponibilités." position="bottom" />
+        </div>
         <p className="text-sm text-muted-foreground">
           {responses.length} réponse{responses.length !== 1 ? 's' : ''} au total
         </p>

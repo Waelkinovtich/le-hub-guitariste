@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { StickyNote, CalendarDays, Plus, Trash2, Pencil, Check, Loader2, AlertCircle, X, ChevronDown, ChevronUp, Mic, MicOff, Square, Users, FileDown, Download, Music2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import HelpTooltip from '../components/HelpTooltip'
 import { exportEventRoutePDF } from '../utils/exportPDF'
 import { useAuth } from '../context/AuthContext'
 
@@ -997,7 +998,10 @@ export default function SchoolNotesPage() {
     <div className="p-6 max-w-2xl">
       {/* En-tête */}
       <div className="mb-8">
-        <h1 className="font-display text-3xl text-foreground mb-1">Notes & Événements</h1>
+        <div className="flex items-center gap-1.5">
+          <h1 className="font-display text-3xl text-foreground mb-1">Notes & Événements</h1>
+          <HelpTooltip texte="Ajoutez des mémos, réunions ou événements liés à une école. Les événements avec participants peuvent être exportés en feuille de route PDF." position="bottom" />
+        </div>
         <p className="text-sm text-muted-foreground">
           Mémos et dates importantes par école partenaire.
         </p>
