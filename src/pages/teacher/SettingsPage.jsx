@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { geocodeAddress } from '../../utils/geocode'
-import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, HelpCircle, CalendarDays, Copy, RefreshCw, SlidersHorizontal, TableProperties, School } from 'lucide-react'
+import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, HelpCircle, CalendarDays, Copy, RefreshCw, SlidersHorizontal, TableProperties, School, Phone, Link } from 'lucide-react'
 import { useTheme, THEMES } from '../../hooks/useTheme'
 import { fetchMileageRates, upsertMileageRate, deleteMileageRate, seedDefaultRates } from '../../services/mileageRates'
 import { DEFAULT_SCORE_WEIGHTS } from '../../services/schools'
@@ -108,6 +108,18 @@ export default function SettingsPage() {
   const [geocodeInfo,  setGeocodeInfo]  = useState(null)
   const [geocodeError, setGeocodeError] = useState(null)
 
+  // ── Fiche contact ─────────────────────────────────────────────────────────
+  const [contact, setContact] = useState({
+    phone:            '',
+    whatsapp_link:    '',
+    messenger_link:   '',
+    discord_link:     '',
+    cloud_share_link: '',
+  })
+  const [savingContact, setSavingContact] = useState(false)
+  const [savedContact,  setSavedContact]  = useState(false)
+  const [errorContact,  setErrorContact]  = useState(null)
+
   // ── Taux kilométriques ────────────────────────────────────────────────────
   const [mileageRates, setMileageRates] = useState([])
   const [mileageLoaded, setMileageLoaded] = useState(false)
@@ -148,6 +160,13 @@ export default function SettingsPage() {
     supabase.from('profiles').select('*').eq('id', user.id).single()
       .then(({ data }) => {
         if (data) {
+          setContact({
+            phone:            data.phone            ?? '',
+            whatsapp_link:    data.whatsapp_link    ?? '',
+            messenger_link:   data.messenger_link   ?? '',
+            discord_link:     data.discord_link     ?? '',
+            cloud_share_link: data.cloud_share_link ?? '',
+          })
           setProf({
             home_address:             data.home_address             ?? '',
             home_latitude:            data.home_latitude            ?? null,
@@ -174,6 +193,24 @@ export default function SettingsPage() {
   }, [user?.id])
 
   // ── Handlers ───────────────────────────────────────────────────────────────
+
+  async function handleSaveContact() {
+    setSavingContact(true); setErrorContact(null)
+    const payload = {
+      phone:            contact.phone            || null,
+      whatsapp_link:    contact.whatsapp_link    || null,
+      messenger_link:   contact.messenger_link   || null,
+      discord_link:     contact.discord_link     || null,
+      cloud_share_link: contact.cloud_share_link || null,
+    }
+    const { error: err } = await supabase.from('profiles').update(payload).eq('id', user.id)
+    setSavingContact(false)
+    if (err) { setErrorContact('Erreur : ' + err.message); return }
+    // Met à jour le contexte auth pour que user.phone soit immédiatement à jour
+    // (utilisé par les en-têtes PDF sans recharger la page).
+    setUser((prev) => ({ ...prev, phone: contact.phone || null }))
+    setSavedContact(true); setTimeout(() => setSavedContact(false), 2000)
+  }
 
   async function handleSaveZone() {
     setSavingZone(true); setErrorZone(null)
@@ -442,6 +479,117 @@ export default function SettingsPage() {
             </button>
           </div>
         )}
+      </section>
+
+      {/* ── Fiche contact ─────────────────────────────────────────────────────── */}
+      <section className="glass-panel rounded-2xl p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-9 h-9 rounded-xl bg-guitar-600/15 flex items-center justify-center">
+            <Phone className="w-4 h-4 text-guitar-400" />
+          </div>
+          <div>
+            <h2 className="font-semibold">Fiche contact</h2>
+            <p className="text-sm text-muted-foreground">Coordonnées réutilisées automatiquement dans les PDF, sondages et exports</p>
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          {/* Téléphone */}
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">
+              Téléphone <span className="italic">(facultatif)</span>
+            </label>
+            <input
+              type="tel"
+              value={contact.phone}
+              onChange={(e) => setContact((c) => ({ ...c, phone: e.target.value }))}
+              placeholder="Ex : +33 6 12 34 56 78"
+              className={inputCls}
+            />
+          </div>
+
+          {/* Email — non modifiable ici, géré par l'authentification Supabase */}
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Adresse e-mail</label>
+            <input
+              type="email"
+              value={user?.email ?? ''}
+              readOnly
+              className={inputCls + ' opacity-60 cursor-not-allowed'}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Non modifiable ici — changez-la depuis votre compte Supabase si nécessaire.
+            </p>
+          </div>
+
+          {/* Liens de messagerie et partage */}
+          <div className="border-t border-border-subtle pt-4 space-y-3">
+            <p className="text-xs font-medium text-foreground flex items-center gap-1.5 mb-3">
+              <Link className="w-3.5 h-3.5 text-guitar-400" />
+              Liens de messagerie et partage <span className="font-normal text-muted-foreground">(facultatifs)</span>
+            </p>
+
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">WhatsApp</label>
+              <input
+                type="url"
+                value={contact.whatsapp_link}
+                onChange={(e) => setContact((c) => ({ ...c, whatsapp_link: e.target.value }))}
+                placeholder="https://wa.me/33612345678"
+                className={inputCls}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Messenger</label>
+              <input
+                type="url"
+                value={contact.messenger_link}
+                onChange={(e) => setContact((c) => ({ ...c, messenger_link: e.target.value }))}
+                placeholder="https://m.me/votre.pseudo"
+                className={inputCls}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Discord</label>
+              <input
+                type="url"
+                value={contact.discord_link}
+                onChange={(e) => setContact((c) => ({ ...c, discord_link: e.target.value }))}
+                placeholder="https://discord.gg/votre-serveur"
+                className={inputCls}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Partage de fichiers</label>
+              <input
+                type="url"
+                value={contact.cloud_share_link}
+                onChange={(e) => setContact((c) => ({ ...c, cloud_share_link: e.target.value }))}
+                placeholder="https://drive.google.com/… ou Dropbox, OneDrive…"
+                className={inputCls}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Utile pour partager des partitions ou des ressources pédagogiques avec les écoles.
+              </p>
+            </div>
+          </div>
+
+          {errorContact && (
+            <p className="text-xs text-guitar-400 flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5" />{errorContact}
+            </p>
+          )}
+
+          <button onClick={handleSaveContact} disabled={savingContact}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-50"
+          >
+            {savingContact ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            {savingContact ? 'Sauvegarde…' : savedContact ? 'Enregistré !' : 'Enregistrer'}
+          </button>
+        </div>
       </section>
 
       {/* ── Déplacement ──────────────────────────────────────────────────────── */}

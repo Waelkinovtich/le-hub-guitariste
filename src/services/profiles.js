@@ -6,7 +6,7 @@ import { extractScoreWeights } from './schools'
 export async function fetchProfile(userId) {
   const { data, error } = await supabase
     .from(TABLES.profiles)
-    .select('id, role, first_name, last_name, email, phone, home_address, school_zone, nav_app, assistance_mode, created_at, home_latitude, home_longitude, score_weight_fiabilite, score_weight_remuneration, score_weight_distance, score_weight_perspectives, score_weight_ambiance')
+    .select('id, role, first_name, last_name, email, phone, home_address, whatsapp_link, messenger_link, discord_link, cloud_share_link, school_zone, nav_app, assistance_mode, created_at, home_latitude, home_longitude, score_weight_fiabilite, score_weight_remuneration, score_weight_distance, score_weight_perspectives, score_weight_ambiance')
     .eq('id', userId)
     .maybeSingle()
 
@@ -25,8 +25,12 @@ export function mapProfileToUser(profile) {
     firstName,
     lastName,
     name: fullName(firstName, lastName) || profile.email || 'Utilisateur',
-    phone:   profile.phone ?? profile.telephone,
-    address: profile.home_address ?? null,
+    phone:           profile.phone ?? profile.telephone,
+    address:         profile.home_address    ?? null,
+    whatsappLink:    profile.whatsapp_link   ?? null,
+    messengerLink:   profile.messenger_link  ?? null,
+    discordLink:     profile.discord_link    ?? null,
+    cloudShareLink:  profile.cloud_share_link ?? null,
     createdAt: profile.created_at,
     schoolZone:     profile.school_zone ?? 'B',
     navApp:         profile.nav_app ?? 'google_maps',
