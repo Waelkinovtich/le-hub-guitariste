@@ -33,19 +33,32 @@ const STATUS_LABELS = {
 // documents sont envoyés directement aux directeurs d'école partenaires.
 // Retourne la position Y (pt) juste après l'en-tête, pour enchaîner le
 // contenu propre à chaque document sans chevauchement.
-function drawProfessionalHeader(doc, { teacherName, teacherPhone, teacherEmail, documentTitle }) {
+//
+// teacherAddress est optionnel : affiché entre le nom et le contact si renseigné.
+// Les appelants existants (émargement, feuilles de route) ne le passent pas —
+// leur rendu reste donc strictement identique.
+function drawProfessionalHeader(doc, { teacherName, teacherPhone, teacherAddress, teacherEmail, documentTitle }) {
   doc.setFontSize(15)
   doc.setTextColor(192, 57, 43)
   doc.text(teacherName || 'Professeur de guitare', 14, 18)
 
-  const contact = [teacherPhone, teacherEmail].filter(Boolean).join('  •  ')
-  if (contact) {
-    doc.setFontSize(9)
-    doc.setTextColor(100, 100, 100)
-    doc.text(contact, 14, 24)
+  doc.setFontSize(9)
+  doc.setTextColor(100, 100, 100)
+  let y = 24
+
+  if (teacherAddress) {
+    doc.text(teacherAddress, 14, y)
+    y += 6
   }
 
-  const titleY = contact ? 34 : 30
+  const contact = [teacherPhone, teacherEmail].filter(Boolean).join('  •  ')
+  if (contact) {
+    doc.text(contact, 14, y)
+    y += 6
+  }
+
+  // Titre du document, séparé des coordonnées par 4 pt de marge
+  const titleY = y + 4
   doc.setFontSize(13)
   doc.setTextColor(0, 0, 0)
   doc.text(documentTitle, 14, titleY)
@@ -195,15 +208,18 @@ const CATEGORY_LABELS_PDF = {
  * @param {string|null} category  - Catégorie filtrée, ou null pour toutes
  * @param {string} periodLabel    - Libellé humain de la période (ex : "2025-2026")
  * @param {string} teacherName    - Nom du professeur (identité fiscale)
+ * @param {string} teacherAddress - Adresse du domicile (facultatif, affiché si renseigné)
+ * @param {string} teacherPhone   - Numéro de téléphone (facultatif)
  * @param {string} teacherEmail   - Email du professeur (facultatif)
  */
-export function exportTravelPDF({ entries, category, periodLabel, teacherName, teacherEmail }) {
+export function exportTravelPDF({ entries, category, periodLabel, teacherName, teacherAddress, teacherPhone, teacherEmail }) {
   const doc = new jsPDF()
   const catLabel = category ? (CATEGORY_LABELS_PDF[category] ?? category) : 'Tous déplacements'
 
   let y = drawProfessionalHeader(doc, {
     teacherName,
-    teacherPhone: null,
+    teacherAddress,
+    teacherPhone,
     teacherEmail,
     documentTitle: 'Déplacements professionnels',
   })

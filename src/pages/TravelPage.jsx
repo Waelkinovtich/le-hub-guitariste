@@ -264,11 +264,13 @@ export default function TravelPage() {
       periodLabel = `Du ${period.value.from} au ${period.value.to ?? '…'}`
     }
     exportTravelPDF({
-      entries:      displayedEntries,
-      category:     activeCategory,
+      entries:         displayedEntries,
+      category:        activeCategory,
       periodLabel,
-      teacherName:  user?.name ?? user?.email ?? '',
-      teacherEmail: user?.email ?? '',
+      teacherName:     user?.name    ?? user?.email ?? '',
+      teacherAddress:  user?.address ?? null,
+      teacherPhone:    user?.phone   ?? null,
+      teacherEmail:    user?.email   ?? null,
     })
   }
 

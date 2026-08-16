@@ -51,51 +51,54 @@ function fmtTimestampForFilename(date) {
 // Noms de jours en français, indexés par Date.getDay() (0=dimanche).
 const JOURS_SEMAINE = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi']
 
-// ─── Formulaire d'ajout / d'édition ──────────────────────────────────────────
+// ─── Composant de dictée vocale ──────────────────────────────────────────────
 
-function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
-  const isEdit = Boolean(initial)
-  const [type, setType] = useState(initial?.type ?? 'note')
-  const [school, setSchool] = useState(initial?.school_name ?? selectedSchool ?? schools[0] ?? '')
-  const [title, setTitle] = useState(initial?.title ?? '')
-  const [content, setContent] = useState(initial?.content ?? '')
-  const [eventDate, setEventDate] = useState(initial?.event_date ?? '')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  // ── Dictée vocale (notes uniquement, audio strictement local) ──────────────
-  const [recording, setRecording] = useState(false)
+/**
+ * Dictée vocale réutilisable : bouton "Dicter", enregistrement MediaRecorder,
+ * transcription Web Speech API en temps réel, lecteur audio + transcription
+ * figée, téléchargement local. Audio strictement local — aucun envoi réseau.
+ *
+ * Props :
+ *   onTranscription(text) — appelé à chaque résultat de reconnaissance ; le
+ *     parent branche ce callback sur son propre état de contenu.
+ *   onActiveChange(isActive) — appelé quand l'état "en cours" (enregistrement
+ *     ou finalisation) change ; permet au parent de désactiver ses propres
+ *     contrôles (ex. toggle note/événement) pendant la dictée.
+ */
+function DicteeAudio({ onTranscription, onActiveChange }) {
+  const [recording,  setRecording]  = useState(false)
   // true entre le clic sur "Arrêter" et la finalisation réelle du blob audio
   // (onstop est asynchrone — surtout sur Safari, qui peut prendre un instant
   // pour finaliser l'encodage). Évite d'afficher une erreur prématurée.
   const [processing, setProcessing] = useState(false)
-  const [audioUrl, setAudioUrl] = useState(null)
-  const [elapsed, setElapsed] = useState(0)
-  const [voiceError, setVoiceError] = useState('')
+  const [audioUrl,   setAudioUrl]   = useState(null)
+  const [elapsed,    setElapsed]    = useState(0)
+  const [voiceError,    setVoiceError]    = useState('')
   // Erreur de LECTURE confirmée (après finalisation du blob), distincte de
   // voiceError qui couvre l'accès micro.
   const [playbackError, setPlaybackError] = useState('')
   // Transcription figée de LA dictée en cours, affichée sous le lecteur audio.
   // null = aucun enregistrement finalisé pour l'instant.
   const [frozenTranscript, setFrozenTranscript] = useState(null)
-  const recorderRef = useRef(null)
-  const chunksRef = useRef([])
-  const recognitionRef = useRef(null)
-  const timerRef = useRef(null)
-  const streamRef = useRef(null)
+
+  const recorderRef       = useRef(null)
+  const chunksRef         = useRef([])
+  const recognitionRef    = useRef(null)
+  const timerRef          = useRef(null)
+  const streamRef         = useRef(null)
   // Accumulateur de transcription vivant pendant l'enregistrement en cours ;
   // copié dans frozenTranscript une fois le blob audio réellement finalisé.
   const liveTranscriptRef = useRef('')
   // Type MIME réel produit par le MediaRecorder — nécessaire pour donner au
   // fichier téléchargé la bonne extension (voir extensionFromMimeType).
-  const audioMimeTypeRef = useRef('')
+  const audioMimeTypeRef  = useRef('')
   // Horodatage de fin de dictée, utilisé pour nommer le fichier téléchargé.
-  const recordedAtRef = useRef(null)
+  const recordedAtRef     = useRef(null)
 
   const hasSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition)
 
   // Coupe proprement micro / reconnaissance / minuteur, quelle que soit la
-  // raison (arrêt manuel ou démontage du formulaire pendant un enregistrement).
+  // raison (arrêt manuel ou démontage du composant pendant un enregistrement).
   const teardownRecording = () => {
     clearInterval(timerRef.current)
     try { recognitionRef.current?.stop() } catch { /* déjà arrêtée */ }
@@ -104,6 +107,12 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
   }
 
   useEffect(() => teardownRecording, [])
+
+  // Informe le parent quand l'état "actif" (micro ouvert ou finalisation) change,
+  // afin que ses propres contrôles puissent se désactiver le temps de la dictée.
+  useEffect(() => {
+    onActiveChange?.(recording || processing)
+  }, [recording, processing]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const startRecording = async () => {
     // Cause réelle du bug de régression : un navigateur n'autorise qu'une
@@ -160,7 +169,7 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
       r.interimResults = false
       r.onresult = (e) => {
         const text = Array.from(e.results).map((res) => res[0].transcript).join(' ')
-        setContent((prev) => prev ? prev + ' ' + text : text)
+        onTranscription?.(text)
         liveTranscriptRef.current = liveTranscriptRef.current ? `${liveTranscriptRef.current} ${text}` : text
       }
       r.onend = () => {
@@ -213,7 +222,7 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
   const downloadRecording = () => {
     if (!audioUrl) return
     const extension = extensionFromMimeType(audioMimeTypeRef.current)
-    const filename = `note-${fmtTimestampForFilename(recordedAtRef.current ?? new Date())}.${extension}`
+    const filename = `dictee-${fmtTimestampForFilename(recordedAtRef.current ?? new Date())}.${extension}`
     const link = document.createElement('a')
     link.href = audioUrl
     link.download = filename
@@ -223,6 +232,128 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
   }
 
   const fmtElapsed = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+
+  return (
+    <div className="space-y-2">
+      {!recording && !processing && !audioUrl && (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={startRecording}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+          >
+            <Mic className="w-3.5 h-3.5" />
+            Dicter
+          </button>
+          {!hasSpeechRecognition && (
+            <span className="text-xs text-muted">
+              (transcription non disponible dans ce navigateur — l'audio reste local)
+            </span>
+          )}
+        </div>
+      )}
+      {recording && (
+        <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/20">
+          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+          <span className="text-xs text-guitar-400 font-mono">{fmtElapsed(elapsed)}</span>
+          <span className="text-xs text-muted-foreground flex-1">{hasSpeechRecognition ? 'Dictée en cours…' : 'Enregistrement en cours…'}</span>
+          <button
+            type="button"
+            onClick={stopRecording}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-guitar-600/20 text-guitar-400 text-xs font-medium hover:bg-guitar-600/30 transition-colors"
+          >
+            <Square className="w-3 h-3" />
+            Arrêter
+          </button>
+        </div>
+      )}
+      {processing && !recording && (
+        <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-surface border border-border-subtle">
+          <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin flex-shrink-0" />
+          <span className="text-xs text-muted-foreground">Finalisation de l'enregistrement…</span>
+        </div>
+      )}
+      {audioUrl && !recording && !processing && (
+        <div className="space-y-2">
+          {/* 1. Audio */}
+          <div className="px-3 py-2 rounded-xl bg-surface border border-border-subtle">
+            <audio
+              src={audioUrl}
+              controls
+              className="w-full h-8"
+              style={{ accentColor: 'var(--guitar-600)' }}
+              onError={() => setPlaybackError("Erreur sur le fichier audio — l'enregistrement n'a pas pu être lu. Vous pouvez recommencer.")}
+            />
+          </div>
+
+          {/* 2. Transcription — lecture seule, figée à la finalisation de l'audio */}
+          <div className="px-3 py-2.5 rounded-xl bg-surface border border-border-subtle">
+            <p className="text-xs font-medium text-muted-foreground mb-1">Transcription</p>
+            <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+              {frozenTranscript || 'Aucune transcription disponible pour cet enregistrement.'}
+            </p>
+          </div>
+
+          {/* 3. Boutons */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={downloadRecording}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Télécharger
+            </button>
+            <button
+              type="button"
+              onClick={deleteRecording}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-guitar-400 hover:border-guitar-600/30 transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Supprimer l'enregistrement
+            </button>
+            <button
+              type="button"
+              onClick={startRecording}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+            >
+              <Mic className="w-3.5 h-3.5" />
+              Recommencer
+            </button>
+          </div>
+        </div>
+      )}
+      {playbackError && (
+        <p className="text-xs text-guitar-400 flex items-center gap-1.5">
+          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+          {playbackError}
+        </p>
+      )}
+      {voiceError && (
+        <p className="text-xs text-guitar-400 flex items-center gap-1.5">
+          <MicOff className="w-3.5 h-3.5 flex-shrink-0" />
+          {voiceError}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ─── Formulaire d'ajout / d'édition ──────────────────────────────────────────
+
+function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
+  const isEdit = Boolean(initial)
+  const [type, setType] = useState(initial?.type ?? 'note')
+  const [school, setSchool] = useState(initial?.school_name ?? selectedSchool ?? schools[0] ?? '')
+  const [title, setTitle] = useState(initial?.title ?? '')
+  const [content, setContent] = useState(initial?.content ?? '')
+  const [eventDate, setEventDate] = useState(initial?.event_date ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  // dicteeActive remonte l'état "micro ouvert" depuis DicteeAudio : permet de
+  // désactiver le toggle note/événement pendant un enregistrement en cours.
+  const [dicteeActive, setDicteeActive] = useState(false)
 
   const save = async () => {
     setError('')
@@ -284,13 +415,13 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
             key={val}
             type="button"
             onClick={() => setType(val)}
-            disabled={recording || processing}
-            title={(recording || processing) ? 'Arrêtez la dictée en cours avant de changer de type' : undefined}
+            disabled={dicteeActive}
+            title={dicteeActive ? 'Arrêtez la dictée en cours avant de changer de type' : undefined}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium transition-all ${
               type === val
                 ? 'border-guitar-600/40 bg-guitar-600/15 text-guitar-400'
                 : 'border-border-subtle bg-surface text-muted-foreground hover:border-border hover:text-foreground'
-            } ${(recording || processing) ? 'opacity-40 cursor-not-allowed' : ''}`}
+            } ${dicteeActive ? 'opacity-40 cursor-not-allowed' : ''}`}
           >
             <Icon className="w-3.5 h-3.5" />
             {label}
@@ -337,111 +468,11 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
           className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60 transition-colors resize-none"
         />
 
-        {/* Dictée vocale — notes uniquement, audio local */}
-        {type === 'note' && (
-          <div className="space-y-2">
-            {!recording && !processing && !audioUrl && (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={startRecording}
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
-                >
-                  <Mic className="w-3.5 h-3.5" />
-                  Dicter
-                </button>
-                {!hasSpeechRecognition && (
-                  <span className="text-xs text-muted">
-                    (transcription non disponible dans ce navigateur — l'audio reste local)
-                  </span>
-                )}
-              </div>
-            )}
-            {recording && (
-              <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/20">
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
-                <span className="text-xs text-guitar-400 font-mono">{fmtElapsed(elapsed)}</span>
-                <span className="text-xs text-muted-foreground flex-1">{hasSpeechRecognition ? 'Dictée en cours…' : 'Enregistrement en cours…'}</span>
-                <button
-                  type="button"
-                  onClick={stopRecording}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-guitar-600/20 text-guitar-400 text-xs font-medium hover:bg-guitar-600/30 transition-colors"
-                >
-                  <Square className="w-3 h-3" />
-                  Arrêter
-                </button>
-              </div>
-            )}
-            {processing && !recording && (
-              <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-surface border border-border-subtle">
-                <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin flex-shrink-0" />
-                <span className="text-xs text-muted-foreground">Finalisation de l'enregistrement…</span>
-              </div>
-            )}
-            {audioUrl && !recording && !processing && (
-              <div className="space-y-2">
-                {/* 1. Audio */}
-                <div className="px-3 py-2 rounded-xl bg-surface border border-border-subtle">
-                  <audio
-                    src={audioUrl}
-                    controls
-                    className="w-full h-8"
-                    style={{ accentColor: 'var(--guitar-600)' }}
-                    onError={() => setPlaybackError("Erreur sur le fichier audio — l'enregistrement n'a pas pu être lu. Vous pouvez recommencer.")}
-                  />
-                </div>
-
-                {/* 2. Transcription — lecture seule, figée à la finalisation de l'audio */}
-                <div className="px-3 py-2.5 rounded-xl bg-surface border border-border-subtle">
-                  <p className="text-xs font-medium text-muted-foreground mb-1">Transcription</p>
-                  <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-                    {frozenTranscript || 'Aucune transcription disponible pour cet enregistrement.'}
-                  </p>
-                </div>
-
-                {/* 3. Boutons */}
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={downloadRecording}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Télécharger
-                  </button>
-                  <button
-                    type="button"
-                    onClick={deleteRecording}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-guitar-400 hover:border-guitar-600/30 transition-all"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Supprimer l'enregistrement
-                  </button>
-                  <button
-                    type="button"
-                    onClick={startRecording}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
-                  >
-                    <Mic className="w-3.5 h-3.5" />
-                    Recommencer
-                  </button>
-                </div>
-              </div>
-            )}
-            {playbackError && (
-              <p className="text-xs text-guitar-400 flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                {playbackError}
-              </p>
-            )}
-            {voiceError && (
-              <p className="text-xs text-guitar-400 flex items-center gap-1.5">
-                <MicOff className="w-3.5 h-3.5 flex-shrink-0" />
-                {voiceError}
-              </p>
-            )}
-          </div>
-        )}
+        {/* Dictée vocale — disponible sur notes ET événements, audio strictement local */}
+        <DicteeAudio
+          onTranscription={(text) => setContent((prev) => prev ? prev + ' ' + text : text)}
+          onActiveChange={setDicteeActive}
+        />
 
         {error && (
           <p className="text-xs text-guitar-400 flex items-center gap-1.5">
