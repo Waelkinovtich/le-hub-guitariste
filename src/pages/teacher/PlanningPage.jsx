@@ -18,6 +18,7 @@ import YearView from "../../components/YearView"
 import WeekGridView from "../../components/WeekGridView"
 import MonthView from '../../components/MonthView'
 import WeekGridPlanning from '../../components/WeekGridPlanning'
+import { fetchReservedSlots } from '../../services/reservedSlots'
 
 const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: 'Mois' }, { value: 'période', label: 'Période scolaire' }, { value: 'année', label: 'Année' }]
@@ -44,6 +45,9 @@ export default function PlanningPage() {
   const [duplicateDraft, setDuplicateDraft]     = useState(null)
   const [hideEnvisages, setHideEnvisages] = useState(false)
   const [togglingId, setTogglingId] = useState(null)
+  // Créneaux réservés (hebdomadaires, indépendants de la plage de dates)
+  const [reservedSlots, setReservedSlots] = useState([])
+
   // Coordonnées GPS des écoles indexées par nom (pour les boutons de navigation)
   const [schoolCoords, setSchoolCoords] = useState({})
 
@@ -53,6 +57,8 @@ export default function PlanningPage() {
       schools.forEach((s) => { if (s.name) map[s.name] = { lat: s.latitude, lng: s.longitude, address: s.address } })
       setSchoolCoords(map)
     }).catch(() => {})
+    // Créneaux réservés chargés une seule fois (hebdomadaires, pas liés à la plage de dates)
+    fetchReservedSlots(user.id).then(setReservedSlots).catch(() => {})
   }, [user.id])
 
   const [icsRange, setIcsRange] = useState(() => {
@@ -300,6 +306,7 @@ export default function PlanningPage() {
         <WeekGridPlanning
           weekDays={weekDays}
           lessons={displayedLessons}
+          reservedSlots={reservedSlots}
           onNewLesson={(draft) => setNewLessonDraft(draft)}
           onSelectLesson={(lesson) => setEditLesson(lesson)}
           onDuplicate={(lesson) => setDuplicateDraft({

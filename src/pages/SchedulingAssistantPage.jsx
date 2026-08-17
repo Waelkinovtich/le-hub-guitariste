@@ -4,14 +4,26 @@ import { Loader2, Star, CalendarDays, AlertCircle, Check, Brain, Clock, School }
 import HelpTooltip from '../components/HelpTooltip'
 import { computeProposals } from '../utils/scoringCreneaux'
 import { currentSchoolYear } from '../services/schools'
+import { fetchReservedSlots } from '../services/reservedSlots'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function getTeacherId() {
+async function getTeacherInfo() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
-  const { data } = await supabase.from('profiles').select('id, school_zone').eq('id', user.id).single()
-  return { id: data?.id ?? null, zone: data?.school_zone ?? 'B' }
+  const { data } = await supabase
+    .from('profiles')
+    .select('id, school_zone, preferred_days_off, preferred_proximity_day, home_latitude, home_longitude')
+    .eq('id', user.id)
+    .single()
+  return {
+    id:                   data?.id                   ?? null,
+    zone:                 data?.school_zone           ?? 'B',
+    preferredDaysOff:     data?.preferred_days_off    ?? [],
+    preferredProximityDay: data?.preferred_proximity_day ?? null,
+    homeLat:              data?.home_latitude         ?? null,
+    homeLng:              data?.home_longitude        ?? null,
+  }
 }
 
 // ─── Composants ───────────────────────────────────────────────────────────────
@@ -165,6 +177,7 @@ export default function SchedulingAssistantPage() {
   const [responses, setResponses]         = useState([])
   const [existingLessons, setExistingLessons] = useState([])
   const [schools, setSchools]             = useState([])
+  const [reservedSlots, setReservedSlots] = useState([])
   const [teacherInfo, setTeacherInfo]     = useState(null)
   const [loading, setLoading]             = useState(true)
   const [error, setError]                 = useState('')
@@ -174,17 +187,19 @@ export default function SchedulingAssistantPage() {
     async function load() {
       setLoading(true)
       try {
-        const tInfo = await getTeacherId()
+        const tInfo = await getTeacherInfo()
         if (!tInfo?.id) { setError('Non authentifié'); setLoading(false); return }
         setTeacherInfo(tInfo)
 
         const today = new Date().toISOString().slice(0, 10)
         const inFourWeeks = new Date(Date.now() + 28 * 86400000).toISOString().slice(0, 10)
 
-        const [respRes, lessonsRes, schoolsRes] = await Promise.all([
+        const [respRes, lessonsRes, schoolsRes, reservedSlotsData] = await Promise.all([
           supabase.from('survey_responses').select('*').neq('status', 'confirme').order('submitted_at', { ascending: false }),
           supabase.from('lessons').select('id, lesson_date, lesson_time, duration_minutes, student_id, students(school_name, level)').eq('teacher_id', tInfo.id).gte('lesson_date', today).lte('lesson_date', inFourWeeks),
-          supabase.from('schools').select('id, name, current_weekly_hours, desired_weekly_hours').eq('teacher_id', tInfo.id),
+          // latitude + longitude pour le bonus de proximité domicile
+          supabase.from('schools').select('id, name, current_weekly_hours, desired_weekly_hours, latitude, longitude').eq('teacher_id', tInfo.id),
+          fetchReservedSlots(tInfo.id),
         ])
 
         if (respRes.error) throw new Error(respRes.error.message)
@@ -201,6 +216,7 @@ export default function SchedulingAssistantPage() {
         setResponses(respRes.data ?? [])
         setExistingLessons(mappedLessons)
         setSchools(schoolsRes.data ?? [])
+        setReservedSlots(reservedSlotsData)
       } catch (e) {
         setError(e.message)
       }
@@ -214,10 +230,21 @@ export default function SchedulingAssistantPage() {
     const zone = teacherInfo?.zone ?? 'B'
     const map = {}
     for (const r of responses) {
-      map[r.id] = computeProposals({ response: r, existingLessons, schools, zone, maxResults: 5 })
+      map[r.id] = computeProposals({
+        response: r,
+        existingLessons,
+        schools,
+        zone,
+        maxResults: 5,
+        reservedSlots,
+        preferredDaysOff:     teacherInfo?.preferredDaysOff     ?? [],
+        preferredProximityDay: teacherInfo?.preferredProximityDay ?? null,
+        teacherHomeLat:       teacherInfo?.homeLat               ?? null,
+        teacherHomeLng:       teacherInfo?.homeLng               ?? null,
+      })
     }
     return map
-  }, [responses, existingLessons, schools, teacherInfo])
+  }, [responses, existingLessons, schools, teacherInfo, reservedSlots])
 
   const handleConfirm = async (response, proposal) => {
     setConfirming(true)
@@ -283,6 +310,7 @@ export default function SchedulingAssistantPage() {
           <p>+3 même école déjà planifiée ce jour · +2 créneau adjacent à la même école</p>
           <p>+1 pas de débutants consécutifs · +1 en-dessous du volume d'heures souhaité</p>
           <p>-1 au-dessus du volume souhaité · -2 période de vacances scolaires</p>
+          <p className="text-muted">-2 jour à éviter · +1 école proche du domicile (jour préféré) — configurables dans Réglages</p>
         </div>
       </header>
 

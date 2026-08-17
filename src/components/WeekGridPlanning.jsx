@@ -12,6 +12,7 @@ const TOTAL_SLOTS    = (END_HOUR - START_HOUR) * 4  // 56 créneaux de 15 min
 const SLOT_H         = 18                            // px par créneau
 const MOVE_THRESHOLD = 10                            // px avant activation du déplacement
 const CESU_COLOR     = '#3b82f6'                     // bleu fixe pour cours particuliers
+const RESERVED_OPACITY = 0.85                        // opacité du fond hachuré des créneaux réservés
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 
@@ -51,6 +52,31 @@ function hasOverlap(lessonsByDay, excludeId, targetDay, targetStart, slotCount) 
   })
 }
 
+/**
+ * Construit un index des créneaux réservés par date ISO, pour la semaine affichée.
+ * Chaque créneau réservé est hebdomadaire (jourSemaine = 0..6 JS convention).
+ * weekDays[i].iso → date ISO du jour. On filtre par jourSemaine.
+ */
+function indexReservedByDay(reservedSlots, weekDays) {
+  const map = {}
+  for (const day of weekDays) {
+    const jourJs = new Date(day.iso + 'T12:00:00').getDay()  // évite les ambiguïtés de fuseau
+    map[day.iso] = (reservedSlots ?? []).filter((s) => s.jourSemaine === jourJs)
+  }
+  return map
+}
+
+/** Vérifie si un créneau nouveau empiète sur un créneau réservé (même jour ISO). */
+function hasReservedOverlap(reservedByDay, targetDay, targetStart, slotCount) {
+  const slots = reservedByDay[targetDay] ?? []
+  const targetEnd = targetStart + slotCount - 1
+  return slots.some((rs) => {
+    const rsStart = timeToSlot(rs.heureDebut)
+    const rsEnd   = rsStart + durationToSlots(rs.dureeMinutes) - 1
+    return targetStart <= rsEnd && targetEnd >= rsStart
+  })
+}
+
 // ─── Composant principal ──────────────────────────────────────────────────────
 
 /**
@@ -62,7 +88,17 @@ function hasOverlap(lessonsByDay, excludeId, targetDay, targetStart, slotCount) 
  *   onNewLesson({ lessonDate, lessonTime, durationMinutes })
  *   onSelectLesson(lesson)
  */
-export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSelectLesson, onDuplicate }) {
+/**
+ * Grille hebdomadaire interactive (08:00–22:00, créneaux 15 min).
+ *
+ * Props :
+ *   weekDays      — [{ label, dayNum, iso, isToday }]
+ *   lessons       — cours de la semaine (lessonDate, lessonTime, durationMinutes, …)
+ *   reservedSlots — créneaux réservés par école ({ jourSemaine, heureDebut, dureeMinutes, libelle, schoolName })
+ *   onNewLesson({ lessonDate, lessonTime, durationMinutes })
+ *   onSelectLesson(lesson)
+ */
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], onNewLesson, onSelectLesson, onDuplicate }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -90,7 +126,8 @@ export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSel
   // déjà utilisé sur Émargement — même service deleteLesson, aucune logique dupliquée)
   const [deleteLessonItem, setDeleteLessonItem] = useState(null)
 
-  const lessonsByDay = useMemo(() => groupByDay(localLessons), [localLessons])
+  const lessonsByDay    = useMemo(() => groupByDay(localLessons), [localLessons])
+  const reservedByDay   = useMemo(() => indexReservedByDay(reservedSlots, weekDays), [reservedSlots, weekDays])
 
   const allSchoolNames = useMemo(() => {
     const names = new Set()
@@ -141,10 +178,16 @@ export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSel
     newSlotRef.current = { active: false, day: null, startSlot: null, endSlot: null, pointerId: null }
     setSelection(null)
     setIsDragging(false)
-    const minSlot = Math.min(startSlot, endSlot)
-    const maxSlot = Math.max(startSlot, endSlot)
-    onNewLesson({ lessonDate: day, lessonTime: slotToTimeStr(minSlot), durationMinutes: (maxSlot - minSlot + 1) * 15 })
-  }, [onNewLesson])
+    const minSlot  = Math.min(startSlot, endSlot)
+    const maxSlot  = Math.max(startSlot, endSlot)
+    const slotCount = maxSlot - minSlot + 1
+    // Bloquer la création si le créneau chevauche un créneau réservé
+    if (hasReservedOverlap(reservedByDay, day, minSlot, slotCount)) {
+      showMoveError("Ce créneau est réservé pour une intervention école — impossible d'y ajouter un cours.")
+      return
+    }
+    onNewLesson({ lessonDate: day, lessonTime: slotToTimeStr(minSlot), durationMinutes: slotCount * 15 })
+  }, [onNewLesson, reservedByDay, showMoveError])
 
   // ── Mode B : déplacement d'un cours ──────────────────────────────────────
 
@@ -203,9 +246,14 @@ export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSel
     // Pas de déplacement réel
     if (m.currentDay === m.origDay && m.currentStartSlot === m.origStartSlot) return
 
-    // Vérification de chevauchement (avant toute mise à jour)
+    // Vérification de chevauchement avec les cours existants
     if (hasOverlap(lessonsByDay, m.lesson.id, m.currentDay, m.currentStartSlot, m.slotCount)) {
       showMoveError('Ce créneau est déjà occupé par un autre cours.')
+      return
+    }
+    // Vérification de chevauchement avec les créneaux réservés
+    if (hasReservedOverlap(reservedByDay, m.currentDay, m.currentStartSlot, m.slotCount)) {
+      showMoveError('Ce créneau est réservé pour une intervention école — déplacement impossible.')
       return
     }
 
@@ -337,6 +385,54 @@ export default function WeekGridPlanning({ weekDays, lessons, onNewLesson, onSel
 
             return (
               <div key={day.iso} className="relative border-l border-border-subtle">
+                {/* Créneaux réservés — affichés avant les lignes de fond pour être derrière les cours,
+                    mais avec pointer-events qui stoppent la propagation pour bloquer la création */}
+                {(reservedByDay[day.iso] ?? []).map((rs) => {
+                  const rsStart  = timeToSlot(rs.heureDebut)
+                  const rsSlots  = durationToSlots(rs.dureeMinutes)
+                  const rsColor  = rs.schoolName
+                    ? getSchoolColor(rs.schoolName, allSchoolNames)
+                    : '#6b7280'
+                  if (rsStart < 0 || rsStart >= TOTAL_SLOTS) return null
+                  return (
+                    <div
+                      key={rs.id}
+                      style={{
+                        top:    rsStart * SLOT_H,
+                        height: Math.min(rsSlots, TOTAL_SLOTS - rsStart) * SLOT_H,
+                        left: 0, right: 0,
+                        position: 'absolute', zIndex: 8,
+                        // Motif hachuré : fond semi-transparent + diagonales pour distinguer visuellement
+                        // d'un cours élève (qui a un fond uni). Pattern via repeating-linear-gradient.
+                        background: `repeating-linear-gradient(
+                          45deg,
+                          ${rsColor}22 0px,
+                          ${rsColor}22 4px,
+                          ${rsColor}08 4px,
+                          ${rsColor}08 10px
+                        )`,
+                        borderLeft:  `3px dashed ${rsColor}`,
+                        borderTop:   `1px solid ${rsColor}30`,
+                        pointerEvents: 'all',
+                        cursor: 'not-allowed',
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      title={`Réservé : ${rs.libelle || rs.schoolName || 'Intervention école'} (${rs.heureDebut}, ${rs.dureeMinutes} min)`}
+                    >
+                      <div className="px-1 py-0.5 overflow-hidden h-full flex flex-col justify-start">
+                        <p className="text-[9px] font-semibold leading-tight truncate" style={{ color: rsColor, opacity: RESERVED_OPACITY }}>
+                          🔒 {rs.libelle || 'Réservé'}
+                        </p>
+                        {rsSlots >= 3 && (
+                          <p className="text-[8px] leading-tight opacity-60" style={{ color: rsColor }}>
+                            {rs.heureDebut} · {rs.dureeMinutes} min
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+
                 {/* Lignes de fond */}
                 {Array.from({ length: TOTAL_SLOTS }).map((_, slotIdx) => {
                   const isHour  = slotIdx % 4 === 0

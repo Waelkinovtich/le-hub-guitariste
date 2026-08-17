@@ -30,14 +30,34 @@ export function timeToMinutes(timeStr) {
   return h * 60 + (m || 0)
 }
 
+// ─── Calcul de distance (Haversine simplifié) ─────────────────────────────────
+// Source : formule Haversine standard (R = 6371 km).
+// Utilisé pour le bonus de proximité domicile.
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R   = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
 // ─── Constantes de score ──────────────────────────────────────────────────────
 // Sources des valeurs : décisions pédagogiques documentées dans /admin/planning-intelligent
+
 const SCORE_MEME_ECOLE        =  3  // regroupement des déplacements
 const SCORE_ADJACENT_MEME_ECO =  2  // optimise la plage horaire d'une école
 const SCORE_PAS_DEBUTANTS_CONS =  1 // alternance pédagogique (fatigue du prof)
 const SCORE_VOLUME_SOUS_OBJECTIF= 1  // favorise le remplissage des écoles sous-capacitaires
 const SCORE_VOLUME_SUR_OBJECTIF = -1 // pénalise le dépassement du volume contractuel
 const SCORE_VACANCES           = -2  // préférence générale : éviter de charger les vacances
+
+// Nouveaux facteurs — préférences de planification du prof
+const SCORE_JOUR_EVITE       = -2  // jour dans preferred_days_off — influence le classement, n'élimine jamais
+const SCORE_PROXIMITE_DOMICILE =  1  // école proche du domicile le jour de proximité préféré
+const DISTANCE_PROXIMITE_KM   = 20  // seuil en km en dessous duquel une école est "proche du domicile"
+
 const ADJACENCE_TOLERANCE_MIN  =   5 // tolérance en minutes pour déclarer deux cours "adjacents"
 
 /**
@@ -48,12 +68,21 @@ const ADJACENCE_TOLERANCE_MIN  =   5 // tolérance en minutes pour déclarer deu
  * @param {number}   slotsCount       - Nombre de tranches de 15 min consécutives
  * @param {object}   response         - Ligne survey_responses (school_name, level, availabilities)
  * @param {Array}    existingLessons  - Cours déjà planifiés (lesson_date|lessonDate, lesson_time|lessonTime, duration_minutes|durationMinutes, schoolName)
- * @param {Array}    schools          - Écoles du prof (name, current_weekly_hours, desired_weekly_hours)
+ * @param {Array}    schools          - Écoles du prof (name, current_weekly_hours, desired_weekly_hours, latitude, longitude)
  * @param {string}   zone             - Zone scolaire du prof ('A' | 'B' | 'C')
+ * @param {Array}    reservedSlots    - Créneaux réservés du prof ({ jourSemaine, heureDebut, dureeMinutes }) — traités comme des conflits
+ * @param {string[]} preferredDaysOff - Jours à éviter, ex : ["Lundi", "Mercredi"] (influencent le score, n'éliminent jamais)
+ * @param {string}   preferredProximityDay - Jour de proximité préféré, ex : "Samedi" (ou null)
+ * @param {number}   teacherHomeLat   - Latitude du domicile du prof (ou null)
+ * @param {number}   teacherHomeLng   - Longitude du domicile du prof (ou null)
  * @returns {{ score, reasons, candidateDate, startTime, durationMinutes } | null}
- *          null si le créneau est impossible (conflit horaire).
+ *          null si le créneau est impossible (conflit horaire). Jamais null pour les préférences.
  */
-export function scoreCandidate({ day, slot, slotsCount, response, existingLessons, schools, zone }) {
+export function scoreCandidate({
+  day, slot, slotsCount, response, existingLessons, schools, zone,
+  reservedSlots = [], preferredDaysOff = [], preferredProximityDay = null,
+  teacherHomeLat = null, teacherHomeLng = null,
+}) {
   const reasons = []
   let score = 0
 
@@ -61,19 +90,30 @@ export function scoreCandidate({ day, slot, slotsCount, response, existingLesson
   const startTime       = parseStartTime(slot)
   const startMin        = timeToMinutes(startTime)
   const durationMinutes = slotsCount * 15
+  const endMin          = startMin + durationMinutes
 
-  // ── Conflits stricts (retourne null → créneau écarté définitivement) ────────
+  // ── Conflits stricts : cours élèves existants (retourne null → créneau écarté) ─
   const sameDayLessons = existingLessons.filter(
     (l) => (l.lesson_date ?? l.lessonDate) === candidateDate
   )
-  const hasConflict = sameDayLessons.some((l) => {
+  const hasLessonConflict = sameDayLessons.some((l) => {
     const ls = timeToMinutes(l.lesson_time ?? l.lessonTime ?? '00:00')
     const le = ls + (l.duration_minutes ?? l.durationMinutes ?? 45)
-    const cs = startMin
-    const ce = cs + durationMinutes
-    return cs < le && ce > ls
+    return startMin < le && endMin > ls
   })
-  if (hasConflict) return null
+  if (hasLessonConflict) return null
+
+  // ── Conflits stricts : créneaux réservés (même traitement que les cours) ──────
+  // Un créneau réservé est hebdomadaire — on compare par jour de semaine
+  // (JOURS_FR.indexOf(day) = même convention que JS Date.getDay()).
+  const jourSemaineCandidат = JOURS_FR.indexOf(day)
+  const hasReservedConflict = reservedSlots.some((rs) => {
+    if (rs.jourSemaine !== jourSemaineCandidат) return false
+    const rs_s = timeToMinutes(rs.heureDebut)
+    const rs_e = rs_s + rs.dureeMinutes
+    return startMin < rs_e && endMin > rs_s
+  })
+  if (hasReservedConflict) return null
 
   // ── Bonus : même école ce jour ────────────────────────────────────────────
   const schoolName = response.school_name ?? ''
@@ -91,7 +131,7 @@ export function scoreCandidate({ day, slot, slotsCount, response, existingLesson
     const le = ls + (l.duration_minutes ?? l.durationMinutes ?? 45)
     return (
       Math.abs(startMin - le) <= ADJACENCE_TOLERANCE_MIN ||
-      Math.abs(ls - (startMin + durationMinutes)) <= ADJACENCE_TOLERANCE_MIN
+      Math.abs(ls - endMin) <= ADJACENCE_TOLERANCE_MIN
     )
   })
   if (isAdjacent) {
@@ -110,7 +150,7 @@ export function scoreCandidate({ day, slot, slotsCount, response, existingLesson
       const le = ls + (l.duration_minutes ?? l.durationMinutes ?? 45)
       const isAdj =
         Math.abs(startMin - le) <= ADJACENCE_TOLERANCE_MIN ||
-        Math.abs(ls - (startMin + durationMinutes)) <= ADJACENCE_TOLERANCE_MIN
+        Math.abs(ls - endMin) <= ADJACENCE_TOLERANCE_MIN
       return isAdj && (l.student?.level ?? '').toLowerCase().includes('debutant')
     })
     if (!hasAdjacentBeginner) {
@@ -142,6 +182,28 @@ export function scoreCandidate({ day, slot, slotsCount, response, existingLesson
     reasons.push(`${SCORE_VACANCES} : période de vacances (${vac.label})`)
   }
 
+  // ── Malus : jour à éviter (preferred_days_off) ────────────────────────────
+  // N'élimine jamais la proposition — influence uniquement le classement.
+  if (preferredDaysOff.includes(day)) {
+    score += SCORE_JOUR_EVITE
+    reasons.push(`${SCORE_JOUR_EVITE} : jour à éviter selon vos préférences`)
+  }
+
+  // ── Bonus : proximité domicile le jour préféré ────────────────────────────
+  // Applicable uniquement si le jour correspond, le domicile est connu,
+  // et l'école a des coordonnées GPS.
+  if (
+    preferredProximityDay === day &&
+    teacherHomeLat != null && teacherHomeLng != null &&
+    school?.latitude != null && school?.longitude != null
+  ) {
+    const distKm = haversineKm(teacherHomeLat, teacherHomeLng, school.latitude, school.longitude)
+    if (distKm < DISTANCE_PROXIMITE_KM) {
+      score += SCORE_PROXIMITE_DOMICILE
+      reasons.push(`+${SCORE_PROXIMITE_DOMICILE} : école proche du domicile (${Math.round(distKm)} km) ce ${day}`)
+    }
+  }
+
   return { score, reasons, candidateDate, startTime, durationMinutes }
 }
 
@@ -149,14 +211,23 @@ export function scoreCandidate({ day, slot, slotsCount, response, existingLesson
  * Calcule les meilleures propositions de créneaux pour une réponse de sondage.
  * Réutilisable depuis le Planning Intelligent ET le module Rattrapage.
  *
- * @param {object} response        - Ligne survey_responses avec champ `availabilities`
- * @param {Array}  existingLessons - Cours planifiés (pour conflits)
- * @param {Array}  schools         - Écoles du prof
- * @param {string} zone            - Zone scolaire
- * @param {number} maxResults      - Nombre max de propositions retournées (défaut 5)
- * @returns {Array}                - Propositions triées par score desc, sans doublons
+ * @param {object}   response         - Ligne survey_responses avec champ `availabilities`
+ * @param {Array}    existingLessons  - Cours planifiés (pour conflits)
+ * @param {Array}    schools          - Écoles du prof
+ * @param {string}   zone             - Zone scolaire
+ * @param {number}   maxResults       - Nombre max de propositions retournées (défaut 5)
+ * @param {Array}    reservedSlots    - Créneaux réservés (traités comme conflits)
+ * @param {string[]} preferredDaysOff - Jours à éviter (malus, jamais filtrage strict)
+ * @param {string}   preferredProximityDay - Jour de proximité préféré (ou null)
+ * @param {number}   teacherHomeLat   - Latitude domicile (ou null)
+ * @param {number}   teacherHomeLng   - Longitude domicile (ou null)
+ * @returns {Array} - Propositions triées par score desc, sans doublons
  */
-export function computeProposals({ response, existingLessons, schools, zone, maxResults = 5 }) {
+export function computeProposals({
+  response, existingLessons, schools, zone, maxResults = 5,
+  reservedSlots = [], preferredDaysOff = [], preferredProximityDay = null,
+  teacherHomeLat = null, teacherHomeLng = null,
+}) {
   const avail = response.availabilities ?? {}
   const candidates = []
 
@@ -174,6 +245,11 @@ export function computeProposals({ response, existingLessons, schools, zone, max
           existingLessons,
           schools,
           zone,
+          reservedSlots,
+          preferredDaysOff,
+          preferredProximityDay,
+          teacherHomeLat,
+          teacherHomeLng,
         })
         if (result !== null) {
           candidates.push({ day, slot: slots[i], slotsCount: count, ...result })

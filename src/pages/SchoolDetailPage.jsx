@@ -20,6 +20,7 @@ import AddStudentModal from '../components/AddStudentModal'
 import HelpTooltip from '../components/HelpTooltip'
 import PhoneActions from '../components/PhoneActions'
 import EmailActions from '../components/EmailActions'
+import { fetchReservedSlotsForSchool, createReservedSlot, deleteReservedSlot } from '../services/reservedSlots'
 
 // Libellés courts des 5 catégories du score pondéré, pour l'affichage du détail
 // (voir computeScoreBreakdown dans services/schools.js).
@@ -492,6 +493,14 @@ export default function SchoolDetailPage() {
   const [saveError, setSaveError] = useState('')
 
   // ── Élèves liés à cette fiche ─────────────────────────────────────────────
+  // ── Créneaux réservés ─────────────────────────────────────────────────────
+  const [reservedSlots, setReservedSlots]         = useState([])
+  const [newSlot, setNewSlot]                     = useState({ jourSemaine: 1, heureDebut: '09:00', dureeMinutes: 60, libelle: '' })
+  const [addingSlot, setAddingSlot]               = useState(false)
+  const [slotError, setSlotError]                 = useState('')
+  const [deletingSlotId, setDeletingSlotId]       = useState(null)
+
+  // ── Élèves liés à cette fiche ─────────────────────────────────────────────
   const [paidStudents, setPaidStudents]         = useState([])   // CESU : payés par cet employeur
   const [attachedStudents, setAttachedStudents] = useState([])   // École : cours dispensés ici
   const [allStudents, setAllStudents]           = useState([])   // tous les élèves (recherche)
@@ -527,6 +536,8 @@ export default function SchoolDetailPage() {
         } else {
           fetchStudentsAttachedToSchool(id, user.id).then(setAttachedStudents).catch(() => {})
         }
+        // Créneaux réservés de cette école
+        fetchReservedSlotsForSchool(id).then(setReservedSlots).catch(() => {})
       } catch (err) {
         setError(err.message)
       }
@@ -553,6 +564,38 @@ export default function SchoolDetailPage() {
       setSaveError(err.message)
     }
     setSaving(false)
+  }
+
+  // ── Handlers créneaux réservés ───────────────────────────────────────────
+  const handleAddSlot = async () => {
+    if (!newSlot.libelle.trim()) { setSlotError('Le libellé est obligatoire.'); return }
+    setAddingSlot(true); setSlotError('')
+    try {
+      const created = await createReservedSlot({
+        teacherId:    teacherId,
+        schoolId:     id,
+        jourSemaine:  Number(newSlot.jourSemaine),
+        heureDebut:   newSlot.heureDebut,
+        dureeMinutes: Number(newSlot.dureeMinutes),
+        libelle:      newSlot.libelle.trim(),
+      })
+      setReservedSlots((prev) => [...prev, created])
+      setNewSlot({ jourSemaine: 1, heureDebut: '09:00', dureeMinutes: 60, libelle: '' })
+    } catch (err) {
+      setSlotError(err.message)
+    }
+    setAddingSlot(false)
+  }
+
+  const handleDeleteSlot = async (slotId) => {
+    setDeletingSlotId(slotId)
+    try {
+      await deleteReservedSlot(slotId)
+      setReservedSlots((prev) => prev.filter((s) => s.id !== slotId))
+    } catch {
+      // Erreur silencieuse — l'item reste dans la liste
+    }
+    setDeletingSlotId(null)
   }
 
   if (loading) return (
@@ -1300,6 +1343,96 @@ export default function SchoolDetailPage() {
               : <span className="text-foreground whitespace-pre-wrap">{val(data.notes)}</span>
             }
           </Field>
+        </div>
+      </Section>
+
+      {/* ─── Section : Créneaux réservés ─────────────────────────────────────── */}
+      {/* Créneaux fixes imposés par l'école (ex : "Intervention primaire" vendredi 14h).
+          Distincts des cours élèves — affichés en hachures dans la grille de planning. */}
+      <Section title="Créneaux réservés" help="Engagements contractuels envers cette école sans élève précis. Ils apparaissent dans la grille de planning sous forme hachurée et bloquent la sélection d'un nouveau cours au même moment.">
+        {/* Liste des créneaux existants */}
+        {reservedSlots.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic">Aucun créneau réservé pour cette école.</p>
+        ) : (
+          <div className="space-y-2 mb-4">
+            {reservedSlots.map((rs) => {
+              const jourLabel = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'][rs.jourSemaine]
+              return (
+                <div key={rs.id} className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm">
+                  <div className="min-w-0">
+                    <p className="font-medium text-foreground truncate">{rs.libelle}</p>
+                    <p className="text-xs text-muted-foreground">{jourLabel} · {rs.heureDebut} · {rs.dureeMinutes} min</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteSlot(rs.id)}
+                    disabled={deletingSlotId === rs.id}
+                    title="Supprimer ce créneau"
+                    className="p-1.5 rounded-lg border border-guitar-600/30 text-guitar-400 hover:bg-guitar-600/10 transition-colors disabled:opacity-40 shrink-0"
+                  >
+                    {deletingSlotId === rs.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Formulaire d'ajout */}
+        <div className="border-t border-border-subtle pt-4 space-y-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Ajouter un créneau réservé</p>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Jour</label>
+              <select
+                value={newSlot.jourSemaine}
+                onChange={(e) => setNewSlot((p) => ({ ...p, jourSemaine: Number(e.target.value) }))}
+                className="w-full px-2.5 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+              >
+                {[['1','Lundi'],['2','Mardi'],['3','Mercredi'],['4','Jeudi'],['5','Vendredi'],['6','Samedi'],['0','Dimanche']].map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Heure de début</label>
+              <input
+                type="time"
+                value={newSlot.heureDebut}
+                onChange={(e) => setNewSlot((p) => ({ ...p, heureDebut: e.target.value }))}
+                className="w-full px-2.5 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Durée (minutes)</label>
+            <input
+              type="number" min="15" max="480" step="15"
+              value={newSlot.dureeMinutes}
+              onChange={(e) => setNewSlot((p) => ({ ...p, dureeMinutes: Number(e.target.value) }))}
+              className="w-full px-2.5 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Libellé <span className="text-guitar-400">*</span></label>
+            <input
+              type="text"
+              value={newSlot.libelle}
+              onChange={(e) => setNewSlot((p) => ({ ...p, libelle: e.target.value }))}
+              placeholder="ex : Intervention école primaire"
+              className="w-full px-2.5 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+            />
+          </div>
+          {slotError && <p className="text-xs text-guitar-400">{slotError}</p>}
+          <button
+            type="button"
+            onClick={handleAddSlot}
+            disabled={addingSlot}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-40"
+          >
+            {addingSlot ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            Ajouter ce créneau
+          </button>
         </div>
       </Section>
 

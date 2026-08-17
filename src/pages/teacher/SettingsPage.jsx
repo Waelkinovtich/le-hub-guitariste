@@ -61,6 +61,13 @@ export default function SettingsPage() {
   const navigate = useNavigate()
   const location = useLocation()
 
+  // ── Préférences de planification (Planning intelligent) ──────────────────
+  const [preferredDaysOff,      setPreferredDaysOff]      = useState([])     // ex: ['Lundi', 'Mercredi']
+  const [preferredProximityDay, setPreferredProximityDay] = useState('')      // ex: 'Samedi' ou ''
+  const [savingPrefs,  setSavingPrefs]  = useState(false)
+  const [savedPrefs,   setSavedPrefs]   = useState(false)
+  const [errorPrefs,   setErrorPrefs]   = useState(null)
+
   // ── Abonnement calendrier ──────────────────────────────────────────────────
   const [calendarToken, setCalendarToken]     = useState(null)
   const [generatingToken, setGeneratingToken] = useState(false)
@@ -179,6 +186,9 @@ export default function SettingsPage() {
             setGeocodeInfo('Coordonnées enregistrées.')
           }
           if (data.calendar_token) setCalendarToken(data.calendar_token)
+          // Préférences de planification (nouvelles colonnes — peut être null avant migration)
+          if (Array.isArray(data.preferred_days_off)) setPreferredDaysOff(data.preferred_days_off)
+          setPreferredProximityDay(data.preferred_proximity_day ?? '')
         }
         setProfLoaded(true)
       })
@@ -334,6 +344,25 @@ export default function SettingsPage() {
     if (err) return
     setUser((prev) => ({ ...prev, scoreWeights: w }))
     setSavedWeights(true); setTimeout(() => setSavedWeights(false), 2000)
+  }
+
+  // ── Préférences de planification ─────────────────────────────────────────
+
+  function toggleDayOff(dayName) {
+    setPreferredDaysOff((prev) =>
+      prev.includes(dayName) ? prev.filter((d) => d !== dayName) : [...prev, dayName]
+    )
+  }
+
+  async function handleSavePrefs() {
+    setSavingPrefs(true); setErrorPrefs(null)
+    const { error: err } = await supabase.from('profiles').update({
+      preferred_days_off:      preferredDaysOff,
+      preferred_proximity_day: preferredProximityDay || null,
+    }).eq('id', user.id)
+    setSavingPrefs(false)
+    if (err) { setErrorPrefs('Erreur : ' + err.message); return }
+    setSavedPrefs(true); setTimeout(() => setSavedPrefs(false), 2000)
   }
 
   // ── Handlers calendrier ───────────────────────────────────────────────────
@@ -1158,6 +1187,86 @@ export default function SettingsPage() {
             }
           </p>
         )}
+      </section>
+
+      {/* ── Préférences de planification (Planning intelligent) ───────────────── */}
+      <section className="glass-panel rounded-2xl p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-9 h-9 rounded-xl bg-guitar-600/15 flex items-center justify-center">
+            <CalendarDays className="w-4 h-4 text-guitar-400" />
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5">
+              <h2 className="font-semibold">Préférences de planification</h2>
+              <HelpTooltip texte="Ces préférences influencent le score des propositions du Planning intelligent. Elles n'éliminent jamais une proposition : un créneau sur un jour à éviter reste proposé, mais moins bien classé." position="right" />
+            </div>
+            <p className="text-sm text-muted-foreground">Jours à éviter et jour de proximité préféré</p>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          {/* Jours à éviter */}
+          <div>
+            <p className="text-sm font-medium mb-2">
+              Jours à éviter
+              <span className="ml-2 text-xs text-muted-foreground font-normal">— malus de −2 pts dans le Planning intelligent</span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'].map((jour) => {
+                const actif = preferredDaysOff.includes(jour)
+                return (
+                  <button
+                    key={jour}
+                    type="button"
+                    onClick={() => toggleDayOff(jour)}
+                    className={`px-3 py-1.5 rounded-xl border text-sm font-medium transition-all ${
+                      actif
+                        ? 'bg-guitar-600/15 border-guitar-600/40 text-guitar-400'
+                        : 'border-border-subtle text-muted-foreground hover:text-foreground hover:bg-surface-overlay'
+                    }`}
+                  >
+                    {actif ? '✕ ' : ''}{jour}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Jour de proximité préféré */}
+          <div>
+            <p className="text-sm font-medium mb-1">
+              Jour de proximité préférée
+              <span className="ml-2 text-xs text-muted-foreground font-normal">— bonus de +1 pt pour les écoles proches du domicile ce jour (seuil : 20 km)</span>
+            </p>
+            <p className="text-xs text-muted-foreground mb-2">
+              Par exemple : si vous choisissez Samedi, les écoles situées à moins de 20 km de votre domicile seront favorisées dans les propositions du samedi.
+            </p>
+            <select
+              value={preferredProximityDay}
+              onChange={(e) => setPreferredProximityDay(e.target.value)}
+              className={inputCls + ' max-w-xs'}
+            >
+              <option value="">— Aucune préférence de proximité —</option>
+              {['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'].map((jour) => (
+                <option key={jour} value={jour}>{jour}</option>
+              ))}
+            </select>
+          </div>
+
+          {errorPrefs && (
+            <p className="text-xs text-guitar-400">{errorPrefs}</p>
+          )}
+
+          <button
+            type="button"
+            onClick={handleSavePrefs}
+            disabled={savingPrefs}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-40"
+          >
+            {savingPrefs ? <Loader2 className="w-4 h-4 animate-spin" /> : savedPrefs ? <Check className="w-4 h-4" /> : null}
+            {savedPrefs ? 'Enregistré' : 'Enregistrer les préférences'}
+          </button>
+        </div>
       </section>
 
       {/* ── Abonnement calendrier ─────────────────────────────────────────────── */}
