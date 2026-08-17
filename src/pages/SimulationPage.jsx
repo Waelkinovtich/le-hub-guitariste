@@ -4,7 +4,10 @@ import { BarChart2, Target, AlertCircle, Star, Clock, Euro, TrendingUp, Info, Ch
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
-import { fetchSchoolsOverview, currentSchoolYear, SEMAINES_PAR_MOIS } from '../services/schools'
+import { fetchSchoolsOverview, currentSchoolYear } from '../services/schools'
+import {
+  calculerRevenuMensuelEcole, determinerTypeLissage,
+} from '../utils/revenueEcole'
 import { allSchoolYears } from '../context/PeriodContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -127,12 +130,15 @@ function repartirHeuresSelonPriorite(schools, plafondHebdo) {
 /**
  * Enrichit chaque école du résultat de simulation avec le revenu mensuel estimé.
  * Séparé de repartirHeuresSelonPriorite pour garder la fonction pure sans
- * dépendance à SEMAINES_PAR_MOIS (constante monétaire vs allocation d'heures).
+ * dépendance au calcul calendaire (allocation d'heures vs revenu).
  *
  * Utilise netHourlyYieldReal (rendement réel, décote fiabilité incluse) plutôt
  * que currentNetRate brut — même logique que SchoolsPage/SchoolsComparativePage.
+ *
+ * @param {string} [opts.schoolYear]   Année scolaire sélectionnée (ex: '2025-2026')
+ * @param {string} [opts.teacherZone]  Zone de vacances du prof (fallback si école sans zone)
  */
-function simuler(schools, plafondHebdo) {
+function simuler(schools, plafondHebdo, { schoolYear, teacherZone } = {}) {
   if (!schools.length || !plafondHebdo) {
     return schools.map(s => ({ ...s, heuresHebdoProposees: null, volumeFixe: false, revenuMensuelEstime: null }))
   }
@@ -141,9 +147,19 @@ function simuler(schools, plafondHebdo) {
 
   return avecHeures.map(s => {
     const tauxRetenu = s.netHourlyYieldReal ?? s.currentNetRate
-    const mensuel = (tauxRetenu && s.heuresHebdoProposees != null && s.heuresHebdoProposees > 0)
-      ? s.heuresHebdoProposees * SEMAINES_PAR_MOIS * tauxRetenu
-      : null
+    if (!tauxRetenu || s.heuresHebdoProposees == null || s.heuresHebdoProposees <= 0) {
+      return { ...s, revenuMensuelEstime: null }
+    }
+    const zone = s.vacation_zone_override ?? teacherZone ?? 'B'
+    const typeLissage = determinerTypeLissage(s.payment_smoothing, s.payment_duration)
+    const mensuel = calculerRevenuMensuelEcole({
+      heuresHebdo:   s.heuresHebdoProposees,
+      tauxHoraire:   tauxRetenu,
+      typeLissage,
+      anneeScolaire: schoolYear,
+      zone,
+      primeAnnuelle: s.estimated_annual_bonus ?? 0,
+    })
     return { ...s, revenuMensuelEstime: mensuel }
   })
 }
@@ -154,10 +170,11 @@ export default function SimulationPage() {
   const { user } = useAuth()
   const [schoolYear, setSchoolYear] = useState(currentSchoolYear())
 
-  const [schools,    setSchools]    = useState([])
-  const [objectives, setObjectives] = useState(null)
-  const [loading,    setLoading]    = useState(true)
-  const [error,      setError]      = useState('')
+  const [schools,     setSchools]     = useState([])
+  const [objectives,  setObjectives]  = useState(null)
+  const [teacherZone, setTeacherZone] = useState('B')
+  const [loading,     setLoading]     = useState(true)
+  const [error,       setError]       = useState('')
 
   useEffect(() => {
     if (!user?.id) return
@@ -172,11 +189,17 @@ export default function SimulationPage() {
         .eq('teacher_id', user.id)
         .eq('school_year', schoolYear)
         .maybeSingle(),
+      supabase
+        .from('profiles')
+        .select('school_zone')
+        .eq('id', user.id)
+        .maybeSingle(),
     ])
-      .then(([schoolData, { data: obj, error: objErr }]) => {
+      .then(([schoolData, { data: obj, error: objErr }, { data: prof }]) => {
         if (objErr) throw new Error(objErr.message)
         setSchools(schoolData)
         setObjectives(obj)
+        if (prof?.school_zone) setTeacherZone(prof.school_zone)
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
@@ -187,8 +210,9 @@ export default function SimulationPage() {
     return simuler(
       schools,
       objectives?.plafond_heures_hebdo ? parseFloat(objectives.plafond_heures_hebdo) : null,
+      { schoolYear, teacherZone },
     )
-  }, [schools, objectives])
+  }, [schools, objectives, schoolYear, teacherZone])
 
   const totaux = useMemo(() => {
     const hTotal = simulation.reduce((acc, s) => acc + (s.heuresHebdoProposees ?? 0), 0)
@@ -238,12 +262,23 @@ export default function SimulationPage() {
           <HelpTooltip texte="Revenu cible et plafond horaire configurés dans la page Objectifs. Modifiez-les là-bas, la simulation se recalcule." position="right" />
         </p>
         {objectives ? (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Stat icon={Euro}     label="Revenu mensuel cible"  value={fmt(objectives.revenu_mensuel_cible, '€')} />
-            <Stat icon={Clock}    label="Plafond hebdomadaire"  value={fmt(objectives.plafond_heures_hebdo, 'h')} />
-            <Stat icon={BarChart2} label="Budget km/mois"       value={fmt(objectives.budget_km_mensuel, 'km')} />
-            <Stat icon={TrendingUp} label="Budget carburant"    value={fmt(objectives.budget_carburant_mensuel, '€')} />
-          </div>
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <Stat icon={Euro}      label="Revenu mensuel cible" value={fmt(objectives.revenu_mensuel_cible, '€')} />
+              <Stat icon={Clock}     label="Plafond hebdomadaire" value={fmt(objectives.plafond_heures_hebdo, 'h')} />
+              <Stat icon={BarChart2} label="Budget km/mois"       value={fmt(objectives.budget_km_mensuel, 'km')} />
+              <Stat icon={TrendingUp} label="Budget carburant"    value={fmt(objectives.budget_carburant_mensuel, '€')} />
+            </div>
+            {objectives.budget_carburant_mensuel != null && (
+              <p className="mt-3 text-xs text-muted-foreground flex items-start gap-1.5">
+                <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                Ce simulateur ne calcule pas les coûts de trajet — consultez la{' '}
+                <a href="/admin/trajets" className="text-guitar-400 underline underline-offset-2 hover:opacity-80">page Trajets</a>
+                {' '}pour l'analyse kilométrique par école.
+              </p>
+            )}
+          </>
+
         ) : (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Info className="w-4 h-4 shrink-0" />
@@ -341,7 +376,8 @@ function Stat({ icon: Icon, label, value, highlight }) {
 function SchoolRow({ school, plafond }) {
   const navigate = useNavigate()
   const { name, priorityScore, heuresHebdoProposees, revenuMensuelEstime,
-          currentNetRate, netHourlyYieldReal, volumeFixe } = school
+          currentNetRate, netHourlyYieldReal, volumeFixe,
+          weekly_presence_days } = school
   const pct = plafond && heuresHebdoProposees ? Math.round((heuresHebdoProposees / plafond) * 100) : 0
   // Fiabilité réduite (CESU par défaut, ou correction manuelle à la baisse) : le
   // revenu estimé ci-dessus tient déjà compte de la décote — cette ligne rend
@@ -370,6 +406,9 @@ function SchoolRow({ school, plafond }) {
           {!volumeFixe && <ScoreDots score={priorityScore} />}
           {volumeFixe && (
             <p className="text-xs text-muted-foreground mt-0.5">Volume contractuel non-négociable</p>
+          )}
+          {weekly_presence_days != null && (
+            <p className="text-xs text-muted mt-0.5">{weekly_presence_days} j / sem.</p>
           )}
         </div>
         <div className="text-right shrink-0">

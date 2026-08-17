@@ -78,6 +78,10 @@ const PROFILE_COLUMNS = [
   // un professeur seul n'a pas besoin de distinguer "premier cours" et "début de contrat".
   // À ré-exposer si le produit évolue vers un multi-utilisateur avec historique complet.
   'contract_first_date', 'contract_end_date',
+  // Tâche 2 : prime annuelle estimée — utilisée dans calculerRevenuMensuelEcole
+  'estimated_annual_bonus',
+  // Tâche 3 : jours de présence — affichage organisationnel uniquement
+  'weekly_presence_days',
   'created_at',
 ].join(', ')
 

@@ -963,6 +963,36 @@ export default function SchoolDetailPage() {
           </Field>
         )}
 
+        {/* Tâche 2 : prime annuelle estimée */}
+        <Field
+          label="Prime annuelle estimée"
+          hint={editing
+            ? "Montant brut de prime perçue chaque année dans cette école (ex : prime de rentrée). Laisser vide si aucune prime. Utilisée dans le simulateur pour affiner le revenu mensuel estimé."
+            : null
+          }
+        >
+          {editing
+            ? <div className="relative">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={data.estimated_annual_bonus ?? ''}
+                  onChange={(e) => set('estimated_annual_bonus')(e.target.value ? Number(e.target.value) : null)}
+                  placeholder="Ex : 200"
+                  className={inputCls + ' pr-12'}
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted pointer-events-none">€ / an</span>
+              </div>
+            : <span className="text-foreground">
+                {data.estimated_annual_bonus != null
+                  ? `${Number(data.estimated_annual_bonus).toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} € / an`
+                  : <span className="text-muted-foreground italic">Non renseignée</span>
+                }
+              </span>
+          }
+        </Field>
+
         {/* Résumé combiné en lecture seule */}
         {!editing && (data.payment_duration || data.payment_smoothing) && (
           <div className="text-xs text-muted-foreground bg-surface-raised rounded-lg px-3 py-2 border border-border-subtle">
@@ -1039,6 +1069,38 @@ export default function SchoolDetailPage() {
             }
           </Field>
         </div>
+
+        {/* Tâche 3 : jours de présence hebdomadaires */}
+        <Field
+          label="Jours de présence par semaine"
+          hint={editing
+            ? "Nombre de jours distincts par semaine où vous vous déplacez dans cette école (1 = un seul jour fixe, 3 = lundi + mercredi + vendredi, etc.). Purement organisationnel, sans impact sur le calcul de revenu."
+            : null
+          }
+        >
+          {editing
+            ? <div className="flex gap-2 flex-wrap">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => set('weekly_presence_days')(data.weekly_presence_days === n ? null : n)}
+                    className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                      data.weekly_presence_days === n
+                        ? 'border-guitar-600/40 bg-guitar-600/15 text-guitar-400'
+                        : 'border-border-subtle text-muted-foreground hover:border-border'
+                    }`}
+                  >{n}j</button>
+                ))}
+              </div>
+            : <span className="text-foreground">
+                {data.weekly_presence_days != null
+                  ? `${data.weekly_presence_days} jour${data.weekly_presence_days > 1 ? 's' : ''} / semaine`
+                  : <span className="text-muted-foreground italic">Non renseigné</span>
+                }
+              </span>
+          }
+        </Field>
 
         <Field label="Qualité des locaux" hint="Espace de travail, acoustique, luminosité, propreté…">
           {editing
