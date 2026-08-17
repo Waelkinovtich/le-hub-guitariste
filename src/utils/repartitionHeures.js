@@ -111,7 +111,10 @@ export function repartirHeuresSelonPriorite(schools, plafondHebdo, diversificati
   // Calcul des bornes réalistes pour chaque école flexible.
   const etat = flexiblesTriees.map((s) => {
     const base = s.current_weekly_hours ?? 0
-    // Plafond : gain max + contrainte desired_weekly_hours si renseignée
+    // desired_weekly_hours : null = non renseigné (pas de contrainte côté école),
+    //                        0   = l'école a explicitement zéro heure souhaitées.
+    // Math.min(plafondRealiste, 0) = 0 → l'école est exclue de la répartition.
+    // Si un 0 accidentel existe en base, corriger via migration-correction-desired-weekly-hours.sql.
     const plafondRealiste = base + GAIN_MAX_REALISTE_HEBDO
     const plafondEcole    = s.desired_weekly_hours != null
       ? Math.min(plafondRealiste, s.desired_weekly_hours)
