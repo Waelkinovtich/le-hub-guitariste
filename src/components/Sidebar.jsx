@@ -5,7 +5,7 @@ import {
   ClipboardList, TrendingUp, ClipboardCheck, Settings, RotateCcw,
   Music2, Send, FileText, School, BarChart2, ChevronDown, ChevronUp,
   StickyNote, TableProperties, Euro, MessageSquare, GripVertical, RotateCcw as Reset,
-  CalendarDays, X, Brain, Target, Sliders, Car,
+  CalendarDays, X, Brain, Target, Car,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
@@ -23,11 +23,6 @@ const sondageLinks = [
 const planningLinks = [
   { to: '/professeur/planning',       icon: Calendar, label: 'Vue du planning' },
   { to: '/admin/planning-intelligent', icon: Brain,    label: 'Planning intelligent' },
-]
-
-const objectifsLinks = [
-  { to: '/admin/objectifs',   icon: Target,   label: 'Mes objectifs' },
-  { to: '/admin/simulation',  icon: Sliders,  label: 'Simulateur de répartition' },
 ]
 
 const ecolesLinks = [
@@ -57,7 +52,7 @@ const ALL_NAV_ITEMS = [
   { id: 'rattrapage',      type: 'link', to: '/professeur/rattrapage', icon: RotateCcw,       label: 'Rattrapage' },
   { id: 'ecoles',          type: 'dropdown', label: 'Écoles' },
   { id: 'sondages',        type: 'dropdown', label: 'Sondages' },
-  { id: 'objectifs',       type: 'dropdown', label: 'Objectifs' },
+  { id: 'objectifs',       type: 'custom',   label: 'Objectifs & Simulateur' },
 ]
 
 const DEFAULT_ORDER = ALL_NAV_ITEMS.map((i) => i.id)
@@ -170,42 +165,10 @@ function SondagesDropdown({ badges = {} }) {
   )
 }
 
-function ObjectifsDropdown() {
-  const location = useLocation()
-  const isActive = location.pathname.startsWith('/admin/objectifs')
-    || location.pathname.startsWith('/admin/simulation')
-  const [open, setOpen] = useState(isActive)
-
-  return (
-    <div>
-      <button
-        type="button" onClick={() => setOpen((v) => !v)}
-        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-          isActive ? 'text-guitar-400' : 'text-muted-foreground hover:text-foreground hover:bg-surface-overlay'
-        }`}
-      >
-        <div className="flex items-center gap-3">
-          <Target className="w-4 h-4 shrink-0" />Objectifs
-        </div>
-        {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-      </button>
-      {open && (
-        <div className="mt-1 ml-4 pl-3 border-l border-border-subtle space-y-0.5">
-          {objectifsLinks.map((link) => (
-            <NavLink key={link.to} to={link.to} end
-              className={({ isActive: a }) =>
-                'flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition-all ' +
-                (a ? 'bg-guitar-600/15 text-guitar-400 border border-guitar-600/25'
-                   : 'text-muted-foreground hover:text-foreground hover:bg-surface-overlay')
-              }
-            >
-              <link.icon className="w-3.5 h-3.5 shrink-0" />{link.label}
-            </NavLink>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+// Objectifs & Simulateur — lien simple depuis la fusion des deux pages
+// (ex-dropdown avec 2 sous-liens supprimé, toute la logique est dans ObjectivesPage.jsx)
+function ObjectifsNav() {
+  return <NavItem to="/admin/objectifs" icon={Target} label="Objectifs & Simulateur" />
 }
 
 function PlanningDropdown() {
@@ -500,7 +463,7 @@ function TeacherNav({ userId }) {
               {item.id === 'ecoles' && <EcolesDropdown />}
               {item.id === 'sondages' && <SondagesDropdown badges={badges} />}
               {item.id === 'planning' && <PlanningDropdown />}
-              {item.id === 'objectifs' && <ObjectifsDropdown />}
+              {item.id === 'objectifs' && <ObjectifsNav />}
             </div>
           </div>
         )

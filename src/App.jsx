@@ -43,7 +43,6 @@ const RevenueTrackingPage    = lazy(() => import('./pages/RevenueTrackingPage'))
 const MessageTemplatesPage   = lazy(() => import('./pages/MessageTemplatesPage'))
 const SchedulingAssistantPage = lazy(() => import('./pages/SchedulingAssistantPage'))
 const ObjectivesPage         = lazy(() => import('./pages/ObjectivesPage'))
-const SimulationPage         = lazy(() => import('./pages/SimulationPage'))
 const TravelPage             = lazy(() => import('./pages/TravelPage'))
 
 // ─── Écran de chargement (fallback Suspense) ──────────────────────────────────
@@ -124,7 +123,7 @@ function AppShell() {
             <Route path="messages" element={<MessageTemplatesPage />} />
             <Route path="planning-intelligent" element={<SchedulingAssistantPage />} />
             <Route path="objectifs" element={<ObjectivesPage />} />
-            <Route path="simulation" element={<SimulationPage />} />
+            <Route path="simulation" element={<Navigate to="/admin/objectifs" replace />} />
             <Route path="deplacements" element={<TravelPage />} />
           </Route>
 
