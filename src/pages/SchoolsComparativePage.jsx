@@ -32,6 +32,7 @@ function buildCsv(schools) {
     { key: 'director_email',             label: 'E-mail direction' },
     { key: 'contract_start_date',        label: 'Début contrat' },
     { key: 'notice_period',              label: 'Préavis' },
+    { key: 'estimated_annual_bonus',    label: 'Prime annuelle estimée (€)' },
     { key: 'payment_delay',             label: 'Délai de paiement' },
     { key: 'shared_room',                label: 'Salle partagée' },
     { key: 'parking_rating',            label: 'Parking (étoiles)' },
@@ -92,6 +93,18 @@ function fmtRate(v) {
   return <span>{Number(v).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h</span>
 }
 
+// Affiche la prime annuelle estimée avec un + pour signaler qu'il s'agit d'un
+// revenu complémentaire au taux horaire, pas d'un tarif comparable.
+// Couleur distincte de "net réel" (vert) et de "données manquantes" (muet).
+function fmtPrime(v) {
+  if (v == null) return <span className="text-muted-foreground text-xs">—</span>
+  return (
+    <span className="inline-flex items-center text-xs font-medium text-amber-600 dark:text-amber-400">
+      +{Number(v).toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} € / an
+    </span>
+  )
+}
+
 // ─── Synthèse d'alignement avec les priorités actuelles ──────────────────────
 //
 // Ancrée sur le MAXIMUM du score pondéré observé parmi les écoles actuellement
@@ -125,15 +138,17 @@ function classerAlignementPriorites(score, maxScoreAffiche) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const COLUMNS = [
-  { key: 'name',                 label: 'École' },
-  { key: 'studentCount',         label: 'Élèves' },
-  { key: 'current_weekly_hours', label: 'Heures act.' },
-  { key: 'desired_weekly_hours', label: 'Heures souh.' },
-  { key: 'currentNetRate',       label: 'Taux net' },
-  { key: 'netHourlyYieldReal',   label: '≈ Net réel/h' },
-  { key: 'contract_type',        label: 'Contrat' },
-  { key: 'priorityScore',        label: 'Score pondéré' },
-  { key: 'tags',                 label: 'Mots-clés' },
+  { key: 'name',                    label: 'École' },
+  { key: 'studentCount',            label: 'Élèves' },
+  { key: 'current_weekly_hours',    label: 'Heures act.' },
+  { key: 'desired_weekly_hours',    label: 'Heures souh.' },
+  { key: 'currentNetRate',          label: 'Taux net' },
+  { key: 'netHourlyYieldReal',      label: '≈ Net réel/h' },
+  // Triable : desc place les structures avec prime en haut, null en bas.
+  { key: 'estimated_annual_bonus',  label: 'Prime / an' },
+  { key: 'contract_type',           label: 'Contrat' },
+  { key: 'priorityScore',           label: 'Score pondéré' },
+  { key: 'tags',                    label: 'Mots-clés' },
 ]
 
 export default function SchoolsComparativePage() {
@@ -348,6 +363,7 @@ export default function SchoolsComparativePage() {
                         : `≈ ${school.netHourlyYieldReal.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €/h`
                       }
                     </td>
+                    <td className="px-4 py-3">{fmtPrime(school.estimated_annual_bonus)}</td>
                     <td className="px-4 py-3">
                       {school.contract_type
                         ? <div className="text-xs space-y-0.5">
