@@ -13,16 +13,20 @@ async function getTeacherInfo() {
   if (!user) return null
   const { data } = await supabase
     .from('profiles')
-    .select('id, school_zone, preferred_days_off, preferred_proximity_day, home_latitude, home_longitude')
+    .select('id, school_zone, preferred_days_off, preferred_proximity_day, preferred_proximity_days, home_latitude, home_longitude')
     .eq('id', user.id)
     .single()
+  // Rétrocompat : si preferred_proximity_days (nouveau) est vide, on replier sur l'ancien champ texte
+  const newDays = Array.isArray(data?.preferred_proximity_days) && data.preferred_proximity_days.length > 0
+    ? data.preferred_proximity_days
+    : data?.preferred_proximity_day ? [data.preferred_proximity_day] : []
   return {
-    id:                   data?.id                   ?? null,
-    zone:                 data?.school_zone           ?? 'B',
-    preferredDaysOff:     data?.preferred_days_off    ?? [],
-    preferredProximityDay: data?.preferred_proximity_day ?? null,
-    homeLat:              data?.home_latitude         ?? null,
-    homeLng:              data?.home_longitude        ?? null,
+    id:                    data?.id               ?? null,
+    zone:                  data?.school_zone       ?? 'B',
+    preferredDaysOff:      data?.preferred_days_off ?? [],
+    preferredProximityDays: newDays,
+    homeLat:               data?.home_latitude    ?? null,
+    homeLng:               data?.home_longitude   ?? null,
   }
 }
 
@@ -237,10 +241,10 @@ export default function SchedulingAssistantPage() {
         zone,
         maxResults: 5,
         reservedSlots,
-        preferredDaysOff:     teacherInfo?.preferredDaysOff     ?? [],
-        preferredProximityDay: teacherInfo?.preferredProximityDay ?? null,
-        teacherHomeLat:       teacherInfo?.homeLat               ?? null,
-        teacherHomeLng:       teacherInfo?.homeLng               ?? null,
+        preferredDaysOff:      teacherInfo?.preferredDaysOff      ?? [],
+        preferredProximityDays: teacherInfo?.preferredProximityDays ?? [],
+        teacherHomeLat:        teacherInfo?.homeLat               ?? null,
+        teacherHomeLng:        teacherInfo?.homeLng               ?? null,
       })
     }
     return map

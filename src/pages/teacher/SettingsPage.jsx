@@ -62,8 +62,10 @@ export default function SettingsPage() {
   const location = useLocation()
 
   // ── Préférences de planification (Planning intelligent) ──────────────────
-  const [preferredDaysOff,      setPreferredDaysOff]      = useState([])     // ex: ['Lundi', 'Mercredi']
-  const [preferredProximityDay, setPreferredProximityDay] = useState('')      // ex: 'Samedi' ou ''
+  // preferred_days_off : tableau d'objets { jour, mode, heure_debut?, heure_fin? }
+  const [preferredDaysOff,       setPreferredDaysOff]       = useState([])
+  // preferred_proximity_days : tableau de noms de jours
+  const [preferredProximityDays, setPreferredProximityDays] = useState([])
   const [savingPrefs,  setSavingPrefs]  = useState(false)
   const [savedPrefs,   setSavedPrefs]   = useState(false)
   const [errorPrefs,   setErrorPrefs]   = useState(null)
@@ -186,9 +188,19 @@ export default function SettingsPage() {
             setGeocodeInfo('Coordonnées enregistrées.')
           }
           if (data.calendar_token) setCalendarToken(data.calendar_token)
-          // Préférences de planification (nouvelles colonnes — peut être null avant migration)
-          if (Array.isArray(data.preferred_days_off)) setPreferredDaysOff(data.preferred_days_off)
-          setPreferredProximityDay(data.preferred_proximity_day ?? '')
+          // Préférences de planification — normalisation rétrocompat au chargement
+          if (Array.isArray(data.preferred_days_off)) {
+            // Rétrocompat : anciens enregistrements sous forme de chaînes simples
+            setPreferredDaysOff(data.preferred_days_off.map((e) =>
+              typeof e === 'string' ? { jour: e, mode: 'toute_la_journee' } : e
+            ))
+          }
+          // preferred_proximity_days (nouvelle colonne) avec repli sur l'ancien champ texte
+          if (Array.isArray(data.preferred_proximity_days) && data.preferred_proximity_days.length > 0) {
+            setPreferredProximityDays(data.preferred_proximity_days)
+          } else if (data.preferred_proximity_day) {
+            setPreferredProximityDays([data.preferred_proximity_day])
+          }
         }
         setProfLoaded(true)
       })
@@ -348,17 +360,41 @@ export default function SettingsPage() {
 
   // ── Préférences de planification ─────────────────────────────────────────
 
-  function toggleDayOff(dayName) {
+  function isDayOff(jour) {
+    return preferredDaysOff.some((e) => e.jour === jour)
+  }
+
+  function toggleDayOff(jour) {
     setPreferredDaysOff((prev) =>
-      prev.includes(dayName) ? prev.filter((d) => d !== dayName) : [...prev, dayName]
+      isDayOff(jour)
+        ? prev.filter((e) => e.jour !== jour)
+        : [...prev, { jour, mode: 'toute_la_journee' }]
+    )
+  }
+
+  function setDayMode(jour, mode) {
+    setPreferredDaysOff((prev) => prev.map((e) =>
+      e.jour !== jour ? e : { ...e, mode }
+    ))
+  }
+
+  function setDayTime(jour, field, value) {
+    setPreferredDaysOff((prev) => prev.map((e) =>
+      e.jour !== jour ? e : { ...e, [field]: value }
+    ))
+  }
+
+  function toggleProximityDay(jour) {
+    setPreferredProximityDays((prev) =>
+      prev.includes(jour) ? prev.filter((d) => d !== jour) : [...prev, jour]
     )
   }
 
   async function handleSavePrefs() {
     setSavingPrefs(true); setErrorPrefs(null)
     const { error: err } = await supabase.from('profiles').update({
-      preferred_days_off:      preferredDaysOff,
-      preferred_proximity_day: preferredProximityDay || null,
+      preferred_days_off:       preferredDaysOff,
+      preferred_proximity_days: preferredProximityDays,
     }).eq('id', user.id)
     setSavingPrefs(false)
     if (err) { setErrorPrefs('Erreur : ' + err.message); return }
@@ -1211,9 +1247,9 @@ export default function SettingsPage() {
               Jours à éviter
               <span className="ml-2 text-xs text-muted-foreground font-normal">— malus de −2 pts dans le Planning intelligent</span>
             </p>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 mb-3">
               {['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'].map((jour) => {
-                const actif = preferredDaysOff.includes(jour)
+                const actif = isDayOff(jour)
                 return (
                   <button
                     key={jour}
@@ -1230,27 +1266,87 @@ export default function SettingsPage() {
                 )
               })}
             </div>
+            {/* Détail de chaque jour sélectionné : toute la journée ou plage horaire */}
+            {preferredDaysOff.length > 0 && (
+              <div className="space-y-2">
+                {preferredDaysOff.map((pref) => (
+                  <div key={pref.jour} className="flex flex-wrap items-center gap-3 px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle">
+                    <span className="text-sm font-medium text-guitar-400 w-20 shrink-0">{pref.jour}</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDayMode(pref.jour, 'toute_la_journee')}
+                        className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-all ${
+                          pref.mode === 'toute_la_journee'
+                            ? 'bg-guitar-600/15 border-guitar-600/40 text-guitar-400'
+                            : 'border-border-subtle text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        Toute la journée
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDayMode(pref.jour, 'plage')}
+                        className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-all ${
+                          pref.mode === 'plage'
+                            ? 'bg-guitar-600/15 border-guitar-600/40 text-guitar-400'
+                            : 'border-border-subtle text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        Plage horaire
+                      </button>
+                    </div>
+                    {pref.mode === 'plage' && (
+                      <div className="flex items-center gap-2 ml-auto">
+                        <input
+                          type="time"
+                          value={pref.heure_debut ?? '08:00'}
+                          onChange={(e) => setDayTime(pref.jour, 'heure_debut', e.target.value)}
+                          className={inputCls + ' w-28 py-1 text-sm'}
+                        />
+                        <span className="text-xs text-muted-foreground">à</span>
+                        <input
+                          type="time"
+                          value={pref.heure_fin ?? '20:00'}
+                          onChange={(e) => setDayTime(pref.jour, 'heure_fin', e.target.value)}
+                          className={inputCls + ' w-28 py-1 text-sm'}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Jour de proximité préféré */}
+          {/* Jours de proximité préférée */}
           <div>
             <p className="text-sm font-medium mb-1">
-              Jour de proximité préférée
-              <span className="ml-2 text-xs text-muted-foreground font-normal">— bonus de +1 pt pour les écoles proches du domicile ce jour (seuil : 20 km)</span>
+              Jours de proximité préférée
+              <span className="ml-2 text-xs text-muted-foreground font-normal">— bonus de +1 pt pour les écoles proches du domicile ces jours (seuil : 20 km)</span>
             </p>
             <p className="text-xs text-muted-foreground mb-2">
-              Par exemple : si vous choisissez Samedi, les écoles situées à moins de 20 km de votre domicile seront favorisées dans les propositions du samedi.
+              Les jours sélectionnés, les écoles situées à moins de 20 km de votre domicile seront favorisées dans les propositions. Pratique pour les jours sans voiture ou à proximité de chez vous.
             </p>
-            <select
-              value={preferredProximityDay}
-              onChange={(e) => setPreferredProximityDay(e.target.value)}
-              className={inputCls + ' max-w-xs'}
-            >
-              <option value="">— Aucune préférence de proximité —</option>
-              {['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'].map((jour) => (
-                <option key={jour} value={jour}>{jour}</option>
-              ))}
-            </select>
+            <div className="flex flex-wrap gap-2">
+              {['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'].map((jour) => {
+                const actif = preferredProximityDays.includes(jour)
+                return (
+                  <button
+                    key={jour}
+                    type="button"
+                    onClick={() => toggleProximityDay(jour)}
+                    className={`px-3 py-1.5 rounded-xl border text-sm font-medium transition-all ${
+                      actif
+                        ? 'bg-guitar-600/15 border-guitar-600/40 text-guitar-400'
+                        : 'border-border-subtle text-muted-foreground hover:text-foreground hover:bg-surface-overlay'
+                    }`}
+                  >
+                    {actif ? '✓ ' : ''}{jour}
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {errorPrefs && (

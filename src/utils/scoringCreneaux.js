@@ -60,6 +60,25 @@ const DISTANCE_PROXIMITE_KM   = 20  // seuil en km en dessous duquel une école 
 
 const ADJACENCE_TOLERANCE_MIN  =   5 // tolérance en minutes pour déclarer deux cours "adjacents"
 
+// ─── Normalisation des préférences ───────────────────────────────────────────
+
+/**
+ * Convertit preferred_days_off vers le format objet unifié.
+ * Rétrocompat : ancien format string[] → { jour, mode: 'toute_la_journee' }.
+ *
+ * Format attendu :
+ *   { jour: 'Lundi', mode: 'toute_la_journee' }
+ *   { jour: 'Samedi', mode: 'plage', heure_debut: '16:00', heure_fin: '20:00' }
+ */
+function normaliserJoursAEviter(raw) {
+  if (!Array.isArray(raw)) return []
+  return raw.map((entry) =>
+    typeof entry === 'string'
+      ? { jour: entry, mode: 'toute_la_journee' }
+      : entry
+  )
+}
+
 /**
  * Score un candidat (jour + créneau) pour un élève dont on connaît les disponibilités.
  *
@@ -71,8 +90,14 @@ const ADJACENCE_TOLERANCE_MIN  =   5 // tolérance en minutes pour déclarer deu
  * @param {Array}    schools          - Écoles du prof (name, current_weekly_hours, desired_weekly_hours, latitude, longitude)
  * @param {string}   zone             - Zone scolaire du prof ('A' | 'B' | 'C')
  * @param {Array}    reservedSlots    - Créneaux réservés du prof ({ jourSemaine, heureDebut, dureeMinutes }) — traités comme des conflits
- * @param {string[]} preferredDaysOff - Jours à éviter, ex : ["Lundi", "Mercredi"] (influencent le score, n'éliminent jamais)
- * @param {string}   preferredProximityDay - Jour de proximité préféré, ex : "Samedi" (ou null)
+ * @param {Array}    preferredDaysOff - Jours à éviter.
+ *   Nouveau format : [{ jour: 'Lundi', mode: 'toute_la_journee' }]
+ *                 ou [{ jour: 'Samedi', mode: 'plage', heure_debut: '16:00', heure_fin: '20:00' }]
+ *   Ancien format (rétrocompat) : ["Lundi", "Mercredi"] — traité comme toute_la_journee.
+ *   N'élimine jamais une proposition : influence uniquement le classement.
+ * @param {string[]} preferredProximityDays - Jours où le prof préfère rester proche du domicile.
+ *   Tableau de noms de jours, ex : ["Samedi", "Mercredi"]. Tableau vide = aucune préférence.
+ *   Rétrocompat : string accepté → converti en [string].
  * @param {number}   teacherHomeLat   - Latitude du domicile du prof (ou null)
  * @param {number}   teacherHomeLng   - Longitude du domicile du prof (ou null)
  * @returns {{ score, reasons, candidateDate, startTime, durationMinutes } | null}
@@ -80,7 +105,7 @@ const ADJACENCE_TOLERANCE_MIN  =   5 // tolérance en minutes pour déclarer deu
  */
 export function scoreCandidate({
   day, slot, slotsCount, response, existingLessons, schools, zone,
-  reservedSlots = [], preferredDaysOff = [], preferredProximityDay = null,
+  reservedSlots = [], preferredDaysOff = [], preferredProximityDays = [],
   teacherHomeLat = null, teacherHomeLng = null,
 }) {
   const reasons = []
@@ -183,17 +208,33 @@ export function scoreCandidate({
   }
 
   // ── Malus : jour à éviter (preferred_days_off) ────────────────────────────
+  // Rétrocompat : ancien format string[] → toute_la_journee.
   // N'élimine jamais la proposition — influence uniquement le classement.
-  if (preferredDaysOff.includes(day)) {
-    score += SCORE_JOUR_EVITE
-    reasons.push(`${SCORE_JOUR_EVITE} : jour à éviter selon vos préférences`)
+  const joursEvites = normaliserJoursAEviter(preferredDaysOff)
+  for (const pref of joursEvites) {
+    if (pref.jour !== day) continue
+    if (pref.mode === 'toute_la_journee') {
+      score += SCORE_JOUR_EVITE
+      reasons.push(`${SCORE_JOUR_EVITE} : jour à éviter selon vos préférences`)
+    } else if (pref.mode === 'plage' && pref.heure_debut && pref.heure_fin) {
+      const plageDebut = timeToMinutes(pref.heure_debut)
+      const plageFin   = timeToMinutes(pref.heure_fin)
+      // Le créneau chevauche la plage à éviter
+      if (startMin < plageFin && endMin > plageDebut) {
+        score += SCORE_JOUR_EVITE
+        reasons.push(`${SCORE_JOUR_EVITE} : plage horaire à éviter ce ${day} (${pref.heure_debut}–${pref.heure_fin})`)
+      }
+    }
+    break  // un seul enregistrement par jour attendu
   }
 
-  // ── Bonus : proximité domicile le jour préféré ────────────────────────────
-  // Applicable uniquement si le jour correspond, le domicile est connu,
-  // et l'école a des coordonnées GPS.
+  // ── Bonus : proximité domicile les jours préférés ─────────────────────────
+  // preferredProximityDays : tableau de noms de jours (rétrocompat : string → [string]).
+  const joursProximite = Array.isArray(preferredProximityDays)
+    ? preferredProximityDays
+    : preferredProximityDays ? [preferredProximityDays] : []
   if (
-    preferredProximityDay === day &&
+    joursProximite.includes(day) &&
     teacherHomeLat != null && teacherHomeLng != null &&
     school?.latitude != null && school?.longitude != null
   ) {
@@ -217,15 +258,15 @@ export function scoreCandidate({
  * @param {string}   zone             - Zone scolaire
  * @param {number}   maxResults       - Nombre max de propositions retournées (défaut 5)
  * @param {Array}    reservedSlots    - Créneaux réservés (traités comme conflits)
- * @param {string[]} preferredDaysOff - Jours à éviter (malus, jamais filtrage strict)
- * @param {string}   preferredProximityDay - Jour de proximité préféré (ou null)
- * @param {number}   teacherHomeLat   - Latitude domicile (ou null)
- * @param {number}   teacherHomeLng   - Longitude domicile (ou null)
+ * @param {Array}    preferredDaysOff      - Jours à éviter (voir scoreCandidate pour le format)
+ * @param {string[]} preferredProximityDays - Jours de proximité préférés (tableau, peut être vide)
+ * @param {number}   teacherHomeLat        - Latitude domicile (ou null)
+ * @param {number}   teacherHomeLng        - Longitude domicile (ou null)
  * @returns {Array} - Propositions triées par score desc, sans doublons
  */
 export function computeProposals({
   response, existingLessons, schools, zone, maxResults = 5,
-  reservedSlots = [], preferredDaysOff = [], preferredProximityDay = null,
+  reservedSlots = [], preferredDaysOff = [], preferredProximityDays = [],
   teacherHomeLat = null, teacherHomeLng = null,
 }) {
   const avail = response.availabilities ?? {}
@@ -247,7 +288,7 @@ export function computeProposals({
           zone,
           reservedSlots,
           preferredDaysOff,
-          preferredProximityDay,
+          preferredProximityDays,
           teacherHomeLat,
           teacherHomeLng,
         })
