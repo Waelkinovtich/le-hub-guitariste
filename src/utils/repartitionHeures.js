@@ -39,6 +39,26 @@ export function arrondir(h, max) {
   return max != null ? Math.min(brut, max) : brut
 }
 
+/**
+ * Bornes réalistes (plancher/plafond hebdomadaire) d'une école flexible.
+ * Extraite du moteur pour être réutilisable ailleurs (ajustement manuel,
+ * recherche de budget par objectif financier) sans dupliquer la formule.
+ *
+ * @param {{current_weekly_hours: number|null, desired_weekly_hours: number|null}} school
+ * @returns {{min: number, max: number}}
+ */
+export function bornesRealistesEcole(school) {
+  const base           = school.current_weekly_hours ?? 0
+  const plafondRealiste = base + GAIN_MAX_REALISTE_HEBDO
+  // desired_weekly_hours : null = non renseigné (pas de contrainte côté école),
+  //                        0   = l'école a explicitement zéro heure souhaitées.
+  const max = school.desired_weekly_hours != null
+    ? Math.min(plafondRealiste, school.desired_weekly_hours)
+    : plafondRealiste
+  const min = Math.max(0, base - PERTE_MAX_REALISTE_HEBDO)
+  return { min, max }
+}
+
 // ─── Moteur principal ─────────────────────────────────────────────────────────
 
 /**
@@ -110,21 +130,16 @@ export function repartirHeuresSelonPriorite(schools, plafondHebdo, diversificati
 
   // Calcul des bornes réalistes pour chaque école flexible.
   const etat = flexiblesTriees.map((s) => {
-    const base = s.current_weekly_hours ?? 0
-    // desired_weekly_hours : null = non renseigné (pas de contrainte côté école),
-    //                        0   = l'école a explicitement zéro heure souhaitées.
-    // Math.min(plafondRealiste, 0) = 0 → l'école est exclue de la répartition.
-    // Si un 0 accidentel existe en base, corriger via migration-correction-desired-weekly-hours.sql.
-    const plafondRealiste = base + GAIN_MAX_REALISTE_HEBDO
-    const plafondEcole    = s.desired_weekly_hours != null
-      ? Math.min(plafondRealiste, s.desired_weekly_hours)
-      : plafondRealiste
+    // Math.min(plafondRealiste, 0) = 0 → l'école est exclue de la répartition
+    // si desired_weekly_hours vaut 0. Si un 0 accidentel existe en base,
+    // corriger via migration-correction-desired-weekly-hours.sql.
+    const { min, max } = bornesRealistesEcole(s)
     return {
       school:      s,
       alloueQ:     0,
-      plafondQ:    Math.round(plafondEcole * Q),
-      plancherQ:   Math.round(Math.max(0, base - PERTE_MAX_REALISTE_HEBDO) * Q),
-      baseQ:       Math.round(base * Q),
+      plafondQ:    Math.round(max * Q),
+      plancherQ:   Math.round(min * Q),
+      baseQ:       Math.round((s.current_weekly_hours ?? 0) * Q),
     }
   })
 
