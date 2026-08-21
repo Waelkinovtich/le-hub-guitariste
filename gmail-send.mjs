@@ -80,7 +80,7 @@ async function authorize() {
     return oAuth2
   }
 
-  const authUrl = oAuth2.generateAuthUrl({ access_type: 'offline', scope: SCOPES })
+  const authUrl = oAuth2.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: SCOPES })
   console.log('\n🔐  Autorisation Gmail requise.')
   console.log('    Ouvrez cette URL dans votre navigateur :\n')
   console.log('   ', authUrl)
