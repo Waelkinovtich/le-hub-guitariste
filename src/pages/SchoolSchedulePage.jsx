@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { School, ChevronLeft } from 'lucide-react'
+import { School, ChevronLeft, LayoutGrid, List, Plus, X } from 'lucide-react'
 import HelpTooltip from '../components/HelpTooltip'
 import WeekGridPlanning from '../components/WeekGridPlanning'
 import { supabase } from '../lib/supabase'
@@ -11,6 +11,10 @@ const EXTRA_SCHOOLS = ['CESU']
 
 // Couleur fixe pour les créneaux disponibles (vert discret, distinct des cours élèves)
 const SLOT_COLOR = '#16a34a'
+
+// Plage horaire pour la vue liste (8h–20h par tranches de 15 min)
+const HEURE_DEBUT = 8
+const HEURE_FIN   = 20
 
 // ─── Helpers : conversion jours ↔ dates ISO ───────────────────────────────────
 //
@@ -59,6 +63,22 @@ function expandToSlots(lessonTime, durationMinutes) {
   return slots
 }
 
+// Génère tous les créneaux de 15 min entre HEURE_DEBUT et HEURE_FIN
+function allSlots() {
+  const result = []
+  for (let m = HEURE_DEBUT * 60; m < HEURE_FIN * 60; m += 15) {
+    const sh = String(Math.floor(m / 60)).padStart(2, '0')
+    const sm = String(m % 60).padStart(2, '0')
+    const em = m + 15
+    const eh = String(Math.floor(em / 60)).padStart(2, '0')
+    const mm = String(em % 60).padStart(2, '0')
+    result.push(`${sh}:${sm}–${eh}:${mm}`)
+  }
+  return result
+}
+
+const ALL_SLOTS = allSlots()
+
 const SCHOOL_YEARS = ['2025-2026', '2026-2027', '2027-2028']
 
 function YearSelect({ value, onChange }) {
@@ -73,6 +93,103 @@ function YearSelect({ value, onChange }) {
   )
 }
 
+// ─── Vue liste : grille de créneaux par jour ──────────────────────────────────
+
+function SlotGrid({ schedules, onToggleSlot, onRemoveDay, onAddDay }) {
+  const [ajoutJour, setAjoutJour] = useState(null)
+  const joursActifs = schedules.map(r => r.day)
+  const joursDisponibles = JOURS.filter(j => !joursActifs.includes(j))
+
+  return (
+    <div className="space-y-4">
+      {schedules.map((row) => {
+        const slotsActifs = new Set(row.slots ?? [])
+        return (
+          <div key={row.id} className="glass-panel rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="font-medium text-foreground">{row.day}</span>
+              <button
+                onClick={() => onRemoveDay(row)}
+                className="p-1 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors"
+                title="Supprimer ce jour"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {/* Grille de créneaux : colonne par heure entière, ligne = quart */}
+            <div className="overflow-x-auto">
+              <div className="flex gap-1 flex-wrap">
+                {ALL_SLOTS.map((slot) => {
+                  const actif = slotsActifs.has(slot)
+                  return (
+                    <button
+                      key={slot}
+                      onClick={() => onToggleSlot(row, slot)}
+                      title={slot}
+                      className={[
+                        'text-[10px] px-1.5 py-0.5 rounded transition-all font-mono tabular-nums',
+                        actif
+                          ? 'bg-green-600/80 text-white border border-green-500'
+                          : 'bg-surface-overlay border border-border-subtle text-muted-foreground hover:border-guitar-600/50 hover:text-foreground',
+                      ].join(' ')}
+                    >
+                      {slot.split('–')[0]}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              {slotsActifs.size} créneau{slotsActifs.size > 1 ? 'x' : ''} sélectionné{slotsActifs.size > 1 ? 's' : ''}
+            </p>
+          </div>
+        )
+      })}
+
+      {/* Panneau Ajouter un jour */}
+      {joursDisponibles.length > 0 && (
+        ajoutJour == null ? (
+          <button
+            onClick={() => setAjoutJour(joursDisponibles[0])}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-border-subtle text-sm text-muted-foreground hover:text-foreground hover:border-guitar-600/50 transition-all w-full justify-center"
+          >
+            <Plus className="w-4 h-4" />
+            Ajouter un jour
+          </button>
+        ) : (
+          <div className="glass-panel rounded-2xl p-4 flex items-center gap-3">
+            <select
+              value={ajoutJour}
+              onChange={e => setAjoutJour(e.target.value)}
+              className="px-3 py-1.5 rounded-lg bg-surface-raised border border-border-subtle text-sm text-foreground focus:border-guitar-600 outline-none"
+            >
+              {joursDisponibles.map(j => <option key={j} value={j}>{j}</option>)}
+            </select>
+            <button
+              onClick={() => { onAddDay(ajoutJour); setAjoutJour(null) }}
+              className="px-4 py-1.5 rounded-lg bg-guitar-600 text-white text-sm hover:bg-guitar-700 transition-colors"
+            >
+              Ajouter
+            </button>
+            <button
+              onClick={() => setAjoutJour(null)}
+              className="px-3 py-1.5 rounded-lg border border-border-subtle text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Annuler
+            </button>
+          </div>
+        )
+      )}
+
+      {schedules.length === 0 && ajoutJour == null && (
+        <p className="text-sm text-muted-foreground text-center py-8">
+          Aucun créneau configuré. Ajoutez un jour pour commencer.
+        </p>
+      )}
+    </div>
+  )
+}
+
 // ─── Composant principal ──────────────────────────────────────────────────────
 
 export default function SchoolSchedulePage() {
@@ -82,6 +199,8 @@ export default function SchoolSchedulePage() {
   const [selected, setSelected] = useState(null)
   const [schedules, setSchedules] = useState([])   // [{ id, school_name, day, slots: string[] }]
   const [loading, setLoading] = useState(true)
+  // 'grille' = WeekGridPlanning, 'liste' = SlotGrid par jour
+  const [vue, setVue] = useState('grille')
 
   // Lundi de la semaine courante — clé stable pour toute la session
   const mondayISO = useMemo(getMondayISO, [])
@@ -119,57 +238,12 @@ export default function SchoolSchedulePage() {
     if (selected) { setSchedules([]); fetchSchedules(selected, schoolYear) }
   }, [schoolYear, selected, fetchSchedules])
 
-  // ── Conversion schedules → faux cours pour WeekGridPlanning ──────────────
-  //
-  // Chaque créneau disponible de 15 min = un "faux cours" avec nonMovable=true.
-  // Le composant les affiche comme des blocs colorés (couleur SLOT_COLOR).
-  // studentName = '' → seule la bande de couleur est visible (comportement du
-  // composant WeekGridPlanning quand le nom est vide et la durée courte).
+  // ── Helpers partagés : écriture en base ──────────────────────────────────
 
-  const fakeLessons = useMemo(() => {
-    const result = []
-    for (const row of schedules) {
-      const iso = jourToISO(row.day, mondayISO)
-      for (const slotStr of (row.slots ?? [])) {
-        // Extraire l'heure de début du format "HH:MM–HH:MM"
-        const lessonTime = slotStr.split('–')[0]
-        result.push({
-          id:              `sch_${row.id}_${slotStr}`,
-          lessonDate:      iso,
-          lessonTime,
-          durationMinutes: 15,
-          schoolName:      selected,
-          lessonType:      'ecole',
-          studentName:     '',
-          timeLabel:       slotStr,
-          nonMovable:      true,
-          // Méta pour retrouver la ligne source lors de la suppression
-          _rowId:   row.id,
-          _slotStr: slotStr,
-          _day:     row.day,
-        })
-      }
-    }
-    return result
-  }, [schedules, mondayISO, selected])
-
-  // Jours de la semaine comme props weekDays de WeekGridPlanning
-  const weekDays = useMemo(() => JOURS.map((jour) => ({
-    label:   jour.slice(0, 3).toUpperCase(),
-    dayNum:  JOUR_TO_JS_DAY[jour] === 0 ? 7 : JOUR_TO_JS_DAY[jour],
-    iso:     jourToISO(jour, mondayISO),
-    isToday: false,
-  })), [mondayISO])
-
-  // ── Ajout : glisser dans la grille → sauvegarder en base ─────────────────
-
-  const handleNewLesson = useCallback(async ({ lessonDate, lessonTime, durationMinutes }) => {
-    const jourFr  = isoToJour(lessonDate)
-    const newSlots = expandToSlots(lessonTime, durationMinutes)
+  const mergeSlots = useCallback(async (jourFr, newSlots) => {
+    // Ajoute newSlots dans le jour jourFr (fusion sans doublons)
     const existing = schedules.find((r) => r.day === jourFr)
-
     if (existing) {
-      // Fusionner sans doublons
       const merged = [...new Set([...(existing.slots ?? []), ...newSlots])]
       const { data } = await supabase
         .from('school_schedules').update({ slots: merged }).eq('id', existing.id).select().single()
@@ -183,12 +257,11 @@ export default function SchoolSchedulePage() {
     }
   }, [schedules, selected, schoolYear])
 
-  // ── Suppression : bouton poubelle sur un faux cours ───────────────────────
-
-  const handleDeleteLesson = useCallback(async (lesson) => {
-    const row = schedules.find((r) => r.id === lesson._rowId)
+  const removeSlot = useCallback(async (rowId, slotStr) => {
+    // Retire slotStr de la ligne rowId ; supprime la ligne si elle devient vide
+    const row = schedules.find((r) => r.id === rowId)
     if (!row) return
-    const updatedSlots = (row.slots ?? []).filter((s) => s !== lesson._slotStr)
+    const updatedSlots = (row.slots ?? []).filter((s) => s !== slotStr)
     if (updatedSlots.length === 0) {
       await supabase.from('school_schedules').delete().eq('id', row.id)
       setSchedules((s) => s.filter((r) => r.id !== row.id))
@@ -198,6 +271,141 @@ export default function SchoolSchedulePage() {
       if (data) setSchedules((s) => s.map((r) => r.id === row.id ? data : r))
     }
   }, [schedules])
+
+  // ── Conversion schedules → faux cours pour WeekGridPlanning ──────────────
+  //
+  // nonMovable=false → les créneaux peuvent être déplacés par glisser-déposer.
+  // onMoveLesson sur WeekGridPlanning intercepte le déplacement et met à jour
+  // school_schedules au lieu d'appeler updateLesson (qui vise la table lessons).
+
+  const fakeLessons = useMemo(() => {
+    const result = []
+    for (const row of schedules) {
+      const iso = jourToISO(row.day, mondayISO)
+      for (const slotStr of (row.slots ?? [])) {
+        const lessonTime = slotStr.split('–')[0]
+        result.push({
+          id:              `sch_${row.id}_${slotStr}`,
+          lessonDate:      iso,
+          lessonTime,
+          durationMinutes: 15,
+          schoolName:      selected,
+          lessonType:      'ecole',
+          studentName:     '',
+          timeLabel:       slotStr,
+          nonMovable:      false,
+          // Méta pour retrouver la ligne source lors du déplacement / suppression
+          _rowId:   row.id,
+          _slotStr: slotStr,
+          _day:     row.day,
+        })
+      }
+    }
+    return result
+  }, [schedules, mondayISO, selected])
+
+  const weekDays = useMemo(() => JOURS.map((jour) => ({
+    label:   jour.slice(0, 3).toUpperCase(),
+    dayNum:  JOUR_TO_JS_DAY[jour] === 0 ? 7 : JOUR_TO_JS_DAY[jour],
+    iso:     jourToISO(jour, mondayISO),
+    isToday: false,
+  })), [mondayISO])
+
+  // ── Ajout : glisser dans une zone vide de la grille ───────────────────────
+
+  const handleNewLesson = useCallback(async ({ lessonDate, lessonTime, durationMinutes }) => {
+    const jourFr  = isoToJour(lessonDate)
+    const newSlots = expandToSlots(lessonTime, durationMinutes)
+    await mergeSlots(jourFr, newSlots)
+  }, [mergeSlots])
+
+  // ── Déplacement : créneau existant glissé vers un autre jour/heure ────────
+  //
+  // On ne chaîne pas removeSlot → mergeSlots (closures sur schedules stale).
+  // On effectue les deux opérations directement en base puis on recharge depuis
+  // Supabase pour garantir la cohérence de l'état local.
+
+  const handleMoveLesson = useCallback(async ({ lesson, newDate, newTime, durationMinutes }) => {
+    const ancienJour  = lesson._day
+    const ancienSlot  = lesson._slotStr
+    const nouveauJour = isoToJour(newDate)
+    const newSlots    = expandToSlots(newTime, durationMinutes ?? 15)
+
+    if (ancienJour === nouveauJour && newSlots.includes(ancienSlot) && newSlots.length === 1) {
+      return
+    }
+
+    // Lire l'état courant depuis la base pour éviter les conflits de closure
+    const { data: rows } = await supabase
+      .from('school_schedules').select('*')
+      .eq('school_name', selected).eq('school_year', schoolYear)
+    const current = rows ?? []
+
+    // 1. Retirer l'ancien créneau
+    const srcRow = current.find(r => r.id === lesson._rowId)
+    if (srcRow) {
+      const sans = (srcRow.slots ?? []).filter(s => s !== ancienSlot)
+      if (sans.length === 0) {
+        await supabase.from('school_schedules').delete().eq('id', srcRow.id)
+      } else {
+        await supabase.from('school_schedules').update({ slots: sans }).eq('id', srcRow.id)
+      }
+    }
+
+    // 2. Ajouter le(s) nouveau(x) créneau(x) dans le jour cible
+    // On relit current (post-suppression) : current est en mémoire, donc on
+    // distingue le cas où srcRow et dstRow sont le même enregistrement.
+    const dstRowFromCurrent = current.find(r => r.day === nouveauJour)
+    const srcWasDeleted = srcRow && ancienJour === nouveauJour && (srcRow.slots ?? []).filter(s => s !== ancienSlot).length === 0
+
+    if (dstRowFromCurrent && !srcWasDeleted) {
+      const merged = [...new Set([...(dstRowFromCurrent.slots ?? []).filter(s => s !== ancienSlot), ...newSlots])]
+      await supabase.from('school_schedules').update({ slots: merged }).eq('id', dstRowFromCurrent.id)
+    } else if (!dstRowFromCurrent || srcWasDeleted) {
+      // Créer une nouvelle ligne ou recréer si l'unique ligne du jour a été supprimée
+      const existing = srcWasDeleted ? null : dstRowFromCurrent
+      if (!existing) {
+        await supabase.from('school_schedules')
+          .insert({ school_name: selected, day: nouveauJour, slots: newSlots, school_year: schoolYear })
+      }
+    }
+
+    // Recharger l'état complet depuis la base
+    const { data: refreshed } = await supabase
+      .from('school_schedules').select('*')
+      .eq('school_name', selected).eq('school_year', schoolYear).order('created_at')
+    setSchedules(refreshed ?? [])
+  }, [selected, schoolYear])
+
+  // ── Suppression : bouton poubelle sur un faux cours ───────────────────────
+
+  const handleDeleteLesson = useCallback(async (lesson) => {
+    await removeSlot(lesson._rowId, lesson._slotStr)
+  }, [removeSlot])
+
+  // ── Vue liste : bascule de créneau ───────────────────────────────────────
+
+  const handleToggleSlot = useCallback(async (row, slot) => {
+    const slotsActifs = row.slots ?? []
+    if (slotsActifs.includes(slot)) {
+      await removeSlot(row.id, slot)
+    } else {
+      await mergeSlots(row.day, [slot])
+    }
+  }, [removeSlot, mergeSlots])
+
+  const handleRemoveDay = useCallback(async (row) => {
+    await supabase.from('school_schedules').delete().eq('id', row.id)
+    setSchedules((s) => s.filter((r) => r.id !== row.id))
+  }, [])
+
+  const handleAddDay = useCallback(async (jourFr) => {
+    const { data } = await supabase
+      .from('school_schedules')
+      .insert({ school_name: selected, day: jourFr, slots: [], school_year: schoolYear })
+      .select().single()
+    if (data) setSchedules((s) => [...s, data])
+  }, [selected, schoolYear])
 
   // ── Rendu ─────────────────────────────────────────────────────────────────
 
@@ -227,7 +435,7 @@ export default function SchoolSchedulePage() {
         <div className="flex items-start justify-between mb-1">
           <div className="flex items-center gap-1.5">
             <h1 className="font-display text-3xl text-foreground">Configuration des écoles</h1>
-            <HelpTooltip texte="Définissez vos créneaux disponibles par école. Glissez dans la grille hebdomadaire pour ajouter des créneaux, cliquez sur la poubelle pour en supprimer." position="bottom" />
+            <HelpTooltip texte="Définissez vos créneaux disponibles par école. Glissez dans la grille hebdomadaire pour ajouter des créneaux, cliquez sur la poubelle pour en supprimer. La vue liste permet de basculer des créneaux individuels." position="bottom" />
           </div>
           <YearSelect value={schoolYear} onChange={setSchoolYear} />
         </div>
@@ -285,20 +493,66 @@ export default function SchoolSchedulePage() {
             {totalH > 0 && `${totalH} h `}{totalRem > 0 && `${totalRem} min`}{totalMin === 0 && '—'} / semaine
           </p>
         </div>
+
+        {/* Bascule grille / liste */}
+        <div className="flex items-center gap-1 p-1 rounded-xl bg-surface-overlay border border-border-subtle">
+          <button
+            onClick={() => setVue('grille')}
+            className={[
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all',
+              vue === 'grille'
+                ? 'bg-guitar-600 text-white shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            ].join(' ')}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+            Grille
+          </button>
+          <button
+            onClick={() => setVue('liste')}
+            className={[
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all',
+              vue === 'liste'
+                ? 'bg-guitar-600 text-white shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            ].join(' ')}
+          >
+            <List className="w-3.5 h-3.5" />
+            Liste
+          </button>
+        </div>
       </div>
 
-      <p className="text-xs text-muted-foreground mb-4">
-        <span className="inline-block w-3 h-3 rounded-sm mr-1.5 align-middle" style={{ background: SLOT_COLOR + '50', border: `2px solid ${SLOT_COLOR}` }} />
-        Glissez pour ajouter des créneaux · Cliquez sur 🗑 pour en supprimer.
-      </p>
+      {vue === 'grille' ? (
+        <>
+          <p className="text-xs text-muted-foreground mb-4">
+            <span className="inline-block w-3 h-3 rounded-sm mr-1.5 align-middle" style={{ background: SLOT_COLOR + '50', border: `2px solid ${SLOT_COLOR}` }} />
+            Glissez pour ajouter des créneaux · Glissez un créneau existant pour le déplacer · Cliquez sur 🗑 pour supprimer.
+          </p>
 
-      <WeekGridPlanning
-        weekDays={weekDays}
-        lessons={fakeLessons}
-        onNewLesson={handleNewLesson}
-        onSelectLesson={() => {}}
-        onDeleteLesson={handleDeleteLesson}
-      />
+          <WeekGridPlanning
+            weekDays={weekDays}
+            lessons={fakeLessons}
+            onNewLesson={handleNewLesson}
+            onSelectLesson={() => {}}
+            onDeleteLesson={handleDeleteLesson}
+            onMoveLesson={handleMoveLesson}
+          />
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-muted-foreground mb-4">
+            Cliquez sur un créneau pour l'activer ou le désactiver. Utilisez ✕ pour supprimer un jour entier.
+          </p>
+
+          <SlotGrid
+            schedules={schedules}
+            onToggleSlot={handleToggleSlot}
+            onRemoveDay={handleRemoveDay}
+            onAddDay={handleAddDay}
+          />
+        </>
+      )}
     </div>
   )
 }

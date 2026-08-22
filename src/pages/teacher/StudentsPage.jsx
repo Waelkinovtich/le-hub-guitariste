@@ -35,6 +35,8 @@ export default function StudentsPage() {
   const [pendingArchive, setPendingArchive] = useState(null) // { id, name }
   const [archiving, setArchiving] = useState(false)
 
+  // showArchived DOIT figurer dans les dépendances : useCallback mémorise la closure,
+  // sans elle la valeur capturée reste false même après le toggle.
   const load = useCallback(async () => {
     const [students, upcoming, schools, contextsByStudent] = await Promise.all([
       fetchTeacherStudents(user.id, { includeArchived: showArchived }),
@@ -43,7 +45,7 @@ export default function StudentsPage() {
       fetchAllContextsByStudent(user.id),
     ])
     return { students, nextByStudent: buildNextLessonByStudent(upcoming), schools, contextsByStudent }
-  }, [user.id])
+  }, [user.id, showArchived])
 
   const { period } = usePeriod()
   const { data, loading, error, reload } = useFetch(load, [user.id, showArchived])
@@ -149,6 +151,17 @@ export default function StudentsPage() {
           )}
         </div>
       </header>
+
+      {/* Bandeau distinctif — rappelle visuellement qu'on est en vue archivés */}
+      {showArchived && (
+        <div className="flex items-center gap-2 mb-4 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-sm text-amber-400">
+          <Archive className="w-4 h-4 flex-shrink-0" />
+          <span>
+            <strong>Vue Archivés</strong> — ces élèves ne reçoivent plus de cours actifs.
+            Cliquez sur <ArchiveX className="inline w-3.5 h-3.5 mx-0.5" /> pour les réactiver.
+          </span>
+        </div>
+      )}
 
       <div className="flex flex-col sm:flex-row flex-wrap gap-3 mb-6">
         <div className="relative flex-1 min-w-48">

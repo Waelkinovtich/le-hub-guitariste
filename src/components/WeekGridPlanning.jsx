@@ -101,7 +101,10 @@ function hasReservedOverlap(reservedByDay, targetDay, targetStart, slotCount) {
 // onDeleteLesson : si fourni, le bouton poubelle appelle cette fonction au lieu
 // d'ouvrir DeleteLessonModal — permet d'utiliser ce composant hors contexte "cours élèves"
 // (ex. SchoolSchedulePage pour les créneaux disponibles par école).
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson }) {
+// onMoveLesson : si fourni, remplace l'appel à updateLesson lors du déplacement.
+// Signature : onMoveLesson({ lesson, newDate, newTime, durationMinutes }) → Promise<void>
+// Utile pour les pages qui affichent des "faux cours" non persistés dans la table lessons.
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -274,14 +277,19 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
 
     // ── Persistance serveur en arrière-plan ─────────────────────────────────
     try {
-      await updateLesson(lesson.id, {
-        studentId:       lesson.studentId,
-        lessonDate:      m.currentDay,
-        lessonTime:      newTime,
-        durationMinutes: lesson.durationMinutes,
-        topic:           lesson.topic ?? '',
-        notes:           lesson.notes ?? null,
-      })
+      if (onMoveLesson) {
+        // Mode externe : l'appelant gère la persistance (ex. school_schedules)
+        await onMoveLesson({ lesson, newDate: m.currentDay, newTime, durationMinutes: lesson.durationMinutes })
+      } else {
+        await updateLesson(lesson.id, {
+          studentId:       lesson.studentId,
+          lessonDate:      m.currentDay,
+          lessonTime:      newTime,
+          durationMinutes: lesson.durationMinutes,
+          topic:           lesson.topic ?? '',
+          notes:           lesson.notes ?? null,
+        })
+      }
       // Succès : l'état local est déjà correct, rien de plus à faire
     } catch (err) {
       // Échec : rollback immédiat vers la position d'origine
@@ -290,7 +298,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
       ))
       showMoveError(err.message ?? 'Impossible de déplacer le cours — annulation.')
     }
-  }, [lessonsByDay, onSelectLesson, showMoveError])
+  }, [lessonsByDay, onSelectLesson, showMoveError, onMoveLesson])
 
   // ── Handlers pointer du conteneur de grille ───────────────────────────────
 

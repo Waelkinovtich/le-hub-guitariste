@@ -10,7 +10,7 @@
 // des objectifs (clic sur "Enregistrer"). L'état `savedObjectives` est distinct
 // de l'état `form` (édition en cours) — le simulateur n'observe que le premier.
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Euro, Clock, Car, Save, Loader2, Check, AlertCircle,
@@ -343,73 +343,56 @@ function calculerSimulation({
 // La position 100 % correspond à plafond (plafond total), mais le drag est clampé
 // à bornes.max — l'utilisateur ne peut pas dépasser le plafond réaliste.
 
-function DraggableBar({ bornes, heuresAffichees, plafond, manualOverride, onChange, onReset, calcRevenu }) {
-  const barRef  = useRef(null)
-  const [dragging, setDragging] = useState(false)
-  const [dragVal, setDragVal]   = useState(null)
+// Curseur d'heures par école — même composant visuel que le curseur de diversification
+// (input[type=range] natif, accent-guitar-600, légende bornes + valeur temps réel).
+// Remplace l'ancienne DraggableBar basée sur Pointer Capture API.
+// ignorerBornes : encadré orange signalant que les limites réalistes sont désactivées.
+function DraggableBar({ bornes, heuresAffichees, plafond, manualOverride, onChange, onReset, calcRevenu, ignorerBornes }) {
+  // Nombre de pas pour la granularité 15 min dans l'intervalle [min, max]
+  const pasTotal  = Math.round((bornes.max - bornes.min) / GRANULARITE_HEURES)
+  const pasActuel = heuresAffichees != null
+    ? Math.round((heuresAffichees - bornes.min) / GRANULARITE_HEURES)
+    : 0
 
-  // Valeur montrée : dragVal pendant le geste (retour immédiat), heuresAffichees sinon
-  const valeur = dragging && dragVal != null ? dragVal : heuresAffichees
-  const pct    = plafond && valeur != null && valeur > 0
-    ? Math.min(100, Math.round((valeur / plafond) * 100)) : 0
-
-  const calculerDepuisX = (clientX) => {
-    const rect  = barRef.current.getBoundingClientRect()
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
-    // Ratio → heures brutes, puis granularité 15 min et bornes réalistes
-    const brut   = ratio * plafond
-    const granule = Math.round(brut / GRANULARITE_HEURES) * GRANULARITE_HEURES
-    return Math.max(bornes.min, Math.min(bornes.max, granule))
+  const handleChange = (e) => {
+    const pas   = parseInt(e.target.value, 10)
+    const valeur = bornes.min + pas * GRANULARITE_HEURES
+    onChange(Math.max(bornes.min, Math.min(bornes.max, valeur)))
   }
 
-  const onPointerDown = (e) => {
-    e.preventDefault()
-    barRef.current.setPointerCapture(e.pointerId)
-    const val = calculerDepuisX(e.clientX)
-    setDragging(true)
-    setDragVal(val)
-    onChange(val)
-  }
-
-  const onPointerMove = (e) => {
-    if (!dragging) return
-    const val = calculerDepuisX(e.clientX)
-    setDragVal(val)
-    onChange(val)
-  }
-
-  const onPointerUp = () => { setDragging(false); setDragVal(null) }
-
-  const revenuDrag = dragging && dragVal != null ? calcRevenu(dragVal) : null
+  const revenuActuel = heuresAffichees != null && heuresAffichees > 0
+    ? calcRevenu(heuresAffichees)
+    : null
 
   return (
-    <div className="mt-3" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-      {/* Barre interactive — curseur ew-resize signale la possibilité de glisser */}
-      <div
-        ref={barRef}
-        className="h-3 rounded-full bg-surface-raised overflow-hidden cursor-ew-resize select-none touch-none"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        title={`Glisser pour ajuster entre ${fmtHeures(bornes.min)} et ${fmtHeures(bornes.max)}`}
-      >
-        <div
-          className="h-full rounded-full guitar-gradient"
-          style={{ width: `${pct}%`, transition: dragging ? 'none' : 'width 0.4s ease' }}
-        />
-      </div>
-      {/* Légende bornes + valeur temps réel */}
-      <div className="flex items-center justify-between mt-1">
+    <div
+      className={`mt-3 ${ignorerBornes ? 'rounded-xl border border-orange-400/40 bg-orange-400/5 px-3 py-2' : ''}`}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <input
+        type="range"
+        min={0}
+        max={pasTotal}
+        step={1}
+        value={pasActuel}
+        onChange={handleChange}
+        className={`w-full cursor-pointer ${ignorerBornes ? 'accent-orange-400' : 'accent-guitar-600'}`}
+        title={`Ajuster entre ${fmtHeures(bornes.min)} et ${fmtHeures(bornes.max)}`}
+      />
+      {/* Légende : bornes + valeur courante + réinitialisation */}
+      <div className="flex items-center justify-between mt-0.5">
         <span className="text-[11px] text-muted">{fmtHeures(bornes.min)}</span>
-        {dragging && dragVal != null ? (
-          <span className="text-xs font-medium text-guitar-400">
-            {fmtHeures(dragVal)}{revenuDrag != null ? ` → ${fmt(revenuDrag, '€/mois')}` : ''}
+        {heuresAffichees != null ? (
+          <span className={`text-xs font-medium ${ignorerBornes ? 'text-orange-400' : 'text-guitar-400'}`}>
+            {fmtHeures(heuresAffichees)}{revenuActuel != null ? ` → ${fmt(revenuActuel, '€/mois')}` : ''}
+            {manualOverride != null && (
+              <button type="button" onClick={onReset}
+                className="ml-2 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground font-normal">
+                Réinitialiser
+              </button>
+            )}
           </span>
-        ) : manualOverride != null ? (
-          <button type="button" onClick={() => onReset()}
-            className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground">
-            Réinitialiser
-          </button>
         ) : (
           <span className="text-[11px] text-muted italic">Glisser pour ajuster</span>
         )}
@@ -423,7 +406,7 @@ function DraggableBar({ bornes, heuresAffichees, plafond, manualOverride, onChan
 
 function SchoolRow({
   school, plafond, manualOverride, onChangeManualOverride, onResetManualOverride,
-  ignorePlafond, onToggleIgnorePlafond, calcRevenu,
+  ignorePlafond, onToggleIgnorePlafond, ignorerBornes, onToggleIgnorerBornes, calcRevenu,
 }) {
   const navigate = useNavigate()
   const {
@@ -514,13 +497,17 @@ function SchoolRow({
       {/* Barre : interactive (drag) pour les écoles flexibles, statique pour les fixes */}
       {estAjustable ? (
         <DraggableBar
-          bornes={bornesRealistesEcole(school)}
+          // Quand ignorerBornes est actif : bornes élargies à [0, plafond] pour l'exploration libre
+          bornes={ignorerBornes
+            ? { min: 0, max: plafond || bornesRealistesEcole(school).max * 3 }
+            : bornesRealistesEcole(school)}
           heuresAffichees={heuresHebdoProposees}
           plafond={plafond}
           manualOverride={manualOverride}
           onChange={(val) => onChangeManualOverride(school.id, val)}
           onReset={() => onResetManualOverride(school.id)}
           calcRevenu={calcRevenu}
+          ignorerBornes={!!ignorerBornes}
         />
       ) : heuresHebdoProposees != null && heuresHebdoProposees > 0 ? (
         <div className="h-1.5 rounded-full bg-surface-raised overflow-hidden mt-2">
@@ -543,6 +530,24 @@ function SchoolRow({
             className="accent-guitar-600"
           />
           Ignorer le plafond souhaité de la fiche ({fmtHeures(desiredWeeklyHoursAffiche)}) pour cette simulation
+        </label>
+      )}
+
+      {/* Toggle T2 : exploration libre sans bornes réalistes — temporaire, jamais persisté */}
+      {estAjustable && (
+        <label
+          className="flex items-center gap-1.5 mt-1.5 text-xs cursor-pointer select-none"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={!!ignorerBornes}
+            onChange={() => onToggleIgnorerBornes(school.id)}
+            className="accent-orange-400"
+          />
+          <span className={ignorerBornes ? 'text-orange-400' : 'text-muted-foreground'}>
+            {ignorerBornes ? '⚠ Limites réalistes ignorées — exploration libre' : 'Ignorer les limites réalistes pour cette école'}
+          </span>
         </label>
       )}
     </div>
@@ -598,6 +603,9 @@ export default function ObjectivesPage() {
   const [ajustementMode,   setAjustementMode]   = useState(_s0?.ajustementMode   ?? 'interactif')
   const [manualOverrides,  setManualOverrides]  = useState(_s0?.manualOverrides  ?? {})
   const [ignorePlafondIds, setIgnorePlafondIds] = useState(_s0?.ignorePlafondIds ?? {})
+  // ignorerBornesIds : désactive GAIN/PERTE_MAX_REALISTE_HEBDO pour explorer librement
+  // Temporaire — jamais persisté en base, ne modifie pas la fiche école.
+  const [ignorerBornesIds, setIgnorerBornesIds] = useState(_s0?.ignorerBornesIds ?? {})
 
   // T5 : snapshots nommés — chargés depuis Supabase au montage
   const [snapshots,       setSnapshots]       = useState([])
@@ -779,12 +787,18 @@ export default function ObjectivesPage() {
     return next
   })
 
+  const handleToggleIgnorerBornes = (id) => setIgnorerBornesIds((p) => {
+    const next = { ...p }
+    if (next[id]) delete next[id]; else next[id] = true
+    return next
+  })
+
   // T6 : persistance de session — sauvegarde à chaque changement des paramètres
   useEffect(() => {
     try {
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ajustementMode, manualOverrides, ignorePlafondIds, diversification }))
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ajustementMode, manualOverrides, ignorePlafondIds, ignorerBornesIds, diversification }))
     } catch { /* quota dépassé — silencieux */ }
-  }, [ajustementMode, manualOverrides, ignorePlafondIds, diversification])
+  }, [ajustementMode, manualOverrides, ignorePlafondIds, ignorerBornesIds, diversification])
 
   // T5 : chargement des snapshots au montage + après chaque mutation
   const fetchSnapshots = useCallback(async () => {
@@ -1154,6 +1168,8 @@ export default function ObjectivesPage() {
                     onResetManualOverride={handleResetManualOverride}
                     ignorePlafond={!!ignorePlafondIds[s.id]}
                     onToggleIgnorePlafond={handleToggleIgnorePlafond}
+                    ignorerBornes={!!ignorerBornesIds[s.id]}
+                    onToggleIgnorerBornes={handleToggleIgnorerBornes}
                     calcRevenu={(h) => estimerRevenuEcole(s, h, { schoolYear, teacherZone })}
                   />
                 ))}

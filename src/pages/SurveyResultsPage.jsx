@@ -401,34 +401,62 @@ function RegistrationsList({ registrations }) {
         Inscriptions ({registrations.length})
       </p>
       <div className="space-y-1.5">
-        {registrations.map((reg) => (
-          <div key={reg.id}
-            className="flex flex-wrap items-center gap-2 text-xs px-3 py-2 rounded-lg bg-surface border border-border-subtle">
-            {reg.is_respondent && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-guitar-600/15 text-guitar-400 border border-guitar-600/25 flex-shrink-0">
-                Répondant
-              </span>
-            )}
-            <span className="font-medium text-foreground">
-              {reg.prenom || '—'} {reg.nom || ''}
-            </span>
-            {reg.choix_structure === 'cesu' ? (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/25 flex items-center gap-1 flex-shrink-0">
-                <Home className="w-2.5 h-2.5" />CESU
-              </span>
-            ) : reg.school_name ? (
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-surface-raised border border-border-subtle text-muted-foreground flex-shrink-0">
-                {reg.school_name}
-              </span>
-            ) : null}
-            {reg.email && (
-              <span className="text-muted-foreground truncate">{reg.email}</span>
-            )}
-            {reg.telephone && (
-              <span className="text-muted-foreground flex-shrink-0"><PhoneActions number={reg.telephone} /></span>
-            )}
-          </div>
-        ))}
+        {registrations.map((reg) => {
+          // Créneaux disponibles des personnes supplémentaires (champ JSONB — migration T1b)
+          const avail = reg.availabilities && typeof reg.availabilities === 'object'
+            ? Object.entries(reg.availabilities)
+            : []
+          const totalSlots = avail.reduce((s, [, slots]) => s + slots.length, 0)
+          return (
+            <div key={reg.id}
+              className="text-xs px-3 py-2 rounded-lg bg-surface border border-border-subtle space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                {reg.is_respondent && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-guitar-600/15 text-guitar-400 border border-guitar-600/25 flex-shrink-0">
+                    Répondant
+                  </span>
+                )}
+                {!reg.is_respondent && reg.registration_type === 'reinscription' && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 flex-shrink-0">
+                    Réinscription
+                  </span>
+                )}
+                <span className="font-medium text-foreground">
+                  {reg.prenom || '—'} {reg.nom || ''}
+                  {reg.birth_year && <span className="ml-1 font-normal text-muted-foreground">({reg.birth_year})</span>}
+                </span>
+                {reg.choix_structure === 'cesu' ? (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/25 flex items-center gap-1 flex-shrink-0">
+                    <Home className="w-2.5 h-2.5" />CESU
+                  </span>
+                ) : reg.school_name ? (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-surface-raised border border-border-subtle text-muted-foreground flex-shrink-0">
+                    {reg.school_name}
+                  </span>
+                ) : null}
+                {reg.email && <span className="text-muted-foreground truncate">{reg.email}</span>}
+                {reg.telephone && (
+                  <span className="text-muted-foreground flex-shrink-0"><PhoneActions number={reg.telephone} /></span>
+                )}
+              </div>
+              {/* Créneaux disponibles — visibles uniquement pour les personnes supplémentaires */}
+              {!reg.is_respondent && totalSlots > 0 && (
+                <div className="pt-1 border-t border-border-subtle/50">
+                  <p className="text-[10px] text-muted uppercase tracking-wider mb-1">
+                    Disponibilités ({totalSlots} créneau{totalSlots > 1 ? 'x' : ''})
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {avail.map(([jour, slots]) => (
+                      <span key={jour} className="text-[10px] px-1.5 py-0.5 rounded bg-surface-raised border border-border-subtle text-muted-foreground">
+                        {jour} : {slots.length} créneau{slots.length > 1 ? 'x' : ''}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )

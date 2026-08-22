@@ -379,15 +379,14 @@ function StepAttentes({ data, onChange }) {
   )
 }
 
-function StepInscriptions({ data, onChange, schools }) {
+// suppSchedules : { [index]: [{ day, slots }] } — créneaux par personne supplémentaire
+// onSuppSchoolChange(i, schoolName) — déclenche le chargement des créneaux pour la personne i
+function StepInscriptions({ data, onChange, schools, suppSchedules, suppLoading, onSuppSchoolChange }) {
   const inscrits = data.inscriptions_supplementaires ?? []
 
   const add = () => onChange({
     ...data,
-    inscriptions_supplementaires: [
-      ...inscrits,
-      { prenom: '', nom: '', email: '', telephone: '', choix_structure: '', school_name: '' },
-    ],
+    inscriptions_supplementaires: [...inscrits, defaultPersonSupp()],
   })
 
   const remove = (i) => onChange({
@@ -395,9 +394,30 @@ function StepInscriptions({ data, onChange, schools }) {
     inscriptions_supplementaires: inscrits.filter((_, idx) => idx !== i),
   })
 
-  const setField = (i, k) => (value) => {
+  // Mise à jour d'un champ simple pour la personne i
+  const setField = (i, k, value) => {
     const updated = inscrits.map((p, idx) => idx === i ? { ...p, [k]: value } : p)
     onChange({ ...data, inscriptions_supplementaires: updated })
+  }
+
+  // Changement d'école : réinitialise les créneaux ET déclenche le chargement
+  const handleSchoolChange = (i, schoolName) => {
+    const updated = inscrits.map((p, idx) =>
+      idx === i ? { ...p, school_name: schoolName, availabilities: {} } : p
+    )
+    onChange({ ...data, inscriptions_supplementaires: updated })
+    onSuppSchoolChange(i, schoolName)
+  }
+
+  // Toggle d'un créneau de disponibilité pour la personne i
+  const toggleSlot = (i, jour, slot) => {
+    const p = inscrits[i]
+    const current = (p.availabilities ?? {})[jour] ?? []
+    const next = current.includes(slot) ? current.filter(s => s !== slot) : [...current, slot]
+    const newAvail = { ...(p.availabilities ?? {}) }
+    if (next.length === 0) delete newAvail[jour]
+    else newAvail[jour] = next
+    setField(i, 'availabilities', newAvail)
   }
 
   return (
@@ -421,7 +441,7 @@ function StepInscriptions({ data, onChange, schools }) {
         </div>
       </div>
 
-      {/* Avertissement non-inscription officielle (1d) */}
+      {/* Avertissement non-inscription officielle */}
       <div className="rounded-xl bg-surface-overlay border border-border-subtle px-4 py-3">
         <p className="text-sm text-muted-foreground leading-relaxed">
           <strong className="text-foreground">Ce formulaire n&apos;est pas une inscription officielle.</strong>{' '}
@@ -430,80 +450,185 @@ function StepInscriptions({ data, onChange, schools }) {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Souhaitez-vous inscrire d&apos;autres personnes en même temps ? Ajoutez leurs coordonnées ci-dessous.
-        Pour chaque personne inscrite, précisez si elle prend des cours en école de musique ou en cours particulier à domicile (CESU).
+        Souhaitez-vous inscrire d&apos;autres personnes en même temps ? Chaque personne suit son propre
+        parcours complet : identité, structure de cours et créneaux disponibles.
       </p>
 
-      {inscrits.map((p, i) => (
-        <div key={i} className="glass-panel rounded-2xl p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold text-foreground">Personne {i + 1}</span>
-            <button type="button" onClick={() => remove(i)}
-              className="p-1.5 rounded-lg hover:bg-guitar-600/10 text-muted hover:text-guitar-400 transition-colors">
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="Prénom" required>
-              <input className={inputCls} value={p.prenom}
-                onChange={(e) => setField(i, 'prenom')(e.target.value)}
-                placeholder="Prénom" />
-            </Field>
-            <Field label="Nom" required>
-              <input className={inputCls} value={p.nom}
-                onChange={(e) => setField(i, 'nom')(e.target.value)}
-                placeholder="Nom" />
-            </Field>
-            <Field label="Email">
-              <input className={inputCls} type="email" value={p.email}
-                onChange={(e) => setField(i, 'email')(e.target.value)}
-                placeholder="email@exemple.fr" />
-            </Field>
-            <Field label="Téléphone">
-              <input className={inputCls} type="tel" value={p.telephone}
-                onChange={(e) => setField(i, 'telephone')(e.target.value)}
-                placeholder="06 00 00 00 00" />
-            </Field>
-            <div className="sm:col-span-2">
-              <Field label="Inscription souhaitée" required>
-                <div className="flex gap-3">
-                  {[
-                    { value: 'ecole', label: 'École de musique' },
-                    { value: 'cesu',  label: 'Cours particulier (CESU)' },
-                  ].map(({ value, label }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => {
-                        setField(i, 'choix_structure')(value)
-                        if (value === 'cesu') setField(i, 'school_name')('')
-                      }}
-                      className={`flex-1 py-3 rounded-xl border text-sm font-medium transition-all ${
-                        p.choix_structure === value
-                          ? 'border-guitar-600 bg-guitar-600/10 text-guitar-400'
-                          : 'border-border-subtle bg-surface-raised text-muted-foreground hover:border-border'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </Field>
+      {inscrits.map((p, i) => {
+        const isCesu = p.school_name === 'CESU'
+        // Créneaux à afficher selon l'école choisie
+        const jourSlots = isCesu
+          ? CESU_JOURS.map(day => ({ day, slots: CESU_SLOTS }))
+          : (suppSchedules[i] ?? [])
+        const loading = suppLoading[i] ?? false
+        const totalCreneaux = Object.values(p.availabilities ?? {}).reduce((s, arr) => s + arr.length, 0)
+
+        return (
+          <div key={i} className="glass-panel rounded-2xl p-5 space-y-5">
+            {/* En-tête */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold text-foreground">
+                Personne {i + 1}
+                {(p.prenom || p.nom) && (
+                  <span className="ml-2 font-normal text-muted-foreground">— {p.prenom} {p.nom}</span>
+                )}
+              </span>
+              <button type="button" onClick={() => remove(i)}
+                className="p-1.5 rounded-lg hover:bg-guitar-600/10 text-muted hover:text-guitar-400 transition-colors">
+                <Trash2 className="w-4 h-4" />
+              </button>
             </div>
-            {p.choix_structure === 'ecole' && (
-              <div className="sm:col-span-2">
-                <Field label="École">
-                  <select className={selectCls} value={p.school_name}
-                    onChange={(e) => setField(i, 'school_name')(e.target.value)}>
-                    <option value="">Choisir une école…</option>
-                    {schools.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
+
+            {/* ── SECTION 1 : Identité ── */}
+            <div>
+              <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Identité</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Field label="Prénom" required>
+                  <input className={inputCls} value={p.prenom}
+                    onChange={(e) => setField(i, 'prenom', e.target.value)}
+                    placeholder="Prénom" />
                 </Field>
+                <Field label="Nom" required>
+                  <input className={inputCls} value={p.nom}
+                    onChange={(e) => setField(i, 'nom', e.target.value)}
+                    placeholder="Nom" />
+                </Field>
+                <Field label="Année de naissance">
+                  <input className={inputCls} type="number" min="1930" max="2025"
+                    value={p.birth_year}
+                    onChange={(e) => setField(i, 'birth_year', e.target.value)}
+                    placeholder="2010" />
+                </Field>
+                <Field label="Email">
+                  <input className={inputCls} type="email" value={p.email}
+                    onChange={(e) => setField(i, 'email', e.target.value)}
+                    placeholder="email@exemple.fr" />
+                </Field>
+                <Field label="Téléphone">
+                  <input className={inputCls} type="tel" value={p.phone}
+                    onChange={(e) => setField(i, 'phone', e.target.value)}
+                    placeholder="06 00 00 00 00" />
+                </Field>
+                <Field label="Type d'inscription">
+                  <div className="flex gap-2">
+                    {[
+                      { value: 'nouvelle',      label: 'Nouvelle' },
+                      { value: 'reinscription', label: 'Réinscription' },
+                    ].map(({ value, label }) => (
+                      <button key={value} type="button"
+                        onClick={() => setField(i, 'registration_type', value)}
+                        className={`flex-1 py-2.5 rounded-xl border text-xs font-medium transition-all ${
+                          p.registration_type === value
+                            ? 'border-guitar-600 bg-guitar-600/10 text-guitar-400'
+                            : 'border-border-subtle bg-surface-raised text-muted-foreground hover:border-border'
+                        }`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+              </div>
+            </div>
+
+            {/* ── SECTION 2 : Structure de cours ── */}
+            <div>
+              <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Structure de cours</p>
+              <div className="space-y-3">
+                <Field label="Type de cours" required>
+                  <div className="flex gap-3">
+                    {[
+                      { value: 'ecole', label: 'École de musique' },
+                      { value: 'CESU',  label: 'Cours particulier (CESU)' },
+                    ].map(({ value, label }) => (
+                      <button key={value} type="button"
+                        onClick={() => handleSchoolChange(i, value === 'ecole' ? '' : 'CESU')}
+                        className={`flex-1 py-3 rounded-xl border text-sm font-medium transition-all ${
+                          (value === 'CESU' && p.school_name === 'CESU') ||
+                          (value === 'ecole' && p.school_name !== 'CESU' && p.school_name !== '')
+                            ? 'border-guitar-600 bg-guitar-600/10 text-guitar-400'
+                            : 'border-border-subtle bg-surface-raised text-muted-foreground hover:border-border'
+                        }`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+                {p.school_name !== 'CESU' && (
+                  <Field label="École">
+                    <select className={selectCls} value={p.school_name}
+                      onChange={(e) => handleSchoolChange(i, e.target.value)}>
+                      <option value="">Choisir une école…</option>
+                      {schools.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </Field>
+                )}
+              </div>
+            </div>
+
+            {/* ── SECTION 3 : Disponibilités ── */}
+            {p.school_name && (
+              <div>
+                <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">
+                  Disponibilités
+                  {totalCreneaux > 0 && (
+                    <span className="ml-2 normal-case font-normal text-guitar-400">
+                      {totalCreneaux} créneau{totalCreneaux > 1 ? 'x' : ''} sélectionné{totalCreneaux > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </p>
+                {loading ? (
+                  <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+                    <div className="w-4 h-4 border-2 border-guitar-600 border-t-transparent rounded-full animate-spin" />
+                    Chargement…
+                  </div>
+                ) : jourSlots.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-3">
+                    Aucun créneau configuré pour cette école.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {jourSlots.map(({ day, slots }) => {
+                      const selected = (p.availabilities ?? {})[day] ?? []
+                      const hasSelected = selected.length > 0
+                      return (
+                        <div key={day} className={`rounded-xl border transition-all ${
+                          hasSelected ? 'border-guitar-600/60 bg-guitar-600/5' : 'border-border-subtle bg-surface-raised'
+                        }`}>
+                          <div className="flex items-center justify-between px-4 py-2.5">
+                            <span className={`text-sm font-medium ${hasSelected ? 'text-foreground' : 'text-muted-foreground'}`}>
+                              {day}
+                            </span>
+                            {hasSelected && (
+                              <span className="text-xs text-guitar-400">{selected.length} créneau{selected.length > 1 ? 'x' : ''}</span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 px-4 pb-3">
+                            {slots.map(slot => {
+                              const active = selected.includes(slot)
+                              return (
+                                <button key={slot} type="button"
+                                  onClick={() => toggleSlot(i, day, slot)}
+                                  className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs border transition-all ${
+                                    active
+                                      ? 'border-guitar-600 bg-guitar-600/10 text-guitar-400'
+                                      : 'border-border-subtle bg-surface text-muted-foreground hover:border-border'
+                                  }`}>
+                                  {active && <Check className="w-3 h-3 flex-shrink-0" />}
+                                  {slot}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
-        </div>
-      ))}
+        )
+      })}
 
       <button type="button" onClick={add}
         className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-dashed border-border hover:border-guitar-600/60 hover:bg-guitar-600/5 text-muted-foreground hover:text-guitar-400 transition-all text-sm">
@@ -518,6 +643,13 @@ function StepInscriptions({ data, onChange, schools }) {
 
 // Structure interne d'un tuteur — guardian1_role/guardian2_role nécessitent la migration SQL
 const defaultTuteur = () => ({ prenom: '', nom: '', role: '', role_precision: '', phone: '', email: '', purpose: '' })
+
+// Structure d'une personne supplémentaire — suit le même parcours que le répondant principal
+// (identité, école/CESU, créneaux disponibles). Nécessite la migration SQL bloc T1b.
+const defaultPersonSupp = () => ({
+  prenom: '', nom: '', birth_year: '', email: '', phone: '',
+  school_name: '', registration_type: 'nouvelle', availabilities: {},
+})
 
 const defaultForm = {
   first_name: '', last_name: '', birth_year: '', email: '', phone: '',
@@ -542,10 +674,14 @@ export default function SondagePage() {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState('')
 
-  // Écoles et créneaux
+  // Écoles et créneaux du répondant principal
   const [schools, setSchools] = useState([])
   const [schoolSchedules, setSchoolSchedules] = useState([])   // [{ day, slots }]
   const [loadingSchedules, setLoadingSchedules] = useState(false)
+
+  // Créneaux des personnes supplémentaires : indexés par position dans le tableau
+  const [suppSchedules, setSuppSchedules] = useState({})  // { [i]: [{ day, slots }] }
+  const [suppLoading,   setSuppLoading]   = useState({})  // { [i]: bool }
 
   // ── Chargement du token ───────────────────────────────────────────────────
 
@@ -610,6 +746,25 @@ export default function SondagePage() {
       })
   }, [form.school_name])
 
+  // ── Chargement des créneaux pour une personne supplémentaire ─────────────
+  // Appelé par StepInscriptions quand l'école d'une personne change.
+  // 'CESU' et '' : pas de chargement Supabase (créneaux constants ou vides).
+
+  const loadSuppSchedule = async (i, schoolName) => {
+    if (!schoolName || schoolName === 'CESU') {
+      setSuppSchedules(prev => { const n = { ...prev }; delete n[i]; return n })
+      return
+    }
+    setSuppLoading(prev => ({ ...prev, [i]: true }))
+    const { data } = await supabase
+      .from('school_schedules')
+      .select('day, slots')
+      .eq('school_name', schoolName)
+      .eq('school_year', CURRENT_YEAR)
+    setSuppSchedules(prev => ({ ...prev, [i]: data ?? [] }))
+    setSuppLoading(prev => ({ ...prev, [i]: false }))
+  }
+
   // ── Soumission ────────────────────────────────────────────────────────────
 
   const handleSubmit = async () => {
@@ -673,10 +828,14 @@ export default function SondagePage() {
           prenom: p.prenom || null,
           nom: p.nom || null,
           email: p.email || null,
-          telephone: p.telephone || null,
-          choix_structure: p.choix_structure || null,
-          school_name: p.choix_structure === 'ecole' ? (p.school_name || null) : null,
+          telephone: p.phone || null,
+          birth_year: p.birth_year ? parseInt(p.birth_year, 10) : null,
+          registration_type: p.registration_type || 'nouvelle',
+          choix_structure: p.school_name === 'CESU' ? 'cesu' : (p.school_name ? 'ecole' : null),
+          school_name: p.school_name && p.school_name !== 'CESU' ? p.school_name : null,
           school_id: null,
+          // availabilities : JSONB — nécessite la migration SQL bloc T1b sur survey_registrations
+          availabilities: Object.keys(p.availabilities ?? {}).length > 0 ? p.availabilities : null,
         })),
       ]
       const { error: regError } = await supabase.from('survey_registrations').insert(regsToInsert)
@@ -760,7 +919,8 @@ export default function SondagePage() {
       schoolSchedules={schoolSchedules} loadingSchedules={loadingSchedules} />,
     <StepLogistique     key="l" data={form} onChange={setForm} />,
     <StepAttentes       key="a" data={form} onChange={setForm} />,
-    <StepInscriptions   key="r" data={form} onChange={setForm} schools={schools} />,
+    <StepInscriptions   key="r" data={form} onChange={setForm} schools={schools}
+      suppSchedules={suppSchedules} suppLoading={suppLoading} onSuppSchoolChange={loadSuppSchedule} />,
   ]
 
   return (
