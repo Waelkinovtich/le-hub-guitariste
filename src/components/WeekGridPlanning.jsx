@@ -98,7 +98,10 @@ function hasReservedOverlap(reservedByDay, targetDay, targetStart, slotCount) {
  *   onNewLesson({ lessonDate, lessonTime, durationMinutes })
  *   onSelectLesson(lesson)
  */
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], onNewLesson, onSelectLesson, onDuplicate }) {
+// onDeleteLesson : si fourni, le bouton poubelle appelle cette fonction au lieu
+// d'ouvrir DeleteLessonModal — permet d'utiliser ce composant hors contexte "cours élèves"
+// (ex. SchoolSchedulePage pour les créneaux disponibles par école).
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -192,6 +195,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
   // ── Mode B : déplacement d'un cours ──────────────────────────────────────
 
   const startMove = useCallback((e, lesson, day, startSlot, slotCount) => {
+    // nonMovable : créneaux école ou tout bloc qu'on veut rendre non-déplaçable
+    if (lesson.nonMovable) { onSelectLesson?.(lesson); return }
     const clickedSlot = parseInt(cellAt(e.clientX, e.clientY)?.dataset.slot ?? startSlot, 10)
     const grabOffset  = Math.max(0, Math.min(clickedSlot - startSlot, slotCount - 1))
     moveRef.current = {
@@ -538,7 +543,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         aria-label="Supprimer ce cours"
                         title="Supprimer ce cours"
                         onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => { e.stopPropagation(); setDeleteLessonItem(lesson) }}
+                        onClick={(e) => { e.stopPropagation(); onDeleteLesson ? onDeleteLesson(lesson) : setDeleteLessonItem(lesson) }}
                         className="absolute top-0 right-0 z-20 p-0.5 rounded-bl-md bg-void/50 text-white/80
                                    opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity
                                    focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"

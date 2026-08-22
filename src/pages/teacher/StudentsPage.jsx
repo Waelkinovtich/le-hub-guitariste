@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Search, Plus, X } from 'lucide-react'
+import { Search, Plus, X, Archive, ArchiveX } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { usePeriod, filterStudentsByPeriod } from '../../context/PeriodContext'
 import AddStudentModal from '../../components/AddStudentModal'
@@ -7,7 +7,7 @@ import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState
 import { useAuth } from '../../context/AuthContext'
 import HelpTooltip from '../../components/HelpTooltip'
 import { useFetch } from '../../hooks/useFetch'
-import { fetchTeacherStudents, fetchSchoolNames, fetchAllContextsByStudent } from '../../services/students'
+import { fetchTeacherStudents, fetchSchoolNames, fetchAllContextsByStudent, archiveStudent, unarchiveStudent } from '../../services/students'
 import { fetchUpcomingLessons, buildNextLessonByStudent, formatNextLessonLabel } from '../../services/lessons'
 import { initials } from '../../utils/format'
 import { getSchoolColor } from '../../utils/schoolColors'
@@ -29,10 +29,15 @@ export default function StudentsPage() {
   const [filterType, setFilterType] = useState('')
   const [filterSchool, setFilterSchool] = useState(location.state?.filterSchool ?? '')
   const [filterAge, setFilterAge] = useState('')
+  // showArchived : affiche les élèves archivés au lieu des actifs
+  const [showArchived, setShowArchived] = useState(false)
+  // pendingArchive : élève en attente de confirmation d'archivage
+  const [pendingArchive, setPendingArchive] = useState(null) // { id, name }
+  const [archiving, setArchiving] = useState(false)
 
   const load = useCallback(async () => {
     const [students, upcoming, schools, contextsByStudent] = await Promise.all([
-      fetchTeacherStudents(user.id),
+      fetchTeacherStudents(user.id, { includeArchived: showArchived }),
       fetchUpcomingLessons({ teacherId: user.id, limit: 100 }),
       fetchSchoolNames(user.id),
       fetchAllContextsByStudent(user.id),
@@ -41,7 +46,7 @@ export default function StudentsPage() {
   }, [user.id])
 
   const { period } = usePeriod()
-  const { data, loading, error, reload } = useFetch(load, [user.id])
+  const { data, loading, error, reload } = useFetch(load, [user.id, showArchived])
   const schools = data?.schools ?? []
 
   const rows = useMemo(() => {
@@ -89,6 +94,26 @@ export default function StudentsPage() {
   const hasFilters = search || filterLevel || filterType || filterSchool || filterAge
   const clearFilters = () => { setSearch(''); setFilterLevel(''); setFilterType(''); setFilterSchool(''); setFilterAge('') }
 
+  // ── Archivage / désarchivage ──────────────────────────────────────────────────
+
+  const handleArchive = async () => {
+    if (!pendingArchive) return
+    setArchiving(true)
+    try {
+      await archiveStudent(pendingArchive.id)
+      setPendingArchive(null)
+      reload()
+    } finally {
+      setArchiving(false)
+    }
+  }
+
+  const handleUnarchive = async (studentId, e) => {
+    e.stopPropagation()
+    await unarchiveStudent(studentId)
+    reload()
+  }
+
   if (loading) return <LoadingBlock label="Chargement des élèves" />
   if (error) return <ErrorBlock message={error} onRetry={reload} />
 
@@ -102,10 +127,27 @@ export default function StudentsPage() {
           </div>
           <p className="text-muted-foreground mt-1">{filtered.length} / {rows.length} élève{rows.length !== 1 ? 's' : ''}</p>
         </div>
-        <button type="button" onClick={() => setShowAddForm(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity">
-          <Plus className="w-4 h-4" />
-          Ajouter un élève
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Toggle actifs / archivés */}
+          <button
+            type="button"
+            onClick={() => { setShowArchived((v) => !v); clearFilters() }}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
+              showArchived
+                ? 'border-amber-500/60 bg-amber-500/10 text-amber-400'
+                : 'border-border-subtle bg-surface-raised text-muted-foreground hover:border-border'
+            }`}
+          >
+            <Archive className="w-4 h-4" />
+            {showArchived ? 'Actifs' : 'Archivés'}
+          </button>
+          {!showArchived && (
+            <button type="button" onClick={() => setShowAddForm(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity">
+              <Plus className="w-4 h-4" />
+              Ajouter un élève
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="flex flex-col sm:flex-row flex-wrap gap-3 mb-6">
@@ -153,6 +195,7 @@ export default function StudentsPage() {
                 <th className="px-6 py-4 font-medium hidden lg:table-cell">Instrument</th>
                 <th className="px-6 py-4 font-medium hidden sm:table-cell">Prochain cours</th>
                 <th className="px-6 py-4 font-medium">Progression</th>
+                <th className="px-6 py-4 font-medium" />
               </tr>
             </thead>
             <tbody>
@@ -200,6 +243,27 @@ export default function StudentsPage() {
                         <span className="text-xs text-muted w-8">{student.progress}%</span>
                       </div>
                     </td>
+                    <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                      {showArchived ? (
+                        <button
+                          type="button"
+                          title="Désarchiver cet élève"
+                          onClick={(e) => handleUnarchive(student.id, e)}
+                          className="p-1.5 rounded-lg text-muted-foreground hover:text-green-400 hover:bg-green-400/10 transition-colors"
+                        >
+                          <ArchiveX className="w-4 h-4" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          title="Archiver cet élève"
+                          onClick={(e) => { e.stopPropagation(); setPendingArchive({ id: student.id, name: student.name }) }}
+                          className="p-1.5 rounded-lg text-muted-foreground hover:text-amber-400 hover:bg-amber-400/10 transition-colors"
+                        >
+                          <Archive className="w-4 h-4" />
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 )
               })}
@@ -210,6 +274,34 @@ export default function StudentsPage() {
 
       {showAddForm && (
         <AddStudentModal teacherId={user.id} onClose={() => setShowAddForm(false)} onCreated={() => reload()} />
+      )}
+
+      {/* Confirmation d'archivage — modal légère, données préservées */}
+      {pendingArchive && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+          <div className="glass-panel rounded-2xl p-6 max-w-sm w-full shadow-xl">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+                <Archive className="w-4 h-4 text-amber-400" />
+              </div>
+              <p className="text-sm font-semibold text-foreground">Archiver cet élève ?</p>
+            </div>
+            <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
+              <strong className="text-foreground">{pendingArchive.name}</strong> sera retiré de la liste active.
+              Ses cours, revenus et données historiques restent intacts. Vous pourrez le désarchiver à tout moment.
+            </p>
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setPendingArchive(null)}
+                className="flex-1 py-2.5 rounded-xl border border-border-subtle text-sm text-muted-foreground hover:border-border transition-colors">
+                Annuler
+              </button>
+              <button type="button" onClick={handleArchive} disabled={archiving}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-sm text-amber-400 font-medium hover:bg-amber-500/25 transition-colors disabled:opacity-60">
+                {archiving ? 'Archivage…' : 'Archiver'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

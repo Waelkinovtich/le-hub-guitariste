@@ -10,11 +10,12 @@
 // des objectifs (clic sur "Enregistrer"). L'état `savedObjectives` est distinct
 // de l'état `form` (édition en cours) — le simulateur n'observe que le premier.
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Euro, Clock, Car, Save, Loader2, Check, AlertCircle,
   ChevronDown, BarChart2, Target, TrendingUp, Star, Info,
+  BookmarkPlus, Trash2, ArrowRight, BookmarkCheck,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
@@ -331,59 +332,89 @@ function calculerSimulation({
   }
 }
 
-// ─── Contrôle d'ajustement manuel (Tâche 2) ────────────────────────────────────
+// ─── Barre d'heures déplaçable (Tâche 2) ──────────────────────────────────────
 //
-// État de saisie local (texte brut) séparé de la valeur validée pour permettre
-// à l'utilisateur de taper librement ; le clampage aux bornes réalistes se
-// fait à la validation (blur), jamais pendant la frappe.
+// Remplace le champ numérique par un geste de drag directement sur la barre.
+// Pointer Capture API : le drag continue hors des limites de l'élément sans
+// perdre l'événement pointermove (pas besoin d'écouter document globalement).
+// La transition CSS est désactivée pendant le drag pour un retour immédiat.
+//
+// Bornes visuelles : la barre affiche bornes.min à gauche et bornes.max à droite.
+// La position 100 % correspond à plafond (plafond total), mais le drag est clampé
+// à bornes.max — l'utilisateur ne peut pas dépasser le plafond réaliste.
 
-function ManualHoursInput({ bornes, valeurActuelle, onChange, onReset }) {
-  const [texte, setTexte] = useState(valeurActuelle != null ? String(valeurActuelle) : '')
-  const [messageBorne, setMessageBorne] = useState('')
+function DraggableBar({ bornes, heuresAffichees, plafond, manualOverride, onChange, onReset, calcRevenu }) {
+  const barRef  = useRef(null)
+  const [dragging, setDragging] = useState(false)
+  const [dragVal, setDragVal]   = useState(null)
 
-  useEffect(() => {
-    setTexte(valeurActuelle != null ? String(valeurActuelle) : '')
-  }, [valeurActuelle])
+  // Valeur montrée : dragVal pendant le geste (retour immédiat), heuresAffichees sinon
+  const valeur = dragging && dragVal != null ? dragVal : heuresAffichees
+  const pct    = plafond && valeur != null && valeur > 0
+    ? Math.min(100, Math.round((valeur / plafond) * 100)) : 0
 
-  const valider = (brut) => {
-    if (brut === '') { onReset(); setMessageBorne(''); return }
-    const val = parseFloat(brut)
-    if (isNaN(val)) return
-    if (val > bornes.max) {
-      onChange(bornes.max)
-      setMessageBorne(`Plafond réaliste atteint (+${GAIN_MAX_REALISTE_HEBDO} h max) — bloqué à ${fmtHeures(bornes.max)}.`)
-    } else if (val < bornes.min) {
-      onChange(bornes.min)
-      setMessageBorne(`Plancher réaliste atteint (−${PERTE_MAX_REALISTE_HEBDO} h max) — bloqué à ${fmtHeures(bornes.min)}.`)
-    } else {
-      onChange(val)
-      setMessageBorne('')
-    }
+  const calculerDepuisX = (clientX) => {
+    const rect  = barRef.current.getBoundingClientRect()
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+    // Ratio → heures brutes, puis granularité 15 min et bornes réalistes
+    const brut   = ratio * plafond
+    const granule = Math.round(brut / GRANULARITE_HEURES) * GRANULARITE_HEURES
+    return Math.max(bornes.min, Math.min(bornes.max, granule))
   }
 
+  const onPointerDown = (e) => {
+    e.preventDefault()
+    barRef.current.setPointerCapture(e.pointerId)
+    const val = calculerDepuisX(e.clientX)
+    setDragging(true)
+    setDragVal(val)
+    onChange(val)
+  }
+
+  const onPointerMove = (e) => {
+    if (!dragging) return
+    const val = calculerDepuisX(e.clientX)
+    setDragVal(val)
+    onChange(val)
+  }
+
+  const onPointerUp = () => { setDragging(false); setDragVal(null) }
+
+  const revenuDrag = dragging && dragVal != null ? calcRevenu(dragVal) : null
+
   return (
-    <div className="mt-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-      <div className="flex items-center gap-2">
-        <input
-          type="number" min={bornes.min} max={bornes.max} step={GRANULARITE_HEURES}
-          value={texte}
-          onChange={(e) => setTexte(e.target.value)}
-          onBlur={(e) => valider(e.target.value)}
-          placeholder="ajuster (h)"
-          className={inputCls + ' py-1.5 text-xs w-24'}
+    <div className="mt-3" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+      {/* Barre interactive — curseur ew-resize signale la possibilité de glisser */}
+      <div
+        ref={barRef}
+        className="h-3 rounded-full bg-surface-raised overflow-hidden cursor-ew-resize select-none touch-none"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        title={`Glisser pour ajuster entre ${fmtHeures(bornes.min)} et ${fmtHeures(bornes.max)}`}
+      >
+        <div
+          className="h-full rounded-full guitar-gradient"
+          style={{ width: `${pct}%`, transition: dragging ? 'none' : 'width 0.4s ease' }}
         />
-        <span className="text-xs text-muted">/ sem.</span>
-        {valeurActuelle != null && (
-          <button
-            type="button"
-            onClick={() => { onReset(); setTexte(''); setMessageBorne('') }}
-            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-          >
+      </div>
+      {/* Légende bornes + valeur temps réel */}
+      <div className="flex items-center justify-between mt-1">
+        <span className="text-[11px] text-muted">{fmtHeures(bornes.min)}</span>
+        {dragging && dragVal != null ? (
+          <span className="text-xs font-medium text-guitar-400">
+            {fmtHeures(dragVal)}{revenuDrag != null ? ` → ${fmt(revenuDrag, '€/mois')}` : ''}
+          </span>
+        ) : manualOverride != null ? (
+          <button type="button" onClick={() => onReset()}
+            className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground">
             Réinitialiser
           </button>
+        ) : (
+          <span className="text-[11px] text-muted italic">Glisser pour ajuster</span>
         )}
+        <span className="text-[11px] text-muted">{fmtHeures(bornes.max)}</span>
       </div>
-      {messageBorne && <p className="text-xs text-amber-400 mt-1">{messageBorne}</p>}
     </div>
   )
 }
@@ -392,7 +423,7 @@ function ManualHoursInput({ bornes, valeurActuelle, onChange, onReset }) {
 
 function SchoolRow({
   school, plafond, manualOverride, onChangeManualOverride, onResetManualOverride,
-  ignorePlafond, onToggleIgnorePlafond,
+  ignorePlafond, onToggleIgnorePlafond, calcRevenu,
 }) {
   const navigate = useNavigate()
   const {
@@ -480,23 +511,25 @@ function SchoolRow({
         </div>
       </div>
 
-      {heuresHebdoProposees != null && heuresHebdoProposees > 0 && (
-        <div className="h-1.5 rounded-full bg-surface-raised overflow-hidden">
+      {/* Barre : interactive (drag) pour les écoles flexibles, statique pour les fixes */}
+      {estAjustable ? (
+        <DraggableBar
+          bornes={bornesRealistesEcole(school)}
+          heuresAffichees={heuresHebdoProposees}
+          plafond={plafond}
+          manualOverride={manualOverride}
+          onChange={(val) => onChangeManualOverride(school.id, val)}
+          onReset={() => onResetManualOverride(school.id)}
+          calcRevenu={calcRevenu}
+        />
+      ) : heuresHebdoProposees != null && heuresHebdoProposees > 0 ? (
+        <div className="h-1.5 rounded-full bg-surface-raised overflow-hidden mt-2">
           <div
-            className={`h-full rounded-full ${volumeFixe ? 'bg-amber-500/60' : 'guitar-gradient'}`}
+            className="h-full rounded-full bg-amber-500/60"
             style={{ width: `${pct}%`, transition: 'width 0.4s ease' }}
           />
         </div>
-      )}
-
-      {estAjustable && (
-        <ManualHoursInput
-          bornes={bornesRealistesEcole(school)}
-          valeurActuelle={manualOverride}
-          onChange={(val) => onChangeManualOverride(school.id, val)}
-          onReset={() => onResetManualOverride(school.id)}
-        />
-      )}
+      ) : null}
 
       {estAjustable && desiredWeeklyHoursAffiche != null && (
         <label
@@ -518,8 +551,17 @@ function SchoolRow({
 
 // ─── Page principale ──────────────────────────────────────────────────────────
 
+// Clé sessionStorage : conserve l'état du simulateur pendant la navigation SPA.
+// Aucune donnée sensible — paramètres de simulation uniquement, pas d'objectifs.
+const SESSION_KEY = 'objectives_sim_state'
+
+function readSession() {
+  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? 'null') } catch { return null }
+}
+
 export default function ObjectivesPage() {
   const { user } = useAuth()
+  const navigate  = useNavigate()
   const [schoolYear, setSchoolYear] = useState(currentSchoolYear())
 
   // ── État du formulaire (ce que l'utilisateur est en train de saisir) ────────
@@ -551,14 +593,17 @@ export default function ObjectivesPage() {
   const [diversification, setDiversification] = useState(0)
 
   // ── Paramètres de simulation (Tâches 2 & 3) — jamais persistés en base ───────
-  // Mode d'ajustement manuel : 'interactif' (défaut) redistribue les autres
-  // écoles flexibles à chaque ajustement ; 'independant' isole l'ajustement.
-  const [ajustementMode,   setAjustementMode]   = useState('interactif')
-  // Volumes hebdomadaires fixés à la main, par id d'école : { [schoolId]: heures }
-  const [manualOverrides,  setManualOverrides]  = useState({})
-  // Écoles dont le plafond souhaité (desired_weekly_hours) est neutralisé
-  // pour cette simulation uniquement : { [schoolId]: true }
-  const [ignorePlafondIds, setIgnorePlafondIds] = useState({})
+  // Restaurés depuis sessionStorage si disponibles (T6 : persistance de session).
+  const _s0 = readSession()
+  const [ajustementMode,   setAjustementMode]   = useState(_s0?.ajustementMode   ?? 'interactif')
+  const [manualOverrides,  setManualOverrides]  = useState(_s0?.manualOverrides  ?? {})
+  const [ignorePlafondIds, setIgnorePlafondIds] = useState(_s0?.ignorePlafondIds ?? {})
+
+  // T5 : snapshots nommés — chargés depuis Supabase au montage
+  const [snapshots,       setSnapshots]       = useState([])
+  const [snapshotNom,     setSnapshotNom]     = useState('')
+  const [savingSnapshot,  setSavingSnapshot]  = useState(false)
+  const [snapshotPanel,   setSnapshotPanel]   = useState(false) // panneau ouvert/fermé
 
   // ── Chargement initial : objectifs + écoles + zone du prof ──────────────────
 
@@ -733,6 +778,55 @@ export default function ObjectivesPage() {
     if (next[id]) delete next[id]; else next[id] = true
     return next
   })
+
+  // T6 : persistance de session — sauvegarde à chaque changement des paramètres
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ajustementMode, manualOverrides, ignorePlafondIds, diversification }))
+    } catch { /* quota dépassé — silencieux */ }
+  }, [ajustementMode, manualOverrides, ignorePlafondIds, diversification])
+
+  // T5 : chargement des snapshots au montage + après chaque mutation
+  const fetchSnapshots = useCallback(async () => {
+    if (!user?.id) return
+    const { data } = await supabase
+      .from('simulation_snapshots')
+      .select('id, nom, date_creation, donnees_simulation')
+      .eq('teacher_id', user.id)
+      .order('date_creation', { ascending: false })
+    setSnapshots(data ?? [])
+  }, [user?.id])
+
+  useEffect(() => { fetchSnapshots() }, [fetchSnapshots])
+
+  const handleSaveSnapshot = async () => {
+    if (!snapshotNom.trim() || !user?.id) return
+    setSavingSnapshot(true)
+    const donnees = { ajustementMode, manualOverrides, ignorePlafondIds, diversification, schoolYear }
+    await supabase.from('simulation_snapshots').insert({
+      teacher_id: user.id,
+      nom: snapshotNom.trim(),
+      donnees_simulation: donnees,
+    })
+    setSnapshotNom('')
+    await fetchSnapshots()
+    setSavingSnapshot(false)
+  }
+
+  const handleLoadSnapshot = (snap) => {
+    const d = snap.donnees_simulation ?? {}
+    if (d.ajustementMode)   setAjustementMode(d.ajustementMode)
+    if (d.manualOverrides)  setManualOverrides(d.manualOverrides)
+    if (d.ignorePlafondIds) setIgnorePlafondIds(d.ignorePlafondIds)
+    if (d.diversification != null) setDiversification(d.diversification)
+    if (d.schoolYear)       setSchoolYear(d.schoolYear)
+    setSnapshotPanel(false)
+  }
+
+  const handleDeleteSnapshot = async (id) => {
+    await supabase.from('simulation_snapshots').delete().eq('id', id)
+    setSnapshots((s) => s.filter((r) => r.id !== id))
+  }
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -1060,6 +1154,7 @@ export default function ObjectivesPage() {
                     onResetManualOverride={handleResetManualOverride}
                     ignorePlafond={!!ignorePlafondIds[s.id]}
                     onToggleIgnorePlafond={handleToggleIgnorePlafond}
+                    calcRevenu={(h) => estimerRevenuEcole(s, h, { schoolYear, teacherZone })}
                   />
                 ))}
               </div>
@@ -1087,6 +1182,95 @@ export default function ObjectivesPage() {
                   Certaines écoles n'ont pas de taux horaire renseigné pour {schoolYear} — leur revenu estimé n'apparaît pas.
                   Ajoutez-le dans la fiche de chaque école.
                 </p>
+              )}
+            </div>
+
+            {/* T7 : bouton Planning intelligent */}
+            <button
+              type="button"
+              onClick={() => navigate('/admin/planning-intelligent')}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-guitar-600/40 bg-guitar-600/5 text-guitar-400 text-sm font-medium hover:bg-guitar-600/10 transition-colors mt-4"
+            >
+              Passer à la planification
+              <ArrowRight className="w-4 h-4" />
+            </button>
+
+            {/* T5 : panneau snapshots nommés */}
+            <div className="glass-panel rounded-2xl overflow-hidden mt-4">
+              <button
+                type="button"
+                className="w-full flex items-center justify-between px-5 py-4 text-sm font-medium text-foreground hover:bg-surface-overlay transition-colors"
+                onClick={() => setSnapshotPanel((v) => !v)}
+              >
+                <span className="flex items-center gap-2">
+                  <BookmarkCheck className="w-4 h-4 text-muted" />
+                  Simulations sauvegardées
+                  {snapshots.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded text-xs bg-guitar-600/10 text-guitar-400">{snapshots.length}</span>
+                  )}
+                </span>
+                <ChevronDown className={`w-4 h-4 text-muted transition-transform ${snapshotPanel ? 'rotate-180' : ''}`} />
+              </button>
+
+              {snapshotPanel && (
+                <div className="border-t border-border-subtle px-5 py-4 space-y-4">
+                  {/* Sauvegarder l'état actuel */}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={snapshotNom}
+                      onChange={(e) => setSnapshotNom(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSaveSnapshot()}
+                      placeholder="Nom de la simulation…"
+                      maxLength={60}
+                      className="flex-1 px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600 transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveSnapshot}
+                      disabled={!snapshotNom.trim() || savingSnapshot}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-40 hover:opacity-90 transition-opacity shadow shadow-guitar-600/20"
+                    >
+                      {savingSnapshot ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BookmarkPlus className="w-3.5 h-3.5" />}
+                      Sauvegarder
+                    </button>
+                  </div>
+
+                  {/* Liste des snapshots */}
+                  {snapshots.length === 0 ? (
+                    <p className="text-xs text-muted text-center py-2">Aucune simulation sauvegardée.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {snapshots.map((snap) => (
+                        <div key={snap.id} className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-surface-raised border border-border-subtle">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">{snap.nom}</p>
+                            <p className="text-xs text-muted mt-0.5">
+                              {new Date(snap.date_creation).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}
+                              {snap.donnees_simulation?.schoolYear && ` · ${snap.donnees_simulation.schoolYear}`}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleLoadSnapshot(snap)}
+                              className="px-2.5 py-1.5 rounded-lg text-xs text-guitar-400 border border-guitar-600/30 bg-guitar-600/5 hover:bg-guitar-600/15 transition-colors"
+                            >
+                              Charger
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSnapshot(snap.id)}
+                              className="p-1.5 rounded-lg text-muted hover:text-guitar-400 hover:bg-guitar-600/10 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </>

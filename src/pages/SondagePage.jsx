@@ -13,6 +13,8 @@ const TRANSPORTS = ['À pied', 'Vélo', 'Voiture', 'Transport en commun']
 const FREQUENCES = ['1x/semaine', '2x/semaine', 'Toutes les 2 semaines']
 const INSTRUMENTS = ['Guitare acoustique', 'Guitare électrique', 'Guitare classique', 'Basse', 'Autre']
 const USAGES_TUTEUR = ['Organisation', 'Documents pédagogiques', 'Les deux']
+// Rôle du tuteur vis-à-vis de l'élève — "Autre" déclenche un champ texte libre
+const ROLES_TUTEUR = ['Père', 'Mère', 'Autre']
 const CURRENT_YEAR = '2026-2027'
 
 function generateAllSlots() {
@@ -154,7 +156,7 @@ function StepNiveau({ data, onChange }) {
 function StepTuteurs({ data, onChange }) {
   const addTuteur = () => {
     if (data.tuteurs.length >= 2) return
-    onChange({ ...data, tuteurs: [...data.tuteurs, { name: '', phone: '', email: '', purpose: '' }] })
+    onChange({ ...data, tuteurs: [...data.tuteurs, defaultTuteur()] })
   }
   const removeTuteur = (i) =>
     onChange({ ...data, tuteurs: data.tuteurs.filter((_, idx) => idx !== i) })
@@ -178,9 +180,24 @@ function StepTuteurs({ data, onChange }) {
             </button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="Nom complet" required>
-              <input className={inputCls} value={t.name} onChange={setField(i, 'name')} placeholder="Marie Dupont" />
+            <Field label="Prénom" required>
+              <input className={inputCls} value={t.prenom} onChange={setField(i, 'prenom')} placeholder="Marie" />
             </Field>
+            <Field label="Nom" required>
+              <input className={inputCls} value={t.nom} onChange={setField(i, 'nom')} placeholder="Dupont" />
+            </Field>
+            <Field label="Rôle" required>
+              <select className={selectCls} value={t.role} onChange={setField(i, 'role')}>
+                <option value="">Choisir…</option>
+                {ROLES_TUTEUR.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </Field>
+            {t.role === 'Autre' && (
+              <Field label="Précisez le rôle" required>
+                <input className={inputCls} value={t.role_precision} onChange={setField(i, 'role_precision')}
+                  placeholder="Ex : Grand-parent, tuteur légal…" />
+              </Field>
+            )}
             <Field label="Téléphone">
               <input className={inputCls} type="tel" value={t.phone} onChange={setField(i, 'phone')} placeholder="06 00 00 00 00" />
             </Field>
@@ -258,9 +275,13 @@ function StepDisponibilites({ data, onChange, schoolSchedules, loadingSchedules 
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Cochez les créneaux où vous êtes disponible.
-      </p>
+      <div className="rounded-xl bg-guitar-600/5 border border-guitar-600/20 px-4 py-3">
+        <p className="text-sm text-foreground font-medium mb-0.5">💡 Cochez plusieurs créneaux</p>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Plus vous cochez de créneaux disponibles, plus il sera facile de trouver un horaire
+          adapté. Ne vous limitez pas à un seul — sélectionnez tous les moments où vous êtes libre.
+        </p>
+      </div>
       {jourSlots.map(({ day, slots }) => {
         const selected = data.availabilities[day] ?? []
         const hasSelected = selected.length > 0
@@ -400,8 +421,17 @@ function StepInscriptions({ data, onChange, schools }) {
         </div>
       </div>
 
+      {/* Avertissement non-inscription officielle (1d) */}
+      <div className="rounded-xl bg-surface-overlay border border-border-subtle px-4 py-3">
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          <strong className="text-foreground">Ce formulaire n&apos;est pas une inscription officielle.</strong>{' '}
+          Votre professeur vous enverra une confirmation par email après avoir pris connaissance de votre sondage.
+        </p>
+      </div>
+
       <p className="text-sm text-muted-foreground">
-        Souhaitez-vous inscrire d'autres personnes en même temps ? Ajoutez leurs coordonnées ci-dessous — chacune choisit son propre mode (école ou cours particulier CESU).
+        Souhaitez-vous inscrire d&apos;autres personnes en même temps ? Ajoutez leurs coordonnées ci-dessous.
+        Pour chaque personne inscrite, précisez si elle prend des cours en école de musique ou en cours particulier à domicile (CESU).
       </p>
 
       {inscrits.map((p, i) => (
@@ -485,6 +515,9 @@ function StepInscriptions({ data, onChange, schools }) {
 }
 
 // ─── État initial ─────────────────────────────────────────────────────────────
+
+// Structure interne d'un tuteur — guardian1_role/guardian2_role nécessitent la migration SQL
+const defaultTuteur = () => ({ prenom: '', nom: '', role: '', role_precision: '', phone: '', email: '', purpose: '' })
 
 const defaultForm = {
   first_name: '', last_name: '', birth_year: '', email: '', phone: '',
@@ -599,14 +632,18 @@ export default function SondagePage() {
         practice_years: form.practice_years ? parseInt(form.practice_years) : null,
         level: form.level || null,
         diplomas: form.diplomas || null,
-        guardian1_name: t1.name || null,
+        guardian1_name: [t1.prenom, t1.nom].filter(Boolean).join(' ') || null,
         guardian1_phone: t1.phone || null,
         guardian1_email: t1.email || null,
         guardian1_contact_purpose: t1.purpose || null,
-        guardian2_name: t2.name || null,
+        guardian1_role: t1.role || null,
+        guardian1_role_precision: t1.role === 'Autre' ? (t1.role_precision || null) : null,
+        guardian2_name: [t2.prenom, t2.nom].filter(Boolean).join(' ') || null,
         guardian2_phone: t2.phone || null,
         guardian2_email: t2.email || null,
         guardian2_contact_purpose: t2.purpose || null,
+        guardian2_role: t2.role || null,
+        guardian2_role_precision: t2.role === 'Autre' ? (t2.role_precision || null) : null,
         availabilities: form.availabilities,
         address: form.address || null,
         instrument: form.instrument || null,
@@ -820,8 +857,8 @@ function Shell({ children }) {
             <Guitar className="w-5 h-5 text-white" />
           </div>
           <div>
-            <p className="font-display text-xl leading-tight">Hub du Guitariste</p>
-            <p className="text-xs text-muted-foreground">Fiche d&apos;inscription élève</p>
+            <p className="font-display text-xl leading-tight">Cours de guitare</p>
+            <p className="text-xs text-muted-foreground">Fiche d&apos;inscription</p>
           </div>
         </div>
         <div className="glass-panel rounded-2xl p-6 sm:p-8">{children}</div>

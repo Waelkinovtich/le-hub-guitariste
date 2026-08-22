@@ -2,7 +2,8 @@ import { supabase } from '../lib/supabase'
 import { TABLES } from '../lib/tables'
 import { fullName } from '../utils/format'
 
-const STUDENT_COLUMNS = 'id, teacher_id, profile_id, first_name, last_name, email, phone, level, instrument, progress, lesson_type, school_name, school_id, birth_year, notes, parent1_name, parent1_phone, parent1_email, parent2_name, parent2_phone, parent2_email, student_phone, created_at'
+// archived_at : requiert la migration migration-sondage-simulateur-archivage.sql (bloc T3)
+const STUDENT_COLUMNS = 'id, teacher_id, profile_id, first_name, last_name, email, phone, level, instrument, progress, lesson_type, school_name, school_id, birth_year, notes, parent1_name, parent1_phone, parent1_email, parent2_name, parent2_phone, parent2_email, student_phone, created_at, archived_at'
 
 export function mapStudent(row) {
   if (!row) return null
@@ -32,12 +33,16 @@ export function mapStudent(row) {
     parent2Name: row.parent2_name ?? '',
     parent2Phone: row.parent2_phone ?? '',
     parent2Email: row.parent2_email ?? '',
-    createdAt: row.created_at,
+    createdAt:  row.created_at,
+    archivedAt: row.archived_at ?? null,
   }
 }
 
-export async function fetchTeacherStudents(teacherId) {
-  const { data, error } = await supabase.from(TABLES.students).select(STUDENT_COLUMNS).eq('teacher_id', teacherId).order('last_name')
+// includeArchived = false par défaut : les élèves archivés n'apparaissent pas dans les listes normales
+export async function fetchTeacherStudents(teacherId, { includeArchived = false } = {}) {
+  let q = supabase.from(TABLES.students).select(STUDENT_COLUMNS).eq('teacher_id', teacherId).order('last_name')
+  if (!includeArchived) q = q.is('archived_at', null)
+  const { data, error } = await q
   if (error) throw new Error(error.message)
   return (data ?? []).map(mapStudent)
 }
@@ -62,6 +67,23 @@ export async function updateStudent(studentId, input) {
 
 export async function deleteStudent(studentId) {
   const { error } = await supabase.from(TABLES.students).delete().eq('id', studentId)
+  if (error) throw new Error(error.message)
+}
+
+// Archivage doux : l'élève reste en base, ses données historiques sont intactes
+export async function archiveStudent(studentId) {
+  const { error } = await supabase
+    .from(TABLES.students)
+    .update({ archived_at: new Date().toISOString() })
+    .eq('id', studentId)
+  if (error) throw new Error(error.message)
+}
+
+export async function unarchiveStudent(studentId) {
+  const { error } = await supabase
+    .from(TABLES.students)
+    .update({ archived_at: null })
+    .eq('id', studentId)
   if (error) throw new Error(error.message)
 }
 
