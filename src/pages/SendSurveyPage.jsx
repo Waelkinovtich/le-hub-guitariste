@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Users, Mail, Plus, Trash2, CheckSquare, Square, Send, Loader2, Check, AlertCircle, School, UserCheck, Bookmark, BookmarkPlus, X } from 'lucide-react'
+import { Users, Mail, Plus, Trash2, CheckSquare, Square, Send, Loader2, Check, AlertCircle, School, UserCheck, Bookmark, BookmarkPlus, X, Link2, Copy, EyeOff } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
@@ -65,16 +65,25 @@ export default function SendSurveyPage() {
   const [presetName, setPresetName] = useState('')
   const [showPresetForm, setShowPresetForm] = useState(false)
 
-  // ── Load students ──────────────────────────────────────────────────────────
+  // ── Liens génériques partageables ─────────────────────────────────────────
+  const [genericLinks, setGenericLinks]         = useState([])
+  const [genericLabel, setGenericLabel]         = useState('')
+  const [showGenericForm, setShowGenericForm]   = useState(false)
+  const [creatingGeneric, setCreatingGeneric]   = useState(false)
+  const [copiedId, setCopiedId]                 = useState(null)
+
+  // ── Load students + liens génériques ─────────────────────────────────────
 
   useEffect(() => {
     async function load() {
-      const [{ data: studentsData }, { data: presetsData }] = await Promise.all([
+      const [{ data: studentsData }, { data: presetsData }, { data: genericData }] = await Promise.all([
         supabase.from('students').select('id, first_name, last_name, email, school_name').order('last_name'),
         supabase.from('survey_recipient_presets').select('*').order('created_at', { ascending: true }),
+        supabase.from('survey_tokens').select('id, token, label, created_at').eq('token_type', 'generique').is('used_at', null).order('created_at', { ascending: false }),
       ])
       setStudents(studentsData ?? [])
       setPresets(presetsData ?? [])
+      setGenericLinks(genericData ?? [])
       setLoadingStudents(false)
     }
     load()
@@ -246,6 +255,49 @@ export default function SendSurveyPage() {
     } finally {
       setSending(false)
     }
+  }
+
+  // ── Liens génériques : création ──────────────────────────────────────────
+
+  const creerLienGenerique = async () => {
+    const label = genericLabel.trim()
+    if (!label) return
+    setCreatingGeneric(true)
+    // expires_at : dans 2 ans (lien pérenne tant qu'il n'est pas désactivé)
+    const expiresAt = new Date()
+    expiresAt.setFullYear(expiresAt.getFullYear() + 2)
+    const { data, error } = await supabase
+      .from('survey_tokens')
+      .insert({
+        teacher_id:  user.id,
+        token:       crypto.randomUUID(),
+        token_type:  'generique',
+        label,
+        student_id:  null,
+        email:       null,
+        expires_at:  expiresAt.toISOString(),
+      })
+      .select('id, token, label, created_at')
+      .single()
+    if (!error && data) {
+      setGenericLinks(prev => [data, ...prev])
+    }
+    setGenericLabel('')
+    setShowGenericForm(false)
+    setCreatingGeneric(false)
+  }
+
+  const desactiverLienGenerique = async (id) => {
+    // Désactivation douce : on pose used_at, le lien est refusé par SondagePage
+    await supabase.from('survey_tokens').update({ used_at: new Date().toISOString() }).eq('id', id)
+    setGenericLinks(prev => prev.filter(l => l.id !== id))
+  }
+
+  const copierLien = (link) => {
+    const url = `${window.location.origin}/sondage/${link.token}`
+    navigator.clipboard.writeText(url)
+    setCopiedId(link.id)
+    setTimeout(() => setCopiedId(null), 2000)
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -587,6 +639,96 @@ export default function SendSurveyPage() {
           {genError}
         </div>
       )}
+
+      {/* ── Liens génériques partageables ── */}
+      <div className="glass-panel rounded-2xl p-5 mb-6">
+        <SectionHeader
+          icon={Link2}
+          title="Liens partageables"
+          subtitle="Un lien unique peut être partagé dans un groupe (WhatsApp, email collectif…). Chaque famille remplit le formulaire de son côté."
+          help="Contrairement aux liens individuels, un lien partageable peut être rempli par plusieurs personnes. Désactivez-le quand les inscriptions sont fermées."
+        />
+
+        {/* Liste des liens existants */}
+        {genericLinks.length > 0 && (
+          <div className="mb-4 space-y-2">
+            {genericLinks.map(link => {
+              const url = `${window.location.origin}/sondage/${link.token}`
+              const copied = copiedId === link.id
+              return (
+                <div key={link.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border-subtle bg-surface">
+                  <Link2 className="w-3.5 h-3.5 text-muted flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-foreground truncate">{link.label}</p>
+                    <p className="text-xs text-muted-foreground font-mono truncate">{url}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => copierLien(link)}
+                    title="Copier le lien"
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs transition-all flex-shrink-0 ${
+                      copied
+                        ? 'bg-green-600/10 border border-green-600/30 text-green-400'
+                        : 'border border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
+                    }`}
+                  >
+                    {copied ? <><Check className="w-3 h-3" />Copié</> : <><Copy className="w-3 h-3" />Copier</>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => desactiverLienGenerique(link.id)}
+                    title="Désactiver ce lien"
+                    className="p-1.5 rounded-lg border border-border-subtle text-muted hover:border-guitar-600/40 hover:text-guitar-400 hover:bg-guitar-600/8 transition-all flex-shrink-0"
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Formulaire de création */}
+        {showGenericForm ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={genericLabel}
+              onChange={e => setGenericLabel(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') creerLienGenerique(); if (e.key === 'Escape') setShowGenericForm(false) }}
+              placeholder="Ex : Groupe WhatsApp parents 2026-2027"
+              maxLength={100}
+              autoFocus
+              className="flex-1 bg-surface border border-border-subtle rounded-xl px-3 py-2 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60 transition-colors"
+            />
+            <button
+              type="button"
+              onClick={creerLienGenerique}
+              disabled={!genericLabel.trim() || creatingGeneric}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-guitar-600/40 bg-guitar-600/10 text-guitar-400 text-xs font-medium hover:bg-guitar-600/20 transition-colors disabled:opacity-40"
+            >
+              {creatingGeneric ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              Créer
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowGenericForm(false); setGenericLabel('') }}
+              className="p-2 rounded-xl border border-border-subtle text-muted hover:text-foreground transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowGenericForm(true)}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-guitar-400 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Créer un lien partageable
+          </button>
+        )}
+      </div>
 
       {/* ── Tokens générés ── */}
       {generatedLinks.length > 0 && (

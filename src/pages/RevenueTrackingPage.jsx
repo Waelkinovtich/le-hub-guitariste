@@ -9,23 +9,7 @@ import {
   fetchIncomeEntries, createIncomeEntry, updateIncomeEntry, deleteIncomeEntry,
 } from '../services/revenue'
 import HelpTooltip from '../components/HelpTooltip'
-
-// ─── Export CSV ───────────────────────────────────────────────────────────────
-
-// Encode les lignes en CSV RFC 4180 (séparateur ';', BOM UTF-8 pour Excel FR)
-// et déclenche le téléchargement dans le navigateur sans passer par un serveur.
-function téléchargerCSV(lignes, nomFichier) {
-  const csv = lignes
-    .map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';'))
-    .join('\n')
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = nomFichier
-  a.click()
-  URL.revokeObjectURL(url)
-}
+import { téléchargerCSV } from '../utils/csv'
 
 function exporterCSVRevenus(entries) {
   const entête = ['Date', 'Source', 'Montant (€)', 'Heures', 'Année scolaire', 'Notes']

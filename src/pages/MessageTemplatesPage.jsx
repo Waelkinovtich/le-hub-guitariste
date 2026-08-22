@@ -5,10 +5,11 @@ import {
 } from 'lucide-react'
 import HelpTooltip from '../components/HelpTooltip'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../context/AuthContext'
 import { fetchTeacherStudents } from '../services/students'
 import {
   fetchTemplates, createTemplate, updateTemplate, deleteTemplate, applyVariables,
-  AUDIENCE_TYPES, CLOSING_FORMULA, REGISTER_HINT, INDIVIDUAL_VARS,
+  AUDIENCE_TYPES, getClosingFormula, REGISTER_HINT, INDIVIDUAL_VARS,
 } from '../services/messageTemplates'
 
 // ─── Variables disponibles ────────────────────────────────────────────────────
@@ -34,7 +35,7 @@ function audienceLabel(v) {
 
 // ─── Formulaire création / édition ───────────────────────────────────────────
 
-function TemplateForm({ initial, teacherId, onSaved, onCancel }) {
+function TemplateForm({ initial, teacherId, firstName, onSaved, onCancel }) {
   const [form, setForm] = useState({
     title:         initial?.title         ?? '',
     content:       initial?.content       ?? '',
@@ -140,10 +141,10 @@ function TemplateForm({ initial, teacherId, onSaved, onCancel }) {
       </div>
 
       {/* Aperçu formule de clôture */}
-      {form.audience_type && CLOSING_FORMULA[form.audience_type] && (
+      {form.audience_type && (
         <div className="text-xs text-muted-foreground bg-surface-raised rounded-lg px-3 py-2 border border-border-subtle">
           <span className="font-medium">Formule de clôture ajoutée automatiquement :</span>{' '}
-          <span className="italic whitespace-pre">{CLOSING_FORMULA[form.audience_type]}</span>
+          <span className="italic whitespace-pre">{getClosingFormula(form.audience_type, firstName)}</span>
         </div>
       )}
 
@@ -259,11 +260,11 @@ function RecipientSelector({ students, selected, onChange }) {
 
 // ─── Carte d'un modèle ────────────────────────────────────────────────────────
 
-function TemplateCard({ template, students, onEdit, onDelete, deleting }) {
+function TemplateCard({ template, students, firstName, onEdit, onDelete, deleting }) {
   const [selected, setSelected] = useState(new Set())
   const [copied, setCopied]     = useState(false)
 
-  const formula = CLOSING_FORMULA[template.audience_type] ?? ''
+  const formula = getClosingFormula(template.audience_type, firstName)
 
   const hasIndividualVars = INDIVIDUAL_VARS.some((v) => (template.content ?? '').includes(v))
   const multipleSelected  = selected.size > 1
@@ -391,6 +392,7 @@ function TemplateCard({ template, students, onEdit, onDelete, deleting }) {
 // ─── Page principale ──────────────────────────────────────────────────────────
 
 export default function MessageTemplatesPage() {
+  const { user } = useAuth()
   const [teacherId, setTeacherId]       = useState(null)
   const [templates, setTemplates]       = useState([])
   const [students, setStudents]         = useState([])
@@ -474,6 +476,7 @@ export default function MessageTemplatesPage() {
         <TemplateForm
           initial={editingTemplate}
           teacherId={teacherId}
+          firstName={user?.firstName ?? null}
           onSaved={handleSaved}
           onCancel={() => { setShowForm(false); setEditingTemplate(null) }}
         />
@@ -496,6 +499,7 @@ export default function MessageTemplatesPage() {
               key={tmpl.id}
               template={tmpl}
               students={students}
+              firstName={user?.firstName ?? null}
               onEdit={() => { setEditingTemplate(tmpl); setShowForm(false) }}
               onDelete={() => handleDelete(tmpl)}
               deleting={deletingId === tmpl.id}

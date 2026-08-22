@@ -8,6 +8,8 @@ import { fetchSchoolNames } from '../../services/students'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
 import { exportÉmargementPDF } from '../../utils/exportPDF'
 import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
+import { LESSON_STATUSES } from '../../utils/lessonStatus'
+import { minutesToLabel } from '../../utils/format'
 import LessonStatusModal from '../../components/LessonStatusModal'
 import AddLessonModal from '../../components/AddLessonModal'
 import DeleteLessonModal from '../../components/DeleteLessonModal'
@@ -21,9 +23,13 @@ const PERIODS = [
   { value: 'année', label: 'Cette année' },
 ]
 
-// Palettes de statut — valeurs canoniques sans accents (cohérentes avec LESSON_STATUSES)
-const STATUS_COLORS = { present: '#27ae60', absent: '#e74c3c', excuse: '#e67e22', annule_prof: '#9b59b6', rattrape: '#2980b9', planifie: '#7f8c8d' }
-const STATUS_LABELS = { present: 'Présent', absent: 'Absent', excuse: 'Excusé', annule_prof: 'Annulé', rattrape: 'Rattrapé', planifie: 'Planifié' }
+// Reconstruits depuis lessonStatus.js — source unique de vérité.
+const STATUS_COLORS = LESSON_STATUSES.reduce((acc, s) => { acc[s.value] = s.color; return acc }, {})
+const STATUS_LABELS = LESSON_STATUSES.reduce((acc, s) => {
+  // Raccourci "Annulé" pour l'affichage compact du tableau d'émargement.
+  acc[s.value] = s.value === 'annule_prof' ? 'Annulé' : s.label.replace('Absent (non excusé)', 'Absent')
+  return acc
+}, {})
 
 function getRange(period) {
   const now = new Date()
@@ -56,14 +62,8 @@ function getRange(period) {
   return { from: fmt(start), to: fmt(end), label: String(now.getFullYear()) }
 }
 
-function fmtDuree(min) {
-  if (!min) return ''
-  const h = Math.floor(min / 60)
-  const m = min % 60
-  if (h === 0) return m + ' min'
-  if (m === 0) return h + 'h'
-  return h + 'h' + m
-}
+// fmtDuree : utiliser minutesToLabel importé depuis utils/format.js
+const fmtDuree = minutesToLabel
 
 export default function ÉmargementPage() {
   const { user } = useAuth()

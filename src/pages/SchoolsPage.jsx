@@ -10,8 +10,8 @@ import HelpTooltip from '../components/HelpTooltip'
 
 export default function SchoolsPage() {
   const navigate = useNavigate()
-  const { user } = useAuth() // poids de pondération + domicile, pour le score et le rendement net réel
-  const [teacherId, setTeacherId] = useState(null)
+  // user.id fourni par AuthContext — plus cohérent que supabase.auth.getUser()
+  const { user } = useAuth()
   const [schools, setSchools] = useState([])
   const [studentCounts, setStudentCounts] = useState({})
   const [missingRates, setMissingRates] = useState(new Set())
@@ -32,9 +32,7 @@ export default function SchoolsPage() {
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { setError('Non authentifié'); setLoading(false); return }
-      setTeacherId(user.id)
+      if (!user?.id) { setError('Non authentifié'); setLoading(false); return }
       try {
         const list = await fetchTeacherSchools(user.id)
         setSchools(list)
@@ -79,7 +77,7 @@ export default function SchoolsPage() {
     setAdding(true)
     try {
       const structType = newType === 'particulier_cesu' ? 'particulier_cesu' : null
-      const school = await createSchool(teacherId, name, structType)
+      const school = await createSchool(user.id, name, structType)
       setSchools((prev) => [...prev, school].sort((a, b) => a.name.localeCompare(b.name)))
       setStudentCounts((prev) => ({ ...prev, [school.id]: 0 }))
       setNewName('')

@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { LESSON_STATUSES } from './lessonStatus'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -20,13 +21,12 @@ function toSafeFilename(str) {
     .slice(0, 60)
 }
 
-const STATUS_LABELS = {
-  present: 'Présent',
-  absent: 'Absent',
-  excuse: 'Excusé',
-  annulé_prof: 'Annulé prof',
-  planifié: 'Planifié',
-}
+// Construit depuis lessonStatus.js — source unique de vérité pour les libellés de statut.
+// Raccourcis les libellés longs pour la mise en page des tableaux PDF (espace contraint).
+const STATUS_LABELS = LESSON_STATUSES.reduce((acc, s) => {
+  acc[s.value] = s.label.replace('Annulé par le prof', 'Annulé prof').replace('Absent (non excusé)', 'Absent')
+  return acc
+}, {})
 
 // En-tête professionnel commun à tous les PDF générés : identité et contact
 // du professeur uniquement — jamais de logo ni de nom d'application. Ces

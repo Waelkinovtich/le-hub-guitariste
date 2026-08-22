@@ -4,21 +4,15 @@ import { useFetch } from '../../hooks/useFetch'
 import { fetchCancelledLessons } from '../../services/lessons'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
 import { getRaisonLabel } from '../../utils/lessonStatus'
-import { RotateCcw, CalendarDays, Search, Check, Loader2, AlertCircle, Star, X } from 'lucide-react'
+import { minutesToLabel } from '../../utils/format'
+import ScoreBadge from '../../components/ScoreBadge'
+import { RotateCcw, CalendarDays, Search, Check, Loader2, AlertCircle, X } from 'lucide-react'
 import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
 import { supabase } from '../../lib/supabase'
 import { computeProposals } from '../../utils/scoringCreneaux'
 import HelpTooltip from '../../components/HelpTooltip'
 
-// ─── Helpers d'affichage ──────────────────────────────────────────────────────
-
-function minutesToLabel(min) {
-  const h = Math.floor(min / 60)
-  const m = min % 60
-  if (h === 0) return m + ' min'
-  if (m === 0) return h + 'h'
-  return h + 'h' + String(m).padStart(2, '0')
-}
+// minutesToLabel et ScoreBadge importés depuis utils/format.js et components/ScoreBadge.jsx.
 
 /** Date ISO de la semaine prochaine au même jour qu'une date ISO donnée. */
 function nextWeekSameDay(isoDate) {
@@ -31,21 +25,6 @@ function nextWeekSameDay(isoDate) {
 
 // ─── Composant : badge de score ───────────────────────────────────────────────
 
-function ScoreBadge({ score }) {
-  const color = score >= 4
-    ? 'text-green-400 border-green-500/30 bg-green-500/10'
-    : score >= 2
-      ? 'text-guitar-400 border-guitar-600/30 bg-guitar-600/10'
-      : score >= 0
-        ? 'text-muted-foreground border-border-subtle bg-surface-raised'
-        : 'text-amber-400 border-amber-500/30 bg-amber-500/10'
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border text-xs font-medium ${color}`}>
-      <Star className="w-3 h-3" fill="currentColor" />
-      {score >= 0 ? '+' : ''}{score}
-    </span>
-  )
-}
 
 // ─── Panel de recherche de créneau de rattrapage ──────────────────────────────
 

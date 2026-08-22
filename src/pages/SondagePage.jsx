@@ -691,7 +691,7 @@ export default function SondagePage() {
       try {
         const { data, error } = await supabase
           .from('survey_tokens')
-          .select('id, student_id, expires_at, used_at')
+          .select('id, student_id, expires_at, used_at, token_type')
           .eq('token', token)
           .maybeSingle()
         dbg.data = data
@@ -699,7 +699,8 @@ export default function SondagePage() {
         setDebug(dbg)
         if (error) throw error
         if (!data) return setStatus('invalid')
-        if (data.used_at) return setStatus('used')
+        // Les liens génériques sont réutilisables (partagés dans un groupe)
+        if (data.used_at && data.token_type !== 'generique') return setStatus('used')
         if (new Date(data.expires_at) < new Date()) return setStatus('expired')
         setTokenRow(data)
         setStatus('valid')
@@ -841,11 +842,14 @@ export default function SondagePage() {
       const { error: regError } = await supabase.from('survey_registrations').insert(regsToInsert)
       if (regError) throw regError
 
-      const { error: updateError } = await supabase
-        .from('survey_tokens')
-        .update({ used_at: new Date().toISOString() })
-        .eq('id', tokenRow.id)
-      if (updateError) throw updateError
+      // Les tokens génériques ne sont pas marqués "utilisés" — ils restent actifs
+      if (tokenRow.token_type !== 'generique') {
+        const { error: updateError } = await supabase
+          .from('survey_tokens')
+          .update({ used_at: new Date().toISOString() })
+          .eq('id', tokenRow.id)
+        if (updateError) throw updateError
+      }
       setStatus('submitted')
     } catch (err) {
       setSubmitError(err.message || 'Une erreur est survenue.')

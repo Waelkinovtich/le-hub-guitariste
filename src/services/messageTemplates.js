@@ -59,10 +59,15 @@ export const AUDIENCE_TYPES = [
   { value: 'groupe_vouvoiement',  label: "Groupe d'élèves (vouvoiement)" },
 ]
 
-export const CLOSING_FORMULA = {
-  eleve_tutoiement:    'Porte-toi bien, à bientôt !\nFlorent',
-  parents_vouvoiement: 'Portez-vous bien, à bientôt !\nFlorent',
-  groupe_vouvoiement:  'Portez-vous bien, à bientôt !\nFlorent',
+// Formule de clôture paramétrée — le prénom vient de useAuth() côté appelant
+export function getClosingFormula(audienceType, firstName) {
+  const prénom = firstName ?? 'Votre professeur'
+  const formules = {
+    eleve_tutoiement:    `Porte-toi bien, à bientôt !\n${prénom}`,
+    parents_vouvoiement: `Portez-vous bien, à bientôt !\n${prénom}`,
+    groupe_vouvoiement:  `Portez-vous bien, à bientôt !\n${prénom}`,
+  }
+  return formules[audienceType] ?? `À bientôt !\n${prénom}`
 }
 
 export const REGISTER_HINT = {

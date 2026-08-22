@@ -78,3 +78,16 @@ export function formatWeekRange(date = new Date()) {
   const y = start.getFullYear() === end.getFullYear() ? '' : ` ${start.getFullYear()}`
   return `Semaine du ${start.toLocaleDateString('fr-FR', opts)} au ${end.toLocaleDateString('fr-FR', { ...opts, year: 'numeric' })}${y}`
 }
+
+/**
+ * Convertit des minutes en libellé lisible : "45 min", "1h", "1h30".
+ * Mutualisé entre EmargementPage et RattrapagePage (était dupliqué dans les deux).
+ */
+export function minutesToLabel(min) {
+  if (!min && min !== 0) return ''
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  if (h === 0) return m + ' min'
+  if (m === 0) return h + 'h'
+  return h + 'h' + String(m).padStart(2, '0')
+}

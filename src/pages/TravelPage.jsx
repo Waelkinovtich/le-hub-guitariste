@@ -3,6 +3,7 @@ import { Car, Plus, Trash2, Loader2, AlertCircle, Check, Pencil, ChevronDown, In
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { fetchMileageRates } from '../services/mileageRates'
+import { téléchargerCSV } from '../utils/csv'
 import { fetchTeacherSchools } from '../services/schools'
 import { usePeriod, filterLessonsByPeriod } from '../context/PeriodContext'
 import { exportTravelPDF } from '../utils/exportPDF'
@@ -18,19 +19,6 @@ const CATEGORIES = [
 
 const inputCls = 'w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600 transition-colors'
 
-// Encode les lignes en CSV RFC 4180 (séparateur ';', BOM UTF-8 pour Excel FR)
-function téléchargerCSV(lignes, nomFichier) {
-  const csv = lignes
-    .map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';'))
-    .join('\n')
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = nomFichier
-  a.click()
-  URL.revokeObjectURL(url)
-}
 
 function fmt(v, suffix = '') {
   if (v == null || isNaN(v)) return '—'

@@ -1,49 +1,41 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
-import { Loader2, Star, CalendarDays, AlertCircle, Check, Brain, Clock, School } from 'lucide-react'
+import { Loader2, CalendarDays, AlertCircle, Check, Brain, Clock, School } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
+import ScoreBadge from '../components/ScoreBadge'
 import { computeProposals } from '../utils/scoringCreneaux'
 import { currentSchoolYear } from '../services/schools'
 import { fetchReservedSlots } from '../services/reservedSlots'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function getTeacherInfo() {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
+// Charge le profil du professeur depuis Supabase.
+// userId est fourni par useAuth() — on n'appelle plus supabase.auth.getUser() ici
+// pour rester cohérent avec AuthContext (gestion centralisée des sessions expirées).
+async function fetchTeacherProfile(userId) {
   const { data } = await supabase
     .from('profiles')
     .select('id, school_zone, preferred_days_off, preferred_proximity_day, preferred_proximity_days, home_latitude, home_longitude')
-    .eq('id', user.id)
+    .eq('id', userId)
     .single()
-  // Rétrocompat : si preferred_proximity_days (nouveau) est vide, on replier sur l'ancien champ texte
+  // Rétrocompat : preferred_proximity_days (tableau) remplace l'ancien champ texte.
   const newDays = Array.isArray(data?.preferred_proximity_days) && data.preferred_proximity_days.length > 0
     ? data.preferred_proximity_days
     : data?.preferred_proximity_day ? [data.preferred_proximity_day] : []
   return {
-    id:                    data?.id               ?? null,
-    zone:                  data?.school_zone       ?? 'B',
-    preferredDaysOff:      data?.preferred_days_off ?? [],
+    id:                     data?.id                ?? null,
+    zone:                   data?.school_zone        ?? 'B',
+    preferredDaysOff:       data?.preferred_days_off ?? [],
     preferredProximityDays: newDays,
-    homeLat:               data?.home_latitude    ?? null,
-    homeLng:               data?.home_longitude   ?? null,
+    homeLat:                data?.home_latitude      ?? null,
+    homeLng:                data?.home_longitude     ?? null,
   }
 }
 
 // ─── Composants ───────────────────────────────────────────────────────────────
 
-function ScoreBadge({ score }) {
-  const color = score >= 4 ? 'text-green-400 border-green-500/30 bg-green-500/10'
-    : score >= 2 ? 'text-guitar-400 border-guitar-600/30 bg-guitar-600/10'
-    : score >= 0 ? 'text-muted-foreground border-border-subtle bg-surface-raised'
-    : 'text-amber-400 border-amber-500/30 bg-amber-500/10'
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border text-xs font-medium ${color}`}>
-      <Star className="w-3 h-3" fill="currentColor" />
-      {score >= 0 ? '+' : ''}{score}
-    </span>
-  )
-}
+// ScoreBadge importé depuis components/ScoreBadge.jsx.
 
 function ProposalCard({ response, proposals, onConfirm, confirming }) {
   const [open, setOpen] = useState(false)
@@ -178,6 +170,7 @@ function ProposalCard({ response, proposals, onConfirm, confirming }) {
 // ─── Page principale ──────────────────────────────────────────────────────────
 
 export default function SchedulingAssistantPage() {
+  const { user } = useAuth()
   const [responses, setResponses]         = useState([])
   const [existingLessons, setExistingLessons] = useState([])
   const [schools, setSchools]             = useState([])
@@ -188,11 +181,12 @@ export default function SchedulingAssistantPage() {
   const [confirming, setConfirming]       = useState(false)
 
   useEffect(() => {
+    if (!user?.id) return
     async function load() {
       setLoading(true)
       try {
-        const tInfo = await getTeacherInfo()
-        if (!tInfo?.id) { setError('Non authentifié'); setLoading(false); return }
+        const tInfo = await fetchTeacherProfile(user.id)
+        if (!tInfo?.id) { setError('Profil introuvable'); setLoading(false); return }
         setTeacherInfo(tInfo)
 
         const today = new Date().toISOString().slice(0, 10)
@@ -227,7 +221,7 @@ export default function SchedulingAssistantPage() {
       setLoading(false)
     }
     load()
-  }, [])
+  }, [user?.id])
 
   // Calcul des propositions pour chaque réponse — délégué à computeProposals (partagé avec Rattrapage)
   const proposalsMap = useMemo(() => {

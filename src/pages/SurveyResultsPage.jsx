@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home } from 'lucide-react'
+import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home, Link2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import HelpTooltip from '../components/HelpTooltip'
 import PhoneActions from '../components/PhoneActions'
@@ -462,7 +462,9 @@ function RegistrationsList({ registrations }) {
   )
 }
 
-function ResponseCard({ r, registrations, openPanelId, setOpenPanelId, onSelect, onConfirmed, onReassign, onDelete }) {
+function ResponseCard({ r, registrations, genericTokens, openPanelId, setOpenPanelId, onSelect, onConfirmed, onReassign, onDelete }) {
+  // Indique si la réponse provient d'un lien partagé générique plutôt qu'un envoi individuel
+  const genericMeta = genericTokens?.[r.token_id]
   return (
     <div className="glass-panel rounded-2xl overflow-hidden">
       <div
@@ -481,6 +483,12 @@ function ResponseCard({ r, registrations, openPanelId, setOpenPanelId, onSelect,
               <p className="text-xs text-muted-foreground truncate">
                 {r.school_name || 'École non précisée'}
               </p>
+              {genericMeta && (
+                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded border border-violet-500/30 bg-violet-500/10 text-violet-400 font-medium">
+                  <Link2 className="w-2.5 h-2.5 flex-shrink-0" />
+                  {genericMeta.label ?? 'Lien partagé'}
+                </span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -570,6 +578,8 @@ function SectionTitle({ children, count }) {
 export default function SurveyResultsPage() {
   const [responses, setResponses] = useState([])
   const [registrations, setRegistrations] = useState([])
+  // Tokens génériques : { [token_id]: { label } } — pour afficher le badge "Lien partagé"
+  const [genericTokens, setGenericTokens] = useState({})
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
   const [fetchError, setFetchError] = useState(null)
@@ -578,13 +588,17 @@ export default function SurveyResultsPage() {
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const [survRes, regsRes] = await Promise.all([
+      const [survRes, regsRes, tokensRes] = await Promise.all([
         supabase.from('survey_responses').select('*').order('submitted_at', { ascending: false }),
         supabase.from('survey_registrations').select('*').order('created_at', { ascending: true }),
+        supabase.from('survey_tokens').select('id, label').eq('token_type', 'generique'),
       ])
       setFetchError(survRes.error?.message ?? null)
       setResponses(survRes.data ?? [])
       setRegistrations(regsRes.data ?? [])
+      const generics = {}
+      for (const t of (tokensRes.data ?? [])) generics[t.id] = { label: t.label }
+      setGenericTokens(generics)
       setLoading(false)
     }
     load()
@@ -681,6 +695,7 @@ export default function SurveyResultsPage() {
                     key={r.id}
                     r={r}
                     registrations={regsByToken[r.token_id] ?? []}
+                    genericTokens={genericTokens}
                     openPanelId={openPanelId}
                     setOpenPanelId={setOpenPanelId}
 
@@ -702,6 +717,7 @@ export default function SurveyResultsPage() {
                     key={r.id}
                     r={r}
                     registrations={regsByToken[r.token_id] ?? []}
+                    genericTokens={genericTokens}
                     openPanelId={openPanelId}
                     setOpenPanelId={setOpenPanelId}
 
