@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
 import ScoreBadge from '../components/ScoreBadge'
 import WeekGridPlanning from '../components/WeekGridPlanning'
-import { computeProposals, scoreCandidate, JOURS_FR, timeToMinutes } from '../utils/scoringCreneaux'
+import { computeAllProposals, scoreCandidate, parseStartTime, JOURS_FR, timeToMinutes } from '../utils/scoringCreneaux'
 import { currentSchoolYear } from '../services/schools'
 import { fetchReservedSlots } from '../services/reservedSlots'
 
@@ -208,6 +208,8 @@ export default function SchedulingAssistantPage() {
   const [weekOffset, setWeekOffset] = useState(0)
   // Positions des propositions modifiées par glisser-déposer : responseId → proposal
   const [proposalOverrides, setProposalOverrides] = useState({})
+  // ID de la réponse en cours de drag — pour calculer les zones valides à surligner
+  const [draggedResponseId, setDraggedResponseId] = useState(null)
 
   useEffect(() => {
     if (!user?.id) return
@@ -253,29 +255,61 @@ export default function SchedulingAssistantPage() {
     load()
   }, [user?.id])
 
-  // Calcul des propositions pour chaque réponse — délégué à computeProposals (partagé avec Rattrapage)
-  const proposalsMap = useMemo(() => {
-    const zone = teacherInfo?.zone ?? 'B'
-    const map = {}
-    for (const r of responses) {
-      map[r.id] = computeProposals({
-        response: r,
-        existingLessons,
-        schools,
-        zone,
-        maxResults: 5,
-        reservedSlots,
-        preferredDaysOff:       teacherInfo?.preferredDaysOff      ?? [],
-        preferredProximityDays: teacherInfo?.preferredProximityDays ?? [],
-        teacherHomeLat:         teacherInfo?.homeLat               ?? null,
-        teacherHomeLng:         teacherInfo?.homeLng               ?? null,
-      })
-    }
-    return map
-  }, [responses, existingLessons, schools, teacherInfo, reservedSlots])
+  // Calcul des propositions — séquentiel via computeAllProposals pour garantir
+  // qu'aucun créneau n'est proposé à deux élèves en même temps (Bug 1 corrigé).
+  const proposalsMap = useMemo(() => computeAllProposals({
+    responses,
+    existingLessons,
+    schools,
+    zone:                   teacherInfo?.zone               ?? 'B',
+    maxResults:             5,
+    reservedSlots,
+    preferredDaysOff:       teacherInfo?.preferredDaysOff      ?? [],
+    preferredProximityDays: teacherInfo?.preferredProximityDays ?? [],
+    teacherHomeLat:         teacherInfo?.homeLat               ?? null,
+    teacherHomeLng:         teacherInfo?.homeLng               ?? null,
+  }), [responses, existingLessons, schools, teacherInfo, reservedSlots])
 
   // ── Vue grille : jours de la semaine affichée ──────────────────────────────
   const weekDays = useMemo(() => computeWeekDays(weekOffset), [weekOffset])
+
+  /**
+   * Zones à surligner pendant le drag (Bug 2) — créneaux déclarés disponibles
+   * par l'élève dont la proposition est actuellement déplacée.
+   * Format : [{ date: 'YYYY-MM-DD', startTime: 'HH:MM', durationMinutes: 15 }]
+   * Projetées sur la semaine affichée (même principe que les propositions elles-mêmes).
+   */
+  const validDropZones = useMemo(() => {
+    if (!draggedResponseId) return []
+    const response = responses.find((r) => r.id === draggedResponseId)
+    if (!response) return []
+
+    const avail = response.availabilities ?? {}
+    const isoParJour = {}
+    for (const d of weekDays) {
+      isoParJour[JOURS_FR[new Date(d.iso + 'T12:00:00').getDay()]] = d.iso
+    }
+
+    const zones = []
+    for (const [dayName, slots] of Object.entries(avail)) {
+      const iso = isoParJour[dayName]
+      if (!iso || !Array.isArray(slots)) continue
+      for (const slot of slots) {
+        zones.push({ date: iso, startTime: parseStartTime(slot), durationMinutes: 15 })
+      }
+    }
+    return zones
+  }, [draggedResponseId, responses, weekDays])
+
+  // Notifié par WeekGridPlanning quand un drag commence — identifie la réponse
+  const handleDragStart = useCallback((lesson) => {
+    if (lesson._responseId) setDraggedResponseId(lesson._responseId)
+  }, [])
+
+  // Notifié par WeekGridPlanning à la fin du drag — masque le surlignage
+  const handleDragEnd = useCallback(() => {
+    setDraggedResponseId(null)
+  }, [])
 
   /**
    * Faux cours représentant les propositions dans la grille.
@@ -335,18 +369,47 @@ export default function SchedulingAssistantPage() {
 
   /**
    * Appelé par WeekGridPlanning quand une proposition est glissée vers un nouveau créneau.
-   * Recalcule le score côté client (scoreCandidate) sans aucune requête serveur.
-   * Met à jour proposalOverrides avec la nouvelle position et le nouveau score.
+   * - Vérifie que le créneau cible est déclaré disponible par l'élève (Bug 2).
+   *   Si ce n'est pas le cas, lève une exception → WeekGridPlanning rollback + message.
+   * - Recalcule le score côté client (scoreCandidate) sans requête serveur.
+   * - Met à jour proposalOverrides avec la nouvelle position et le nouveau score.
    */
   const handleMoveProposal = useCallback(async ({ lesson, newDate, newTime, durationMinutes }) => {
     const responseId = lesson._responseId
     const response   = responses.find((r) => r.id === responseId)
     if (!response) return
 
-    // Nom du jour (ex : "Lundi") depuis la date ISO
     const nomJour = JOURS_FR[new Date(newDate + 'T12:00:00').getDay()]
 
-    // Construire le slot au format "HH:MM–HH:MM" attendu par scoreCandidate
+    // ── Validation des disponibilités (Bug 2) ────────────────────────────────
+    // Les disponibilités sont des tranches de 15 min : { Lundi: ["14:00–14:15", ...], ... }
+    const avail          = response.availabilities ?? {}
+    const slotsForDay    = avail[nomJour] ?? []
+    const hasAvailability = Object.values(avail).some((s) => Array.isArray(s) && s.length > 0)
+
+    if (hasAvailability && slotsForDay.length === 0) {
+      // L'élève n'est pas disponible ce jour-là du tout
+      throw new Error(`${response.first_name || 'Cet élève'} n'a déclaré aucune disponibilité le ${nomJour}.`)
+    }
+
+    if (hasAvailability && slotsForDay.length > 0) {
+      // Construire l'ensemble des minutes disponibles (chaque slot couvre 15 min)
+      const minutesDisponibles = new Set()
+      for (const slot of slotsForDay) {
+        const debut = timeToMinutes(parseStartTime(slot))
+        for (let m = debut; m < debut + 15; m++) minutesDisponibles.add(m)
+      }
+      // Vérifier que chaque tranche de 15 min du nouveau créneau est disponible
+      const newStartMin = timeToMinutes(newTime)
+      for (let m = newStartMin; m < newStartMin + durationMinutes; m += 15) {
+        if (!minutesDisponibles.has(m)) {
+          throw new Error(`Créneau non déclaré disponible par ${response.first_name || 'cet élève'} — déplacement annulé.`)
+        }
+      }
+    }
+    // Si hasAvailability est false (aucune donnée), on laisse passer sans bloquer.
+
+    // ── Recalcul du score côté client ────────────────────────────────────────
     const finMin = timeToMinutes(newTime) + durationMinutes
     const finH   = Math.floor(finMin / 60)
     const finM   = finMin % 60
@@ -367,8 +430,7 @@ export default function SchedulingAssistantPage() {
       teacherHomeLng:         teacherInfo?.homeLng            ?? null,
     })
 
-    // WeekGridPlanning a déjà vérifié les conflits — result ne devrait pas être null,
-    // mais on se défend par précaution (score 0, pas de raisons).
+    // WeekGridPlanning a déjà vérifié les conflits — result ne devrait pas être null.
     setProposalOverrides((prev) => ({
       ...prev,
       [responseId]: {
@@ -576,10 +638,13 @@ export default function SchedulingAssistantPage() {
                 weekDays={weekDays}
                 lessons={lessonsForGrid}
                 reservedSlots={reservedSlots}
+                validDropZones={validDropZones}
                 onNewLesson={() => {}}
                 onSelectLesson={() => {}}
                 onDeleteLesson={() => {}}
                 onMoveLesson={handleMoveProposal}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
               />
 
               {/* Panneau de confirmation — une ligne par réponse, partage handleConfirm avec la vue liste */}
@@ -616,6 +681,13 @@ export default function SchedulingAssistantPage() {
                           {proposal.day} · {proposal.startTime} · {proposal.durationMinutes} min
                           {override && <span className="ml-1.5 text-guitar-400">✎ modifié</span>}
                         </p>
+                        {/* Avertissement si l'élève n'a déclaré aucune disponibilité —
+                            le déplacement reste libre mais l'utilisateur est informé */}
+                        {!Object.values(response.availabilities ?? {}).some((s) => Array.isArray(s) && s.length > 0) && (
+                          <p className="text-[10px] text-amber-400 mt-0.5">
+                            Aucune disponibilité connue — déplacement libre
+                          </p>
+                        )}
                         {proposal.reasons?.length > 0 && (
                           <p className="text-[10px] text-muted mt-0.5 truncate">
                             {proposal.reasons[0]}

@@ -249,8 +249,56 @@ export function scoreCandidate({
 }
 
 /**
- * Calcule les meilleures propositions de créneaux pour une réponse de sondage.
+ * Calcule les meilleures propositions pour TOUTES les réponses en traitant
+ * séquentiellement, de façon à ce que deux réponses ne se voient jamais
+ * proposer le même créneau.
+ *
+ * Principe : après avoir attribué la meilleure proposition à une réponse,
+ * elle est ajoutée en tant que "cours virtuel" dans la liste des conflits
+ * avant de traiter la réponse suivante.
+ *
+ * @param {Array}  responses — réponses à traiter (dans l'ordre de priorité voulu)
+ * @param {Array}  existingLessons — cours confirmés en base (non modifié)
+ * @returns {Object} map responseId → Array<proposition>
+ */
+export function computeAllProposals({
+  responses, existingLessons, schools, zone, maxResults = 5,
+  reservedSlots = [], preferredDaysOff = [], preferredProximityDays = [],
+  teacherHomeLat = null, teacherHomeLng = null,
+}) {
+  // Copie locale augmentée au fur et à mesure des attributions — garantit
+  // que chaque nouvelle réponse voit les propositions déjà réservées comme des conflits.
+  const virtualLessons = [...existingLessons]
+  const map = {}
+
+  for (const response of responses) {
+    const proposals = computeProposals({
+      response,
+      existingLessons: virtualLessons,
+      schools, zone, maxResults, reservedSlots,
+      preferredDaysOff, preferredProximityDays,
+      teacherHomeLat, teacherHomeLng,
+    })
+    map[response.id] = proposals
+
+    // Réserver le créneau de la meilleure proposition comme cours virtuel
+    // pour bloquer les réponses suivantes sur ce même créneau.
+    if (proposals[0]) {
+      virtualLessons.push({
+        lessonDate:      proposals[0].candidateDate,
+        lessonTime:      proposals[0].startTime,
+        durationMinutes: proposals[0].durationMinutes,
+      })
+    }
+  }
+
+  return map
+}
+
+/**
+ * Calcule les meilleures propositions de créneaux pour UNE réponse de sondage.
  * Réutilisable depuis le Planning Intelligent ET le module Rattrapage.
+ * Pour traiter plusieurs réponses sans chevauchement, utiliser computeAllProposals.
  *
  * @param {object}   response         - Ligne survey_responses avec champ `availabilities`
  * @param {Array}    existingLessons  - Cours planifiés (pour conflits)

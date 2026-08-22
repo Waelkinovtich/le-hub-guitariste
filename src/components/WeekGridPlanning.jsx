@@ -104,7 +104,12 @@ function hasReservedOverlap(reservedByDay, targetDay, targetStart, slotCount) {
 // onMoveLesson : si fourni, remplace l'appel à updateLesson lors du déplacement.
 // Signature : onMoveLesson({ lesson, newDate, newTime, durationMinutes }) → Promise<void>
 // Utile pour les pages qui affichent des "faux cours" non persistés dans la table lessons.
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson }) {
+// onDragStart(lesson) : appelé quand un drag commence — permet à l'appelant de calculer
+//   les zones valides à surligner (ex : disponibilités déclarées par un élève).
+// onDragEnd() : appelé à la fin du drag (dépôt ou annulation).
+// validDropZones : zones à surligner pendant le drag (fond vert léger) :
+//   [{ date: 'YYYY-MM-DD', startTime: 'HH:MM', durationMinutes: 15 }]
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -209,7 +214,9 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
       grabOffset, startX: e.clientX, startY: e.clientY, pointerId: e.pointerId,
     }
     gridRef.current?.setPointerCapture(e.pointerId)
-  }, [cellAt])
+    // Notifier l'appelant pour qu'il affiche les zones valides (ex. disponibilités élève)
+    onDragStart?.(lesson)
+  }, [cellAt, onDragStart])
 
   const updateMove = useCallback((x, y) => {
     const m = moveRef.current
@@ -242,6 +249,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
     }
     setMovePreview(null)
     setIsDragging(false)
+    // Fin du drag — l'appelant masque les zones surlignées
+    onDragEnd?.()
 
     if (!m.pending && !m.active) return
 
@@ -332,7 +341,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
     setSelection(null)
     setMovePreview(null)
     setIsDragging(false)
-  }, [])
+    onDragEnd?.()
+  }, [onDragEnd])
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -443,6 +453,28 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         )}
                       </div>
                     </div>
+                  )
+                })}
+
+                {/* Zones valides pour le drag en cours — surlignage vert léger pendant le glisser.
+                    Affichées sous les cours (zIndex 7) mais au-dessus du fond de grille. */}
+                {validDropZones.filter((z) => z.date === day.iso).map((z, i) => {
+                  const zStart = timeToSlot(z.startTime)
+                  const zSlots = durationToSlots(z.durationMinutes)
+                  if (zStart < 0 || zStart >= TOTAL_SLOTS) return null
+                  return (
+                    <div
+                      key={i}
+                      style={{
+                        top:    zStart * SLOT_H,
+                        height: Math.min(zSlots, TOTAL_SLOTS - zStart) * SLOT_H,
+                        left: 0, right: 0,
+                        position: 'absolute', zIndex: 7,
+                        background: '#22c55e14',
+                        borderLeft: '2px solid #22c55e35',
+                        pointerEvents: 'none',
+                      }}
+                    />
                   )
                 })}
 
