@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { Loader2, CalendarDays, AlertCircle, Check, Brain, Clock, School } from 'lucide-react'
+import { Loader2, CalendarDays, AlertCircle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
 import ScoreBadge from '../components/ScoreBadge'
-import { computeProposals } from '../utils/scoringCreneaux'
+import WeekGridPlanning from '../components/WeekGridPlanning'
+import { computeProposals, scoreCandidate, JOURS_FR, timeToMinutes } from '../utils/scoringCreneaux'
 import { currentSchoolYear } from '../services/schools'
 import { fetchReservedSlots } from '../services/reservedSlots'
 
@@ -31,6 +32,30 @@ async function fetchTeacherProfile(userId) {
     homeLat:                data?.home_latitude      ?? null,
     homeLng:                data?.home_longitude     ?? null,
   }
+}
+
+/**
+ * Calcule les 7 jours de la semaine (lun–dim) décalée de `offset` semaines.
+ * Retourne le format attendu par WeekGridPlanning.
+ */
+function computeWeekDays(offset) {
+  const today   = new Date()
+  const todayIso = today.toISOString().slice(0, 10)
+  const jourJs  = today.getDay()
+  // Décalage vers le lundi de la semaine courante (0 = dim → lundi précédent)
+  const diffLundi = jourJs === 0 ? -6 : 1 - jourJs
+  const lundi = new Date(today)
+  lundi.setDate(today.getDate() + diffLundi + offset * 7)
+
+  const LABELS = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam']
+  const pad = (n) => String(n).padStart(2, '0')
+
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(lundi)
+    d.setDate(lundi.getDate() + i)
+    const iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+    return { iso, label: LABELS[d.getDay()], dayNum: d.getDate(), isToday: iso === todayIso }
+  })
 }
 
 // ─── Composants ───────────────────────────────────────────────────────────────
@@ -119,7 +144,6 @@ function ProposalCard({ response, proposals, onConfirm, confirming }) {
               const deltaLabel = delta === 0
                 ? 'Score identique à la proposition principale.'
                 : `Score ${delta > 0 ? '+' : ''}${delta} par rapport à la proposition principale.`
-              // Raisons présentes dans cet alternatif mais absentes de la meilleure proposition
               const missingFromBest = best.reasons.filter((r) => !p.reasons.includes(r))
               const onlyInAlt = p.reasons.filter((r) => !best.reasons.includes(r))
               const comparisonDetail = missingFromBest.length > 0
@@ -145,11 +169,9 @@ function ProposalCard({ response, proposals, onConfirm, confirming }) {
                       </button>
                     </div>
                   </div>
-                  {/* Comparaison explicite avec la proposition principale (3c) */}
                   <p className="mt-1.5 text-xs text-muted-foreground italic">
                     {deltaLabel}{comparisonDetail ? ' ' + comparisonDetail : ''}
                   </p>
-                  {/* Raisons détaillées (3b) */}
                   {p.reasons.length > 0 && (
                     <div className="mt-1.5 space-y-0.5">
                       {p.reasons.map((r, j) => (
@@ -180,6 +202,13 @@ export default function SchedulingAssistantPage() {
   const [error, setError]                 = useState('')
   const [confirming, setConfirming]       = useState(false)
 
+  // ── Vue : 'liste' (récapitulatif texte) ou 'grille' (WeekGridPlanning) ──────
+  const [vue, setVue]               = useState('liste')
+  // Décalage en semaines par rapport à la semaine courante (0 = semaine en cours)
+  const [weekOffset, setWeekOffset] = useState(0)
+  // Positions des propositions modifiées par glisser-déposer : responseId → proposal
+  const [proposalOverrides, setProposalOverrides] = useState({})
+
   useEffect(() => {
     if (!user?.id) return
     async function load() {
@@ -202,13 +231,14 @@ export default function SchedulingAssistantPage() {
 
         if (respRes.error) throw new Error(respRes.error.message)
 
-        // Mapper lessons avec school_name via students
         const mappedLessons = (lessonsRes.data ?? []).map((l) => ({
           ...l,
-          schoolName: l.students?.school_name ?? null,
-          lessonDate: l.lesson_date,
-          lessonTime: l.lesson_time,
+          schoolName:      l.students?.school_name ?? null,
+          lessonDate:      l.lesson_date,
+          lessonTime:      l.lesson_time,
+          timeLabel:       l.lesson_time,
           durationMinutes: l.duration_minutes,
+          studentName:     null,  // non affiché dans la grille — ce sont les cours existants en fond
         }))
 
         setResponses(respRes.data ?? [])
@@ -235,38 +265,149 @@ export default function SchedulingAssistantPage() {
         zone,
         maxResults: 5,
         reservedSlots,
-        preferredDaysOff:      teacherInfo?.preferredDaysOff      ?? [],
+        preferredDaysOff:       teacherInfo?.preferredDaysOff      ?? [],
         preferredProximityDays: teacherInfo?.preferredProximityDays ?? [],
-        teacherHomeLat:        teacherInfo?.homeLat               ?? null,
-        teacherHomeLng:        teacherInfo?.homeLng               ?? null,
+        teacherHomeLat:         teacherInfo?.homeLat               ?? null,
+        teacherHomeLng:         teacherInfo?.homeLng               ?? null,
       })
     }
     return map
   }, [responses, existingLessons, schools, teacherInfo, reservedSlots])
 
+  // ── Vue grille : jours de la semaine affichée ──────────────────────────────
+  const weekDays = useMemo(() => computeWeekDays(weekOffset), [weekOffset])
+
+  /**
+   * Faux cours représentant les propositions dans la grille.
+   * Chaque proposition est projetée sur le jour correspondant de la semaine affichée
+   * (sauf si l'utilisateur l'a déjà déplacée — override conserve la date exacte).
+   * planningStatus 'envisage' → style bordure pointillée, opacité 0.6 (déjà géré par WeekGridPlanning).
+   */
+  const proposalLessons = useMemo(() => {
+    // Index nom-de-jour → date ISO de la semaine affichée
+    const isoParJour = {}
+    for (const d of weekDays) {
+      const nomJour = JOURS_FR[new Date(d.iso + 'T12:00:00').getDay()]
+      isoParJour[nomJour] = d.iso
+    }
+
+    return responses
+      .map((response) => {
+        const override = proposalOverrides[response.id]
+        const base     = proposalsMap[response.id]?.[0]
+        const proposal = override ?? base
+        if (!proposal) return null
+
+        // Si l'utilisateur a déplacé la proposition, conserver sa date exacte ;
+        // sinon la projeter sur la semaine affichée pour qu'elle soit toujours visible.
+        const lessonDate = override
+          ? override.candidateDate
+          : (isoParJour[proposal.day] ?? proposal.candidateDate)
+
+        return {
+          id:              `proposal-${response.id}`,
+          lessonDate,
+          lessonTime:      proposal.startTime,
+          timeLabel:       proposal.startTime,
+          durationMinutes: proposal.durationMinutes,
+          studentName:     [response.first_name, response.last_name].filter(Boolean).join(' ') || 'Élève',
+          schoolName:      response.school_name ?? null,
+          planningStatus:  'envisage',  // → bordure pointillée dans WeekGridPlanning
+          // Méta : retrouver le contexte pour recalculer le score après déplacement
+          _responseId:     response.id,
+        }
+      })
+      .filter(Boolean)
+  }, [responses, proposalsMap, proposalOverrides, weekDays])
+
+  /**
+   * Cours affichés dans la grille = cours réels de la semaine (en lecture seule, fond)
+   * + propositions (déplaçables).
+   * Les cours réels ont nonMovable: true pour bloquer le drag et éviter toute modification.
+   */
+  const lessonsForGrid = useMemo(() => {
+    const weekIsos = new Set(weekDays.map((d) => d.iso))
+    const coursReels = existingLessons
+      .filter((l) => weekIsos.has(l.lessonDate))
+      .map((l) => ({ ...l, nonMovable: true }))
+    return [...coursReels, ...proposalLessons]
+  }, [existingLessons, proposalLessons, weekDays])
+
+  /**
+   * Appelé par WeekGridPlanning quand une proposition est glissée vers un nouveau créneau.
+   * Recalcule le score côté client (scoreCandidate) sans aucune requête serveur.
+   * Met à jour proposalOverrides avec la nouvelle position et le nouveau score.
+   */
+  const handleMoveProposal = useCallback(async ({ lesson, newDate, newTime, durationMinutes }) => {
+    const responseId = lesson._responseId
+    const response   = responses.find((r) => r.id === responseId)
+    if (!response) return
+
+    // Nom du jour (ex : "Lundi") depuis la date ISO
+    const nomJour = JOURS_FR[new Date(newDate + 'T12:00:00').getDay()]
+
+    // Construire le slot au format "HH:MM–HH:MM" attendu par scoreCandidate
+    const finMin = timeToMinutes(newTime) + durationMinutes
+    const finH   = Math.floor(finMin / 60)
+    const finM   = finMin % 60
+    const slot   = `${newTime}–${String(finH).padStart(2, '0')}:${String(finM).padStart(2, '0')}`
+
+    const result = scoreCandidate({
+      day:                    nomJour,
+      slot,
+      slotsCount:             Math.max(1, Math.round(durationMinutes / 15)),
+      response,
+      existingLessons,
+      schools,
+      zone:                   teacherInfo?.zone               ?? 'B',
+      reservedSlots,
+      preferredDaysOff:       teacherInfo?.preferredDaysOff   ?? [],
+      preferredProximityDays: teacherInfo?.preferredProximityDays ?? [],
+      teacherHomeLat:         teacherInfo?.homeLat            ?? null,
+      teacherHomeLng:         teacherInfo?.homeLng            ?? null,
+    })
+
+    // WeekGridPlanning a déjà vérifié les conflits — result ne devrait pas être null,
+    // mais on se défend par précaution (score 0, pas de raisons).
+    setProposalOverrides((prev) => ({
+      ...prev,
+      [responseId]: {
+        candidateDate:   newDate,
+        startTime:       newTime,
+        durationMinutes,
+        day:             nomJour,
+        score:           result?.score   ?? 0,
+        reasons:         result?.reasons ?? [],
+      },
+    }))
+  }, [responses, existingLessons, schools, teacherInfo, reservedSlots])
+
+  /**
+   * Transforme une proposition acceptée en série de cours hebdomadaires jusqu'à la fin de l'année scolaire.
+   * Partagé entre vue liste et vue grille — les deux appellent cette même fonction.
+   * Dans la vue grille, proposal = proposalOverrides[id] ?? proposalsMap[id][0],
+   * donc la date/heure finale choisie par l'utilisateur est respectée.
+   */
   const handleConfirm = async (response, proposal) => {
     setConfirming(true)
     try {
       const groupId = crypto.randomUUID()
-      // Fin de l'année scolaire en cours (ex: '2026-2027' → '2027-06-30').
-      // Recalculé à chaque confirmation : si on est en été, bascule automatiquement
-      // sur l'année suivante sans modifier le code.
       const [, endYear] = currentSchoolYear().split('-').map(Number)
       const endDate = `${endYear}-06-30`
       const rows = []
       let current = new Date(proposal.candidateDate + 'T00:00:00')
-      const end = new Date(endDate + 'T00:00:00')
+      const end   = new Date(endDate + 'T00:00:00')
       while (current <= end) {
         const pad = (n) => String(n).padStart(2, '0')
         const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
         rows.push({
-          teacher_id: teacherInfo.id,
-          student_id: response.student_id,
-          lesson_date: iso,
-          lesson_time: proposal.startTime,
+          teacher_id:       teacherInfo.id,
+          student_id:       response.student_id,
+          lesson_date:      iso,
+          lesson_time:      proposal.startTime,
           duration_minutes: proposal.durationMinutes,
-          status: 'planifie',
-          topic: 'Cours de guitare',
+          status:           'planifie',
+          topic:            'Cours de guitare',
           recurrence_group: groupId,
         })
         current.setDate(current.getDate() + 7)
@@ -288,8 +429,19 @@ export default function SchedulingAssistantPage() {
     }
   }
 
+  // ── Label de navigation semaine ────────────────────────────────────────────
+  const labelSemaine = useMemo(() => {
+    if (weekDays.length === 0) return ''
+    const premier = weekDays[0]
+    const dernier = weekDays[6]
+    const d1 = new Date(premier.iso + 'T12:00:00')
+    const d2 = new Date(dernier.iso + 'T12:00:00')
+    const opts = { day: 'numeric', month: 'short' }
+    return d1.toLocaleDateString('fr-FR', opts) + ' – ' + d2.toLocaleDateString('fr-FR', { ...opts, year: 'numeric' })
+  }, [weekDays])
+
   return (
-    <div className="p-6 sm:p-8 max-w-2xl">
+    <div className="p-6 sm:p-8 max-w-5xl">
       <header className="mb-8">
         <div className="flex items-center gap-3 mb-2">
           <div className="w-10 h-10 rounded-xl bg-guitar-600/15 flex items-center justify-center">
@@ -329,17 +481,171 @@ export default function SchedulingAssistantPage() {
           <p className="text-xs text-muted mt-1">Toutes les inscriptions ont déjà un créneau confirmé.</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {responses.map((r) => (
-            <ProposalCard
-              key={r.id}
-              response={r}
-              proposals={proposalsMap[r.id] ?? []}
-              onConfirm={handleConfirm}
-              confirming={confirming}
-            />
-          ))}
-        </div>
+        <>
+          {/* ── Sélecteur de vue ─────────────────────────────────────────────── */}
+          <div className="flex items-center justify-between gap-4 mb-6">
+            <div className="flex gap-1 p-1 rounded-xl bg-surface-raised border border-border-subtle">
+              <button
+                type="button"
+                onClick={() => setVue('liste')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  vue === 'liste' ? 'guitar-gradient text-white' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <List className="w-4 h-4" /> Récapitulatif
+              </button>
+              <button
+                type="button"
+                onClick={() => setVue('grille')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  vue === 'grille' ? 'guitar-gradient text-white' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <LayoutGrid className="w-4 h-4" /> Grille semaine
+              </button>
+            </div>
+
+            {/* Navigation semaine — visible uniquement en vue grille */}
+            {vue === 'grille' && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setWeekOffset((v) => v - 1)}
+                  className="p-1.5 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors"
+                  aria-label="Semaine précédente"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-xs text-muted-foreground font-medium min-w-[140px] text-center">
+                  {labelSemaine}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setWeekOffset((v) => v + 1)}
+                  className="p-1.5 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors"
+                  aria-label="Semaine suivante"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+                {weekOffset !== 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffset(0)}
+                    className="text-xs text-guitar-400 hover:underline"
+                  >
+                    Aujourd'hui
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── Vue récapitulatif ──────────────────────────────────────────── */}
+          {vue === 'liste' && (
+            <div className="space-y-4">
+              {responses.map((r) => (
+                <ProposalCard
+                  key={r.id}
+                  response={r}
+                  proposals={proposalsMap[r.id] ?? []}
+                  onConfirm={handleConfirm}
+                  confirming={confirming}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* ── Vue grille ────────────────────────────────────────────────── */}
+          {vue === 'grille' && (
+            <div className="space-y-6">
+              {/* Légende */}
+              <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-3 rounded-sm border-2 border-dashed border-guitar-400 opacity-70" />
+                  Proposition (déplaçable)
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-3 rounded-sm border-2 border-solid border-muted" />
+                  Cours existant (lecture seule)
+                </span>
+                <span className="text-muted italic">Glissez une proposition pour ajuster son créneau — le score se recalcule aussitôt.</span>
+              </div>
+
+              {/* Grille — les propositions y sont affichées en style "envisagé" (bordure pointillée) */}
+              <WeekGridPlanning
+                weekDays={weekDays}
+                lessons={lessonsForGrid}
+                reservedSlots={reservedSlots}
+                onNewLesson={() => {}}
+                onSelectLesson={() => {}}
+                onDeleteLesson={() => {}}
+                onMoveLesson={handleMoveProposal}
+              />
+
+              {/* Panneau de confirmation — une ligne par réponse, partage handleConfirm avec la vue liste */}
+              <div className="space-y-2">
+                <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+                  Confirmer un créneau
+                </h2>
+                {responses.map((response) => {
+                  const override  = proposalOverrides[response.id]
+                  const base      = proposalsMap[response.id]?.[0]
+                  const proposal  = override ?? base
+                  if (!proposal) return null
+
+                  // Vérifier si la proposition est dans la semaine affichée
+                  const isoParJour = {}
+                  for (const d of weekDays) {
+                    isoParJour[JOURS_FR[new Date(d.iso + 'T12:00:00').getDay()]] = d.iso
+                  }
+                  const dateAffichee = override
+                    ? override.candidateDate
+                    : (isoParJour[proposal.day] ?? proposal.candidateDate)
+                  const dansLaSemaine = weekDays.some((d) => d.iso === dateAffichee)
+
+                  return (
+                    <div
+                      key={response.id}
+                      className={`glass-panel rounded-xl p-3 flex items-center gap-3 flex-wrap transition-opacity ${dansLaSemaine ? '' : 'opacity-50'}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {response.first_name || '—'} {response.last_name || ''}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {proposal.day} · {proposal.startTime} · {proposal.durationMinutes} min
+                          {override && <span className="ml-1.5 text-guitar-400">✎ modifié</span>}
+                        </p>
+                        {proposal.reasons?.length > 0 && (
+                          <p className="text-[10px] text-muted mt-0.5 truncate">
+                            {proposal.reasons[0]}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <ScoreBadge score={proposal.score} />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const ok = await handleConfirm(response, proposal)
+                            // Retire la réponse confirmée de la liste sans recharger
+                            if (ok) setResponses((prev) => prev.filter((r) => r.id !== response.id))
+                          }}
+                          disabled={confirming || !dansLaSemaine}
+                          title={!dansLaSemaine ? 'Naviguez vers la semaine où se trouve cette proposition pour la confirmer' : undefined}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl guitar-gradient text-white text-xs font-medium disabled:opacity-40"
+                        >
+                          {confirming ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                          Confirmer
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
