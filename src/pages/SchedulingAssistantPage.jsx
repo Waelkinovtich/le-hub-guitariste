@@ -17,7 +17,7 @@ import { fetchReservedSlots } from '../services/reservedSlots'
 async function fetchTeacherProfile(userId) {
   const { data } = await supabase
     .from('profiles')
-    .select('id, school_zone, preferred_days_off, preferred_proximity_day, preferred_proximity_days, home_latitude, home_longitude')
+    .select('id, school_zone, preferred_days_off, preferred_proximity_day, preferred_proximity_days, home_latitude, home_longitude, poids_regroupement_ecole, poids_adjacence, poids_alternance_debutants, poids_distance, poids_vacances, poids_regroupement_age, ecart_age_proche')
     .eq('id', userId)
     .single()
   // Rétrocompat : preferred_proximity_days (tableau) remplace l'ancien champ texte.
@@ -31,6 +31,16 @@ async function fetchTeacherProfile(userId) {
     preferredProximityDays: newDays,
     homeLat:                data?.home_latitude      ?? null,
     homeLng:                data?.home_longitude     ?? null,
+    // Poids des facteurs du Planning intelligent (null avant migration → interprété 100 dans le moteur)
+    scoringWeights: {
+      poids_regroupement_ecole:  data?.poids_regroupement_ecole  ?? null,
+      poids_adjacence:            data?.poids_adjacence            ?? null,
+      poids_alternance_debutants: data?.poids_alternance_debutants ?? null,
+      poids_distance:             data?.poids_distance             ?? null,
+      poids_vacances:             data?.poids_vacances             ?? null,
+      poids_regroupement_age:     data?.poids_regroupement_age     ?? 0,
+      ecart_age_proche:           data?.ecart_age_proche           ?? 4,
+    },
   }
 }
 
@@ -268,6 +278,7 @@ export default function SchedulingAssistantPage() {
     preferredProximityDays: teacherInfo?.preferredProximityDays ?? [],
     teacherHomeLat:         teacherInfo?.homeLat               ?? null,
     teacherHomeLng:         teacherInfo?.homeLng               ?? null,
+    scoringWeights:         teacherInfo?.scoringWeights        ?? null,
   }), [responses, existingLessons, schools, teacherInfo, reservedSlots])
 
   // ── Vue grille : jours de la semaine affichée ──────────────────────────────
@@ -428,6 +439,7 @@ export default function SchedulingAssistantPage() {
       preferredProximityDays: teacherInfo?.preferredProximityDays ?? [],
       teacherHomeLat:         teacherInfo?.homeLat            ?? null,
       teacherHomeLng:         teacherInfo?.homeLng            ?? null,
+      scoringWeights:         teacherInfo?.scoringWeights     ?? null,
     })
 
     // WeekGridPlanning a déjà vérifié les conflits — result ne devrait pas être null.

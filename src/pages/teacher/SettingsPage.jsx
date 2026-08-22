@@ -9,6 +9,51 @@ import { fetchMileageRates, upsertMileageRate, deleteMileageRate, seedDefaultRat
 import { DEFAULT_SCORE_WEIGHTS } from '../../services/schools'
 import HelpTooltip from '../../components/HelpTooltip'
 
+// Facteurs du Planning intelligent — ordre d'affichage dans la section dédiée.
+// poids à 0 = facteur complètement désactivé.
+const PLANNING_WEIGHT_SLIDERS = [
+  {
+    key:   'poids_regroupement_ecole',
+    label: 'Regroupement par école',
+    aide:  "Bonus quand un créneau est prévu dans une école qui a déjà un cours ce jour. Favorise les demi-journées dans une même école. Curseur à 0 : désactivé.",
+  },
+  {
+    key:   'poids_adjacence',
+    label: 'Adjacence dans la même école',
+    aide:  "Bonus supplémentaire quand le créneau est directement consécutif à un autre cours de la même école (sans trou). Curseur à 0 : désactivé.",
+  },
+  {
+    key:   'poids_alternance_debutants',
+    label: 'Alternance pédagogique (débutants)',
+    aide:  "Bonus quand le créneau évite d'enchaîner deux débutants consécutifs, pour ménager la vigilance du professeur. Curseur à 0 : désactivé.",
+  },
+  {
+    key:   'poids_distance',
+    label: 'Proximité du domicile',
+    aide:  "Bonus pour les écoles situées à moins de 20 km de votre domicile, les jours de proximité que vous avez choisis dans les préférences. Curseur à 0 : désactivé.",
+  },
+  {
+    key:   'poids_vacances',
+    label: 'Éviter les périodes de vacances',
+    aide:  "Pénalité appliquée aux créneaux qui tombent pendant les vacances scolaires de votre zone. Curseur à 0 : la pénalité est désactivée.",
+  },
+  {
+    key:   'poids_regroupement_age',
+    label: 'Regroupement par âge',
+    aide:  "Bonus quand deux élèves d'âges proches sont planifiés dans la même plage horaire — même année de naissance = bonus plein, écart de 1–2 ans = demi-bonus. Désactivé par défaut. Curseur à 0 : désactivé.",
+  },
+]
+
+// Valeurs par défaut des poids du Planning intelligent (identiques aux défauts SQL).
+const DEFAULT_PLANNING_WEIGHTS = {
+  poids_regroupement_ecole:   100,
+  poids_adjacence:             100,
+  poids_alternance_debutants:  100,
+  poids_distance:              100,
+  poids_vacances:              100,
+  poids_regroupement_age:        0,
+}
+
 // Les 5 catégories du score pondéré (voir services/schools.js) — ordre d'affichage
 // des curseurs dans la section "Priorisation des écoles" ci-dessous.
 const SCORE_WEIGHT_SLIDERS = [
@@ -87,6 +132,18 @@ export default function SettingsPage() {
   // Ref synchrone : évite de lire un état React potentiellement pas encore
   // re-rendu au moment du relâchement du curseur (pointerup juste après change).
   const weightsRef = useRef(weights)
+
+  // ── Poids des facteurs du Planning intelligent ────────────────────────────
+  const initialPlanningWeights = user?.scoringWeights
+    ? { ...DEFAULT_PLANNING_WEIGHTS, ...user.scoringWeights }
+    : DEFAULT_PLANNING_WEIGHTS
+  const [planningWeights, setPlanningWeightsState] = useState(initialPlanningWeights)
+  const [savingPlanningWeights, setSavingPlanningWeights] = useState(false)
+  const [savedPlanningWeights, setSavedPlanningWeights]   = useState(false)
+  const planningWeightsRef = useRef(planningWeights)
+  const [ecartAgeProcheInput, setEcartAgeProcheInput] = useState(
+    String(user?.scoringWeights?.ecart_age_proche ?? 4)
+  )
 
   // ── Zone scolaire ──────────────────────────────────────────────────────────
   const [zone, setZone]         = useState(user?.schoolZone ?? 'B')
@@ -356,6 +413,32 @@ export default function SettingsPage() {
     if (err) return
     setUser((prev) => ({ ...prev, scoreWeights: w }))
     setSavedWeights(true); setTimeout(() => setSavedWeights(false), 2000)
+  }
+
+  function updatePlanningWeight(key, value) {
+    const next = { ...planningWeightsRef.current, [key]: value }
+    planningWeightsRef.current = next
+    setPlanningWeightsState(next)
+  }
+
+  async function handleSavePlanningWeights() {
+    setSavingPlanningWeights(true)
+    const w = planningWeightsRef.current
+    const ecartParsed = parseInt(ecartAgeProcheInput, 10)
+    const ecart = Number.isFinite(ecartParsed) && ecartParsed >= 0 ? ecartParsed : 4
+    const { error: err } = await supabase.from('profiles').update({
+      poids_regroupement_ecole:   w.poids_regroupement_ecole,
+      poids_adjacence:             w.poids_adjacence,
+      poids_alternance_debutants:  w.poids_alternance_debutants,
+      poids_distance:              w.poids_distance,
+      poids_vacances:              w.poids_vacances,
+      poids_regroupement_age:      w.poids_regroupement_age,
+      ecart_age_proche:            ecart,
+    }).eq('id', user.id)
+    setSavingPlanningWeights(false)
+    if (err) return
+    setUser((prev) => ({ ...prev, scoringWeights: { ...w, ecart_age_proche: ecart } }))
+    setSavedPlanningWeights(true); setTimeout(() => setSavedPlanningWeights(false), 2000)
   }
 
   // ── Préférences de planification ─────────────────────────────────────────
@@ -1218,6 +1301,86 @@ export default function SettingsPage() {
         {(savingWeights || savedWeights) && (
           <p className="text-xs mt-3 flex items-center gap-1 text-muted-foreground">
             {savingWeights
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Sauvegarde…</>
+              : <span className="text-green-600 dark:text-green-400 flex items-center gap-1"><Check className="w-3.5 h-3.5" />Pondération enregistrée.</span>
+            }
+          </p>
+        )}
+      </section>
+
+      {/* ── Réglages du Planning intelligent ─────────────────────────────────── */}
+      <section className="glass-panel rounded-2xl p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-9 h-9 rounded-xl bg-guitar-600/15 flex items-center justify-center">
+            <SlidersHorizontal className="w-4 h-4 text-guitar-400" />
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5">
+              <h2 className="font-semibold">Réglages du Planning intelligent</h2>
+              <HelpTooltip texte="Ces curseurs pondèrent les facteurs du moteur de propositions. Un curseur à 0 désactive complètement le critère." position="right" />
+            </div>
+            <p className="text-sm text-muted-foreground">Importances relatives des critères dans les propositions de créneaux</p>
+          </div>
+        </div>
+
+        <p className="text-xs text-muted-foreground mb-5 bg-surface-raised rounded-lg px-3 py-2 border border-border-subtle">
+          Plus un curseur est élevé, plus ce critère influence le classement des propositions. Un curseur à <strong>0</strong> désactive complètement le critère — la valeur par défaut reproduit l'ancien comportement.
+        </p>
+
+        <div className="space-y-5">
+          {PLANNING_WEIGHT_SLIDERS.map(({ key, label, aide }) => (
+            <div key={key}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  <label className="text-xs text-muted-foreground">{label}</label>
+                  <HelpTooltip texte={aide} position="right" />
+                </div>
+                <span className={`text-xs font-medium ${planningWeights[key] === 0 ? 'text-muted-foreground' : 'text-guitar-400'}`}>
+                  {planningWeights[key] === 0 ? 'Désactivé' : planningWeights[key]}
+                </span>
+              </div>
+              <input
+                type="range" min="0" max="100" step="5"
+                value={planningWeights[key]}
+                onChange={(e) => updatePlanningWeight(key, Number(e.target.value))}
+                onPointerUp={handleSavePlanningWeights}
+                onKeyUp={handleSavePlanningWeights}
+                className="w-full accent-guitar-600"
+              />
+            </div>
+          ))}
+        </div>
+
+        {/* Seuil d'écart d'âge — visible uniquement si le curseur "Regroupement par âge" est actif */}
+        {planningWeights.poids_regroupement_age > 0 && (
+          <div className="border-t border-border-subtle pt-4 mt-2">
+            <div className="flex items-center gap-1.5 mb-1">
+              <label className="text-xs text-muted-foreground">
+                Écart maximal (années) pour le bonus d'âge proche
+              </label>
+              <HelpTooltip
+                texte="Deux élèves dont l'écart d'année de naissance est inférieur ou égal à cette valeur reçoivent le demi-bonus de regroupement par âge. Écart 0 = même année uniquement. Aucun maximum imposé."
+                position="right"
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                min="0"
+                value={ecartAgeProcheInput}
+                onChange={(e) => setEcartAgeProcheInput(e.target.value)}
+                onBlur={handleSavePlanningWeights}
+                className={inputCls + ' w-28'}
+                placeholder="4"
+              />
+              <span className="text-xs text-muted-foreground">ans</span>
+            </div>
+          </div>
+        )}
+
+        {(savingPlanningWeights || savedPlanningWeights) && (
+          <p className="text-xs mt-3 flex items-center gap-1 text-muted-foreground">
+            {savingPlanningWeights
               ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Sauvegarde…</>
               : <span className="text-green-600 dark:text-green-400 flex items-center gap-1"><Check className="w-3.5 h-3.5" />Pondération enregistrée.</span>
             }
