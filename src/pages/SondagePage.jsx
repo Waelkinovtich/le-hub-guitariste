@@ -657,7 +657,7 @@ const defaultForm = {
   practice_years: '', level: '', diplomas: '',
   tuteurs: [],
   availabilities: {},
-  address: '', instrument: '', open_to_group: null,
+  address: '', instrument: '', open_to_group: false,
   expectations: '',
   inscriptions_supplementaires: [],
 }
@@ -803,7 +803,8 @@ export default function SondagePage() {
         availabilities: form.availabilities,
         address: form.address || null,
         instrument: form.instrument || null,
-        open_to_group: form.open_to_group,
+        // ?? false : filet de sécurité si une session navigateur a l'ancienne valeur null
+        open_to_group: form.open_to_group ?? false,
         expectations: form.expectations || null,
       }
       const { error: insertError } = await supabase.from('survey_responses').insert(payload)
