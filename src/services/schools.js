@@ -82,6 +82,10 @@ const PROFILE_COLUMNS = [
   'estimated_annual_bonus',
   // Tâche 3 : jours de présence — affichage organisationnel uniquement
   'weekly_presence_days',
+  // T1 : durées de créneaux proposées — synchronisées dans school_schedules pour accès public
+  'available_slot_durations',
+  // T3 planning : dates de début/fin de l'année scolaire pour exclure les hors-période
+  'date_reprise_cours', 'date_fin_cours',
   'created_at',
 ].join(', ')
 
@@ -114,6 +118,17 @@ export async function updateSchoolProfile(schoolId, fields) {
     .single()
   if (error) throw new Error(error.message)
   return data
+}
+
+// Dénormalise available_slot_durations dans school_schedules (lecture publique SondagePage).
+// Appelée depuis SchoolDetailPage.handleSave après updateSchoolProfile.
+export async function syncAvailableSlotDurations(schoolName, schoolYear, durations) {
+  const { error } = await supabase
+    .from('school_schedules')
+    .update({ available_slot_durations: durations })
+    .eq('school_name', schoolName)
+    .eq('school_year', schoolYear)
+  if (error) throw new Error(error.message)
 }
 
 // ─── Taux horaires ────────────────────────────────────────────────────────────

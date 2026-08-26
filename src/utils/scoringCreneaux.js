@@ -100,6 +100,37 @@ function appliquerPoids(score, poids) {
   return score * p / 100
 }
 
+// Seuil en dessous duquel un écart entre deux cours est considéré "serré" (demi-bonus compacité).
+const COMPACITE_GAP_SERRE_MIN = 30
+
+// ─── Facteur compacité horaire ────────────────────────────────────────────────
+
+/**
+ * Bonus de compacité : favorise les journées sans trous.
+ * Retourne un score positif si le créneau candidat est adjacent ou proche
+ * d'un cours existant sur la même journée (toutes écoles confondues).
+ *
+ * @param {number} startMin — début du candidat (minutes depuis minuit)
+ * @param {number} endMin   — fin du candidat
+ * @param {Array}  sameDayLessons — cours du même jour
+ * @returns {number} 0, 1 (serre) ou 2 (adjacent)
+ */
+export function calculerScoreCompacite(startMin, endMin, sameDayLessons) {
+  if (sameDayLessons.length === 0) return 0
+  let minGap = Infinity
+  for (const l of sameDayLessons) {
+    const ls = timeToMinutes(l.lesson_time ?? l.lessonTime ?? '00:00')
+    const le = ls + (l.duration_minutes ?? l.durationMinutes ?? 45)
+    // Ne pas mesurer les cours qui se chevauchent (éliminés plus haut)
+    if (startMin >= le) minGap = Math.min(minGap, startMin - le)
+    else if (endMin <= ls) minGap = Math.min(minGap, ls - endMin)
+  }
+  if (minGap === Infinity) return 0
+  if (minGap <= ADJACENCE_TOLERANCE_MIN)  return 2  // adjacent : bonus plein
+  if (minGap <= COMPACITE_GAP_SERRE_MIN)  return 1  // écart serré : demi-bonus
+  return 0
+}
+
 // ─── Facteur regroupement par âge ────────────────────────────────────────────
 
 /**
@@ -203,10 +234,25 @@ export function scoreCandidate({
   })
   if (hasReservedConflict) return null
 
+  // ── Hard-exclude : vacances scolaires ────────────────────────────────────────
+  // Les vacances sont un blocage structurel (l'école est fermée) — retourne null
+  // plutôt qu'une pénalité de score, pour ne jamais proposer un créneau en vacances.
+  if (isVacances(candidateDate, zone)) return null
+
+  // ── Hard-exclude : hors de la plage scolaire de l'école ──────────────────────
+  // date_reprise_cours et date_fin_cours définissent la fenêtre réelle de l'année.
+  // Un créneau hors plage ne peut pas donner lieu à un cours — exclusion stricte.
+  const schoolName = response.school_name ?? ''
+  const schoolInfo = schools.find((s) => s.name === schoolName)
+  if (schoolInfo) {
+    if (schoolInfo.date_reprise_cours && candidateDate < schoolInfo.date_reprise_cours) return null
+    if (schoolInfo.date_fin_cours     && candidateDate > schoolInfo.date_fin_cours)     return null
+  }
+
   const w = scoringWeights ?? {}
 
   // ── Bonus : même école ce jour ────────────────────────────────────────────
-  const schoolName = response.school_name ?? ''
+  // schoolName et schoolInfo déjà calculés dans le bloc hard-exclude ci-dessus
   const sameDaySchool = sameDayLessons.filter(
     (l) => (l.schoolName ?? l.student?.school_name ?? '') === schoolName && schoolName
   )
@@ -260,8 +306,8 @@ export function scoreCandidate({
 
   // ── Volume hebdomadaire par rapport à l'objectif ──────────────────────────
   // Facteur non pondérable (lié à la politique de volume par école, pas une préférence).
-  const school = schools.find((s) => s.name === schoolName)
-  if (school) {
+  if (schoolInfo) {
+    const school = schoolInfo
     const current = school.current_weekly_hours ?? 0
     const desired = school.desired_weekly_hours ?? null
     if (desired != null) {
@@ -272,16 +318,6 @@ export function scoreCandidate({
         score += SCORE_VOLUME_SUR_OBJECTIF
         reasons.push(`${SCORE_VOLUME_SUR_OBJECTIF} : au-dessus du volume souhaité (${current}h > ${desired}h)`)
       }
-    }
-  }
-
-  // ── Pénalité vacances ─────────────────────────────────────────────────────
-  const vac = isVacances(candidateDate, zone)
-  if (vac) {
-    const s = appliquerPoids(SCORE_VACANCES, w.poids_vacances)
-    if (s !== 0) {
-      score += s
-      reasons.push(`${s.toFixed(2).replace(/\.?0+$/, '')} : période de vacances (${vac.label})`)
     }
   }
 
@@ -314,14 +350,28 @@ export function scoreCandidate({
   if (
     joursProximite.includes(day) &&
     teacherHomeLat != null && teacherHomeLng != null &&
-    school?.latitude != null && school?.longitude != null
+    schoolInfo?.latitude != null && schoolInfo?.longitude != null
   ) {
-    const distKm = haversineKm(teacherHomeLat, teacherHomeLng, school.latitude, school.longitude)
+    const distKm = haversineKm(teacherHomeLat, teacherHomeLng, schoolInfo.latitude, schoolInfo.longitude)
     if (distKm < DISTANCE_PROXIMITE_KM) {
       const s = appliquerPoids(SCORE_PROXIMITE_DOMICILE, w.poids_distance)
       if (s !== 0) {
         score += s
         reasons.push(`+${s.toFixed(2).replace(/\.?0+$/, '')} : école proche du domicile (${Math.round(distKm)} km) ce ${day}`)
+      }
+    }
+  }
+
+  // ── Bonus : compacité horaire ─────────────────────────────────────────────
+  const poidsCompacite = w.poids_compacite ?? 0
+  if (poidsCompacite > 0) {
+    const bonusCompacite = calculerScoreCompacite(startMin, endMin, sameDayLessons)
+    if (bonusCompacite > 0) {
+      const s = appliquerPoids(bonusCompacite, poidsCompacite)
+      if (s !== 0) {
+        score += s
+        const libelle = bonusCompacite >= 2 ? 'adjacent à un autre cours' : 'écart serré entre cours'
+        reasons.push(`+${s.toFixed(2).replace(/\.?0+$/, '')} : compacité (${libelle})`)
       }
     }
   }

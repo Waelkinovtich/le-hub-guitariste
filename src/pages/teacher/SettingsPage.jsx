@@ -42,6 +42,11 @@ const PLANNING_WEIGHT_SLIDERS = [
     label: 'Regroupement par âge',
     aide:  "Bonus quand deux élèves d'âges proches sont planifiés dans la même plage horaire — même année de naissance = bonus plein, écart de 1–2 ans = demi-bonus. Désactivé par défaut. Curseur à 0 : désactivé.",
   },
+  {
+    key:   'poids_compacite',
+    label: 'Compacité horaire',
+    aide:  "Bonus pour les créneaux qui s'enchaînent sans trou sur la journée (toutes écoles confondues). Favorise les journées denses plutôt que les créneaux éparpillés. Désactivé par défaut. Curseur à 0 : désactivé.",
+  },
 ]
 
 // Valeurs par défaut des poids du Planning intelligent (identiques aux défauts SQL).
@@ -52,6 +57,7 @@ const DEFAULT_PLANNING_WEIGHTS = {
   poids_distance:              100,
   poids_vacances:              100,
   poids_regroupement_age:        0,
+  poids_compacite:               0,
 }
 
 // Les 5 catégories du score pondéré (voir services/schools.js) — ordre d'affichage
@@ -433,6 +439,7 @@ export default function SettingsPage() {
       poids_distance:              w.poids_distance,
       poids_vacances:              w.poids_vacances,
       poids_regroupement_age:      w.poids_regroupement_age,
+      poids_compacite:             w.poids_compacite,
       ecart_age_proche:            ecart,
     }).eq('id', user.id)
     setSavingPlanningWeights(false)

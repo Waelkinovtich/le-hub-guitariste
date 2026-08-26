@@ -7,7 +7,7 @@ import {
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import {
-  fetchSchoolProfile, updateSchoolProfile,
+  fetchSchoolProfile, updateSchoolProfile, syncAvailableSlotDurations,
   fetchHourlyRates, upsertHourlyRate,
   currentSchoolYear, computePriorityScore, computeScoreBreakdown, isScoreIncomplete,
   calculerRendementHoraireNetReel, calculerTauxNetEffectif, isSalaryFixed,
@@ -560,6 +560,11 @@ export default function SchoolDetailPage() {
       setSchool(fresh)
       setDraft(null)
       setEditing(false)
+      // Dénormalise les durées dans school_schedules pour que SondagePage puisse les lire
+      // sans authentification. Erreur non bloquante : la fiche école est déjà sauvegardée.
+      if (fresh.available_slot_durations) {
+        syncAvailableSlotDurations(fresh.name, curYear, fresh.available_slot_durations).catch(() => {})
+      }
     } catch (err) {
       setSaveError(err.message)
     }
@@ -1141,6 +1146,41 @@ export default function SchoolDetailPage() {
                   ? `${data.weekly_presence_days} jour${data.weekly_presence_days > 1 ? 's' : ''} / semaine`
                   : <span className="text-muted-foreground italic">Non renseigné</span>
                 }
+              </span>
+          }
+        </Field>
+
+        <Field
+          label="Durées de créneaux proposées"
+          hint={editing ? "Options proposées aux élèves dans le sondage d'inscription. CESU : choisissez 60 min (obligatoire pour la déclaration). Plusieurs durées sélectionnables." : null}
+        >
+          {editing
+            ? <div className="flex gap-2 flex-wrap">
+                {[15, 30, 45, 60].map((min) => {
+                  const selected = (data.available_slot_durations ?? [30]).includes(min)
+                  return (
+                    <button
+                      key={min}
+                      type="button"
+                      onClick={() => {
+                        const current = data.available_slot_durations ?? [30]
+                        const next = selected
+                          ? current.filter((d) => d !== min)
+                          : [...current, min].sort((a, b) => a - b)
+                        // Au moins une durée obligatoire
+                        set('available_slot_durations')(next.length > 0 ? next : current)
+                      }}
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                        selected
+                          ? 'border-guitar-600/40 bg-guitar-600/15 text-guitar-400'
+                          : 'border-border-subtle text-muted-foreground hover:border-border'
+                      }`}
+                    >{min} min</button>
+                  )
+                })}
+              </div>
+            : <span className="text-foreground">
+                {(data.available_slot_durations ?? [30]).map((d) => `${d} min`).join(', ')}
               </span>
           }
         </Field>

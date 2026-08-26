@@ -107,6 +107,11 @@ function ProposalCard({ response, proposals, onConfirm, confirming }) {
               {response.school_name || 'École non précisée'}
               {response.level ? ` · ${response.level}` : ''}
             </p>
+            {(response.submitted_at || response.created_at) && (
+              <p className="text-xs text-muted mt-0.5">
+                Répondu le {new Date(response.submitted_at ?? response.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </p>
+            )}
           </div>
           {best && <ScoreBadge score={best.score} />}
         </div>

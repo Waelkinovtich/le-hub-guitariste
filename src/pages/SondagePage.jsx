@@ -2,12 +2,21 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { Guitar, ChevronRight, ChevronLeft, Check, Loader2, AlertCircle, Plus, Trash2 } from 'lucide-react'
 import { supabasePublic as supabase } from '../lib/supabase'
+import { REGLE_PAR_DUREE } from '../utils/slotDurationRules'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
+// Nomenclature CMF (Confédération Musicale de France) — cycles officiels guitare
 const NIVEAUX = [
-  'Débutant', 'Cycle 1A', 'Cycle 1B', 'Cycle 2A', 'Cycle 2B',
-  'Cycle 3A', 'Cycle 3B', 'Adulte loisir', 'Autre',
+  'Éveil',
+  'Initiation',
+  'Cycle 1 — 1re année',  'Cycle 1 — 2e année',  'Cycle 1 — 3e année',
+  'Cycle 2 — 1re année',  'Cycle 2 — 2e année',  'Cycle 2 — 3e année',
+  'Cycle 3 — 1re année',  'Cycle 3 — 2e année',  'Cycle 3 — 3e année',
+  'COP',
+  'DEM',
+  'Adulte loisir',
+  'Autre / pas de cycle fédéral',
 ]
 const TRANSPORTS = ['À pied', 'Vélo', 'Voiture', 'Transport en commun']
 const FREQUENCES = ['1x/semaine', '2x/semaine', 'Toutes les 2 semaines']
@@ -128,27 +137,40 @@ function StepIdentite({ data, onChange, schools }) {
 
 function StepNiveau({ data, onChange }) {
   const set = (k) => (e) => onChange({ ...data, [k]: e.target.value })
+  const isAutre = data.level === 'Autre / pas de cycle fédéral'
   return (
     <div className="space-y-5">
       <Field label="Années de pratique" required>
         <input className={inputCls} type="number" min="0" max="99"
           value={data.practice_years} onChange={set('practice_years')} placeholder="3" />
       </Field>
-      <Field label="Niveau actuel" required>
+      <Field label="Niveau actuel (nomenclature CMF)" required>
         <select className={selectCls} value={data.level} onChange={set('level')}>
           <option value="">Choisir un niveau…</option>
           {NIVEAUX.map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
       </Field>
-      <Field label="Diplômes obtenus (optionnel)">
-        <textarea
-          className={inputCls + ' resize-none'}
-          rows={3}
-          value={data.diplomas}
-          onChange={set('diplomas')}
-          placeholder="Ex : DEM guitare, CFEM…"
-        />
-      </Field>
+      {isAutre && (
+        <Field label="Précisez votre niveau">
+          <input
+            className={inputCls}
+            value={data.diplomas}
+            onChange={set('diplomas')}
+            placeholder="Ex : autodidacte, formation en ligne, 5 ans de pratique…"
+          />
+        </Field>
+      )}
+      {!isAutre && (
+        <Field label="Diplômes obtenus (optionnel)">
+          <textarea
+            className={inputCls + ' resize-none'}
+            rows={3}
+            value={data.diplomas}
+            onChange={set('diplomas')}
+            placeholder="Ex : DEM guitare, CFEM…"
+          />
+        </Field>
+      )}
     </div>
   )
 }
@@ -324,8 +346,11 @@ function StepDisponibilites({ data, onChange, schoolSchedules, loadingSchedules 
   )
 }
 
-function StepLogistique({ data, onChange }) {
+function StepLogistique({ data, onChange, availableDurations, isCesu }) {
   const set = (k) => (e) => onChange({ ...data, [k]: e.target.value })
+  // Durées à afficher : si CESU ou pas d'école, on affiche [30, 60] par défaut
+  const durations = availableDurations?.length ? availableDurations : (isCesu ? [60] : [30])
+  const showDurationPicker = !isCesu && durations.length > 1
   return (
     <div className="space-y-5">
       <Field label="Adresse">
@@ -338,6 +363,29 @@ function StepLogistique({ data, onChange }) {
           {INSTRUMENTS.map((i) => <option key={i} value={i}>{i}</option>)}
         </select>
       </Field>
+      {showDurationPicker && (
+        <Field label="Durée de cours souhaitée">
+          <div className="flex flex-col gap-2">
+            {durations.map((min) => (
+              <button
+                key={min}
+                type="button"
+                onClick={() => onChange({ ...data, desired_duration_minutes: min })}
+                className={`w-full px-4 py-3 rounded-xl border text-sm font-medium text-left transition-all ${
+                  data.desired_duration_minutes === min
+                    ? 'border-guitar-600 bg-guitar-600/10 text-guitar-400'
+                    : 'border-border-subtle bg-surface-raised text-muted-foreground hover:border-border'
+                }`}
+              >
+                <span className="font-semibold">{min} min</span>
+                {REGLE_PAR_DUREE[min] && (
+                  <span className="ml-2 text-xs opacity-70">{REGLE_PAR_DUREE[min]}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </Field>
+      )}
       <Field label="Ouvert aux cours collectifs ?">
         <div className="flex gap-3">
           {[true, false].map((v) => (
@@ -658,6 +706,7 @@ const defaultForm = {
   tuteurs: [],
   availabilities: {},
   address: '', instrument: '', open_to_group: false,
+  desired_duration_minutes: null,
   expectations: '',
   inscriptions_supplementaires: [],
 }
@@ -677,6 +726,7 @@ export default function SondagePage() {
   // Écoles et créneaux du répondant principal
   const [schools, setSchools] = useState([])
   const [schoolSchedules, setSchoolSchedules] = useState([])   // [{ day, slots }]
+  const [schoolDurations, setSchoolDurations] = useState([])   // integer[] — durées proposées
   const [loadingSchedules, setLoadingSchedules] = useState(false)
 
   // Créneaux des personnes supplémentaires : indexés par position dans le tableau
@@ -738,11 +788,18 @@ export default function SondagePage() {
     setLoadingSchedules(true)
     supabase
       .from('school_schedules')
-      .select('day, slots')
+      .select('day, slots, available_slot_durations')
       .eq('school_name', school)
       .eq('school_year', CURRENT_YEAR)
       .then(({ data }) => {
         setSchoolSchedules(data ?? [])
+        // Toutes les lignes partagent la même valeur — on prend la première non-vide
+        const durations = (data ?? []).find((r) => r.available_slot_durations?.length)?.available_slot_durations ?? [30]
+        setSchoolDurations(durations)
+        // Auto-sélection si une seule durée disponible
+        if (durations.length === 1) {
+          setForm((prev) => ({ ...prev, desired_duration_minutes: durations[0] }))
+        }
         setLoadingSchedules(false)
       })
   }, [form.school_name])
@@ -805,6 +862,7 @@ export default function SondagePage() {
         instrument: form.instrument || null,
         // ?? false : filet de sécurité si une session navigateur a l'ancienne valeur null
         open_to_group: form.open_to_group ?? false,
+        desired_duration_minutes: form.desired_duration_minutes ?? null,
         expectations: form.expectations || null,
       }
       const { error: insertError } = await supabase.from('survey_responses').insert(payload)
@@ -922,7 +980,8 @@ export default function SondagePage() {
     <StepTuteurs        key="t" data={form} onChange={setForm} />,
     <StepDisponibilites key="d" data={form} onChange={setForm}
       schoolSchedules={schoolSchedules} loadingSchedules={loadingSchedules} />,
-    <StepLogistique     key="l" data={form} onChange={setForm} />,
+    <StepLogistique     key="l" data={form} onChange={setForm}
+      availableDurations={schoolDurations} isCesu={form.school_name === 'CESU'} />,
     <StepAttentes       key="a" data={form} onChange={setForm} />,
     <StepInscriptions   key="r" data={form} onChange={setForm} schools={schools}
       suppSchedules={suppSchedules} suppLoading={suppLoading} onSuppSchoolChange={loadSuppSchedule} />,
