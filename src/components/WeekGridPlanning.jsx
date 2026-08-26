@@ -152,9 +152,13 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
   }, [allSchoolNames])
 
   // ── Recherche de cellule sous le pointeur ─────────────────────────────────
+  // elementsFromPoint (pluriel) traverse TOUS les éléments au point donné, dans
+  // l'ordre de rendu (topmost d'abord). Indispensable ici : les tuiles de cours
+  // (zIndex: 10) masquent les cellules [data-slot] à elementFromPoint classique,
+  // ce qui retournait null → grabOffset/updateMove cassés.
   const cellAt = useCallback((x, y) => {
-    const el = document.elementFromPoint(x, y)
-    return el?.closest('[data-slot]') ?? null
+    const elements = document.elementsFromPoint(x, y)
+    return elements.find((el) => el.hasAttribute?.('data-slot')) ?? null
   }, [])
 
   // ── Affichage d'une erreur temporaire ─────────────────────────────────────
@@ -202,11 +206,12 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
 
   // ── Mode B : déplacement d'un cours ──────────────────────────────────────
 
-  const startMove = useCallback((e, lesson, day, startSlot, slotCount) => {
+  // grabOffset : nombre de créneaux entre le haut de la tuile et le point de saisie.
+  // Calculé par l'appelant (onPointerDown) depuis getBoundingClientRect(), puis passé ici.
+  // Ne plus utiliser cellAt ici : la tuile (zIndex 10) masque [data-slot] à elementFromPoint.
+  const startMove = useCallback((e, lesson, day, startSlot, slotCount, grabOffset = 0) => {
     // nonMovable : créneaux école ou tout bloc qu'on veut rendre non-déplaçable
     if (lesson.nonMovable) { onSelectLesson?.(lesson); return }
-    const clickedSlot = parseInt(cellAt(e.clientX, e.clientY)?.dataset.slot ?? startSlot, 10)
-    const grabOffset  = Math.max(0, Math.min(clickedSlot - startSlot, slotCount - 1))
     moveRef.current = {
       pending: true, active: false,
       lesson, origDay: day, origStartSlot: startSlot, slotCount,
@@ -216,7 +221,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
     gridRef.current?.setPointerCapture(e.pointerId)
     // Notifier l'appelant pour qu'il affiche les zones valides (ex. disponibilités élève)
     onDragStart?.(lesson)
-  }, [cellAt, onDragStart])
+  }, [onDragStart])
 
   const updateMove = useCallback((x, y) => {
     const m = moveRef.current
@@ -553,7 +558,16 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                       onPointerDown={(e) => {
                         e.stopPropagation()
                         e.preventDefault()
-                        startMove(e, lesson, day.iso, startSlot, slotCount)
+                        // Offset exact du clic dans la tuile → le cours "suit" le doigt
+                        // et non son bord supérieur. getBoundingClientRect() donne la
+                        // position viewport réelle (scroll inclus), ce que cellAt ne
+                        // pouvait pas fournir (tuile masquait les [data-slot]).
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        const grabOffset = Math.max(0, Math.min(
+                          Math.floor((e.clientY - rect.top) / SLOT_H),
+                          slotCount - 1
+                        ))
+                        startMove(e, lesson, day.iso, startSlot, slotCount, grabOffset)
                       }}
                       title={`${lesson.studentName ?? 'Élève'} — ${lesson.timeLabel} (${lesson.durationMinutes} min)`}
                     >
