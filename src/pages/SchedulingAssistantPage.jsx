@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { Loader2, CalendarDays, AlertCircle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Loader2, CalendarDays, AlertCircle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
 import ScoreBadge from '../components/ScoreBadge'
@@ -8,6 +8,24 @@ import WeekGridPlanning from '../components/WeekGridPlanning'
 import { computeAllProposals, scoreCandidate, parseStartTime, JOURS_FR, timeToMinutes } from '../utils/scoringCreneaux'
 import { currentSchoolYear } from '../services/schools'
 import { fetchReservedSlots } from '../services/reservedSlots'
+
+// ─── Persistance de session (sessionStorage) ──────────────────────────────────
+// Conserve les ajustements manuels (glisser-déposer) entre les changements de vue,
+// sans requête réseau. Aucune donnée sensible — positions de créneaux uniquement.
+const SESSION_KEY_PLANNING = 'planning_intelligent_state'
+
+function lireSession() {
+  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY_PLANNING) ?? 'null') } catch { return null }
+}
+function ecrireSession(proposalOverrides, lockedIds) {
+  try {
+    sessionStorage.setItem(SESSION_KEY_PLANNING, JSON.stringify({
+      proposalOverrides,
+      // Set non sérialisable nativement → tableau
+      lockedIds: lockedIds ? [...lockedIds] : [],
+    }))
+  } catch { /* quota ignoré */ }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -17,7 +35,7 @@ import { fetchReservedSlots } from '../services/reservedSlots'
 async function fetchTeacherProfile(userId) {
   const { data } = await supabase
     .from('profiles')
-    .select('id, school_zone, preferred_days_off, preferred_proximity_day, preferred_proximity_days, home_latitude, home_longitude, poids_regroupement_ecole, poids_adjacence, poids_alternance_debutants, poids_distance, poids_vacances, poids_regroupement_age, ecart_age_proche')
+    .select('id, school_zone, preferred_days_off, preferred_proximity_day, preferred_proximity_days, home_latitude, home_longitude, poids_regroupement_ecole, poids_adjacence, poids_alternance_debutants, poids_distance, poids_vacances, poids_regroupement_age, ecart_age_proche, poids_compacite')
     .eq('id', userId)
     .single()
   // Rétrocompat : preferred_proximity_days (tableau) remplace l'ancien champ texte.
@@ -40,6 +58,8 @@ async function fetchTeacherProfile(userId) {
       poids_vacances:             data?.poids_vacances             ?? null,
       poids_regroupement_age:     data?.poids_regroupement_age     ?? 0,
       ecart_age_proche:           data?.ecart_age_proche           ?? 4,
+      // null = jamais configuré → le moteur l'interprète comme 100 (priorité haute).
+      poids_compacite:            data?.poids_compacite            ?? null,
     },
   }
 }
@@ -72,7 +92,7 @@ function computeWeekDays(offset) {
 
 // ScoreBadge importé depuis components/ScoreBadge.jsx.
 
-function ProposalCard({ response, proposals, onConfirm, confirming, schools = [] }) {
+function ProposalCard({ response, proposals, onConfirm, confirming, schools = [], isLocked = false, onToggleLock }) {
   const [open, setOpen] = useState(false)
   const [chosen, setChosen] = useState(null)
   const [done, setDone] = useState(false)
@@ -120,7 +140,20 @@ function ProposalCard({ response, proposals, onConfirm, confirming, schools = []
               </p>
             )}
           </div>
-          {best && <ScoreBadge score={best.score} />}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Verrou : créneau figé, ignoré par les recalculs automatiques */}
+            {onToggleLock && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onToggleLock(response.id) }}
+                title={isLocked ? 'Déverrouiller ce créneau (le recalcul pourra le modifier)' : 'Verrouiller ce créneau (ne sera pas modifié par les recalculs)'}
+                className={`p-1 rounded-lg transition-colors ${isLocked ? 'text-amber-400 hover:text-amber-300' : 'text-muted hover:text-foreground'}`}
+              >
+                {isLocked ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />}
+              </button>
+            )}
+            {best && <ScoreBadge score={best.score} />}
+          </div>
         </div>
 
         {/* Durée effective affichée — avertissement si hors des durées acceptées par l'école */}
@@ -239,10 +272,29 @@ export default function SchedulingAssistantPage() {
   const [vue, setVue]               = useState('liste')
   // Décalage en semaines par rapport à la semaine courante (0 = semaine en cours)
   const [weekOffset, setWeekOffset] = useState(0)
-  // Positions des propositions modifiées par glisser-déposer : responseId → proposal
-  const [proposalOverrides, setProposalOverrides] = useState({})
+  // Positions des propositions modifiées par glisser-déposer : responseId → proposal.
+  // Restauré depuis sessionStorage au montage pour survivre aux changements de vue.
+  const sessionInit = lireSession()
+  const [proposalOverrides, setProposalOverrides] = useState(sessionInit?.proposalOverrides ?? {})
+  // responseIds verrouillés : jamais modifiés par un recalcul automatique.
+  const [lockedIds, setLockedIds]           = useState(() => new Set(sessionInit?.lockedIds ?? []))
   // ID de la réponse en cours de drag — pour calculer les zones valides à surligner
   const [draggedResponseId, setDraggedResponseId] = useState(null)
+
+  // ── Snapshots de planning provisoire ────────────────────────────────────────
+  const [snapshots, setSnapshots]           = useState([])
+  const [savingSnapshot, setSavingSnapshot] = useState(false)
+  const [savedSnapshotId, setSavedSnapshotId] = useState(null)   // id du dernier snapshot sauvegardé
+  const [showSnapshots, setShowSnapshots]   = useState(false)
+  // Sélection pour "Acter ce planning" : Set de responseId à transformer en vrais cours.
+  const [selectedIds, setSelectedIds]       = useState(new Set())
+  const [actingPlan, setActingPlan]         = useState(false)
+  const [actError, setActError]             = useState('')
+  // Jours sélectionnés pour le recalcul ciblé (tableau de noms JOURS_FR).
+  // Par défaut : tous les jours déverrouillés (null = tous).
+  const [joursARecalculer, setJoursARecalculer] = useState(null)
+  const [showRecalcPanel, setShowRecalcPanel]   = useState(false)
+  const [recalculating, setRecalculating]       = useState(false)
 
   useEffect(() => {
     if (!user?.id) return
@@ -372,6 +424,58 @@ export default function SchedulingAssistantPage() {
     setDraggedResponseId(null)
   }, [])
 
+  // ── Sauvegarde d'un snapshot de planning provisoire en base ──────────────────
+  const handleSaveSnapshot = useCallback(async (nom) => {
+    if (!teacherInfo?.id) return
+    setSavingSnapshot(true)
+    const donnees = {
+      proposalOverrides,
+      // Set non sérialisable → tableau
+      lockedIds: [...lockedIds],
+      responseIds: responses.map((r) => r.id),
+      weekOffset,
+    }
+    const { data, error: err } = await supabase
+      .from('planning_provisoire_snapshots')
+      .insert({ teacher_id: teacherInfo.id, nom: nom || null, donnees })
+      .select('id')
+      .single()
+    setSavingSnapshot(false)
+    if (err) { alert('Erreur lors de la sauvegarde : ' + err.message); return }
+    setSavedSnapshotId(data?.id ?? null)
+    // Recharge la liste pour l'afficher à jour
+    handleLoadSnapshots()
+  }, [teacherInfo, proposalOverrides, lockedIds, responses, weekOffset])
+
+  // ── Chargement de la liste des snapshots existants ───────────────────────────
+  const handleLoadSnapshots = useCallback(async () => {
+    if (!teacherInfo?.id) return
+    const { data } = await supabase
+      .from('planning_provisoire_snapshots')
+      .select('id, nom, date_creation')
+      .eq('teacher_id', teacherInfo.id)
+      .order('date_creation', { ascending: false })
+      .limit(20)
+    setSnapshots(data ?? [])
+    setShowSnapshots(true)
+  }, [teacherInfo])
+
+  // ── Restauration d'un snapshot ───────────────────────────────────────────────
+  const handleRestoreSnapshot = useCallback(async (snapshotId) => {
+    const { data, error: err } = await supabase
+      .from('planning_provisoire_snapshots')
+      .select('donnees')
+      .eq('id', snapshotId)
+      .single()
+    if (err || !data?.donnees) { alert('Impossible de charger ce snapshot.'); return }
+    const overrides = data.donnees.proposalOverrides ?? {}
+    const restoredLocked = new Set(data.donnees.lockedIds ?? [])
+    setProposalOverrides(overrides)
+    setLockedIds(restoredLocked)
+    ecrireSession(overrides, restoredLocked)
+    setShowSnapshots(false)
+  }, [])
+
   /**
    * Faux cours représentant les propositions dans la grille.
    * Chaque proposition est projetée sur le jour correspondant de la semaine affichée
@@ -493,18 +597,120 @@ export default function SchedulingAssistantPage() {
     })
 
     // WeekGridPlanning a déjà vérifié les conflits — result ne devrait pas être null.
-    setProposalOverrides((prev) => ({
-      ...prev,
-      [responseId]: {
-        candidateDate:   newDate,
-        startTime:       newTime,
-        durationMinutes,
-        day:             nomJour,
-        score:           result?.score   ?? 0,
-        reasons:         result?.reasons ?? [],
-      },
-    }))
-  }, [responses, existingLessons, schools, teacherInfo, reservedSlots])
+    setProposalOverrides((prev) => {
+      const next = {
+        ...prev,
+        [responseId]: {
+          candidateDate:   newDate,
+          startTime:       newTime,
+          durationMinutes,
+          day:             nomJour,
+          score:           result?.score   ?? 0,
+          reasons:         result?.reasons ?? [],
+        },
+      }
+      // Persistance immédiate en sessionStorage pour survivre aux changements de vue.
+      ecrireSession(next, lockedIds)
+      return next
+    })
+  }, [responses, existingLessons, schools, teacherInfo, reservedSlots, lockedIds])
+
+  // ── Verrouillage / déverrouillage d'une proposition ────────────────────────
+  const handleToggleLock = useCallback((responseId) => {
+    setLockedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(responseId)) next.delete(responseId)
+      else next.add(responseId)
+      // Persistance immédiate — proposalOverrides inchangés
+      setProposalOverrides((overrides) => {
+        ecrireSession(overrides, next)
+        return overrides
+      })
+      return next
+    })
+  }, [])
+
+  // ── Recalcul ciblé par jour ──────────────────────────────────────────────────
+  /**
+   * Recalcule les propositions non verrouillées dont le jour courant est dans `jours`.
+   * Les propositions verrouillées sont injectées comme cours virtuels pour que le moteur
+   * les respecte en tant que contraintes — elles bloquent d'autres propositions sur ce créneau.
+   */
+  const handleRecalculer = useCallback(() => {
+    if (!teacherInfo) return
+    setRecalculating(true)
+
+    // Jours effectifs : si null (tous cochés) → prendre tous les jours
+    const joursEffectifs = joursARecalculer ?? JOURS_FR.filter((j) => j !== 'Dimanche')
+
+    // Séparer les réponses à recalculer de celles à conserver (verrouillées ou hors jours)
+    const aRecalculer = []
+    const aConserver  = []  // verrouillées ou hors des jours sélectionnés
+
+    for (const r of responses) {
+      const override = proposalOverrides[r.id]
+      const base     = proposalsMap[r.id]?.[0]
+      const proposal = override ?? base
+      const jourActuel = proposal?.day ?? null
+      if (lockedIds.has(r.id) || !joursEffectifs.includes(jourActuel)) {
+        aConserver.push(r)
+      } else {
+        aRecalculer.push(r)
+      }
+    }
+
+    // Cours existants réels + cours virtuels issus des propositions verrouillées
+    const lessonsAvecVerrous = [...existingLessons]
+    for (const r of aConserver) {
+      const override = proposalOverrides[r.id]
+      const base     = proposalsMap[r.id]?.[0]
+      const proposal = override ?? base
+      if (proposal) {
+        lessonsAvecVerrous.push({
+          lessonDate:      proposal.candidateDate,
+          lessonTime:      proposal.startTime,
+          durationMinutes: proposal.durationMinutes,
+        })
+      }
+    }
+
+    const newMap = computeAllProposals({
+      responses:              aRecalculer,
+      existingLessons:        lessonsAvecVerrous,
+      schools,
+      zone:                   teacherInfo.zone               ?? 'B',
+      reservedSlots,
+      preferredDaysOff:       teacherInfo.preferredDaysOff   ?? [],
+      preferredProximityDays: teacherInfo.preferredProximityDays ?? [],
+      teacherHomeLat:         teacherInfo.homeLat            ?? null,
+      teacherHomeLng:         teacherInfo.homeLng            ?? null,
+      scoringWeights:         teacherInfo.scoringWeights     ?? null,
+    })
+
+    // Écraser uniquement les overrides des réponses recalculées
+    setProposalOverrides((prev) => {
+      const next = { ...prev }
+      for (const r of aRecalculer) {
+        const best = newMap[r.id]?.[0]
+        if (best) {
+          next[r.id] = {
+            candidateDate:   best.candidateDate,
+            startTime:       best.startTime,
+            durationMinutes: best.durationMinutes,
+            day:             best.day,
+            score:           best.score,
+            reasons:         best.reasons,
+          }
+        }
+      }
+      ecrireSession(next, lockedIds)
+      return next
+    })
+
+    setRecalculating(false)
+    setShowRecalcPanel(false)
+  }, [teacherInfo, responses, proposalOverrides, proposalsMap, lockedIds, joursARecalculer,
+      existingLessons, schools, reservedSlots])
 
   /**
    * Transforme une proposition acceptée en série de cours hebdomadaires jusqu'à la fin de l'année scolaire.
@@ -552,6 +758,66 @@ export default function SchedulingAssistantPage() {
       return false
     }
   }
+
+  // ── Acter un sous-ensemble de propositions ───────────────────────────────────
+  /**
+   * Transforme les propositions sélectionnées en vrais cours récurrents.
+   * Réutilise la logique de handleConfirm (même table, même format).
+   * Les réponses actées sont retirées de la liste sans rechargement réseau.
+   */
+  const handleActerSelection = useCallback(async () => {
+    if (selectedIds.size === 0) return
+    setActingPlan(true)
+    setActError('')
+    const pad = (n) => String(n).padStart(2, '0')
+    const [, endYear] = currentSchoolYear().split('-').map(Number)
+    const endDate = `${endYear}-06-30`
+    const erreurs = []
+
+    for (const responseId of selectedIds) {
+      const response = responses.find((r) => r.id === responseId)
+      if (!response) continue
+      const proposal = proposalOverrides[responseId] ?? proposalsMap[responseId]?.[0]
+      if (!proposal) continue
+
+      try {
+        const groupId = crypto.randomUUID()
+        const rows = []
+        let current = new Date(proposal.candidateDate + 'T00:00:00')
+        const end   = new Date(endDate + 'T00:00:00')
+        while (current <= end) {
+          const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
+          rows.push({
+            teacher_id:       teacherInfo.id,
+            student_id:       response.student_id,
+            lesson_date:      iso,
+            lesson_time:      proposal.startTime,
+            duration_minutes: proposal.durationMinutes,
+            status:           'planifie',
+            topic:            'Cours de guitare',
+            recurrence_group: groupId,
+          })
+          current.setDate(current.getDate() + 7)
+        }
+        const { error: insErr } = await supabase.from('lessons').insert(rows)
+        if (insErr) throw new Error(insErr.message)
+
+        await supabase
+          .from('survey_responses')
+          .update({ status: 'confirme', assigned_day: proposal.day, assigned_time: proposal.startTime })
+          .eq('id', responseId)
+
+        // Retire la réponse actée sans rechargement réseau
+        setResponses((prev) => prev.filter((r) => r.id !== responseId))
+      } catch (e) {
+        erreurs.push(`${response.first_name || 'Élève'} : ${e.message}`)
+      }
+    }
+
+    setSelectedIds(new Set())
+    setActingPlan(false)
+    if (erreurs.length > 0) setActError('Erreurs : ' + erreurs.join(' | '))
+  }, [selectedIds, responses, proposalOverrides, proposalsMap, teacherInfo])
 
   // ── Label de navigation semaine ────────────────────────────────────────────
   const labelSemaine = useMemo(() => {
@@ -675,6 +941,8 @@ export default function SchedulingAssistantPage() {
                   onConfirm={handleConfirm}
                   confirming={confirming}
                   schools={schools}
+                  isLocked={lockedIds.has(r.id)}
+                  onToggleLock={handleToggleLock}
                 />
               ))}
             </div>
@@ -683,18 +951,157 @@ export default function SchedulingAssistantPage() {
           {/* ── Vue grille ────────────────────────────────────────────────── */}
           {vue === 'grille' && (
             <div className="space-y-6">
-              {/* Légende */}
-              <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block w-3 h-3 rounded-sm border-2 border-dashed border-guitar-400 opacity-70" />
-                  Proposition (déplaçable)
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block w-3 h-3 rounded-sm border-2 border-solid border-muted" />
-                  Cours existant (lecture seule)
-                </span>
-                <span className="text-muted italic">Glissez une proposition pour ajuster son créneau — le score se recalcule aussitôt.</span>
+              {/* Légende + boutons d'action du planning */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-3 h-3 rounded-sm border-2 border-dashed border-guitar-400 opacity-70" />
+                    Proposition (déplaçable)
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-3 h-3 rounded-sm border-2 border-solid border-muted" />
+                    Cours existant (lecture seule)
+                  </span>
+                  <span className="text-muted italic">Glissez une proposition pour ajuster son créneau.</span>
+                </div>
+
+                {/* Actions sur le planning provisoire */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Enregistrer le planning provisoire en base */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nom = prompt('Nom de ce planning (optionnel) :') ?? ''
+                      handleSaveSnapshot(nom)
+                    }}
+                    disabled={savingSnapshot || Object.keys(proposalOverrides).length === 0}
+                    title="Enregistrer l'état actuel des ajustements manuels en base de données"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all disabled:opacity-40"
+                  >
+                    {savingSnapshot ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    Enregistrer
+                  </button>
+
+                  {/* Charger un planning provisoire sauvegardé */}
+                  <button
+                    type="button"
+                    onClick={handleLoadSnapshots}
+                    title="Charger un planning provisoire précédemment sauvegardé"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+                  >
+                    <Bookmark className="w-3.5 h-3.5" />
+                    Reprendre
+                  </button>
+
+                  {/* Recalcul ciblé par jour */}
+                  <button
+                    type="button"
+                    onClick={() => setShowRecalcPanel((v) => !v)}
+                    title="Recalculer les propositions non verrouillées pour les jours sélectionnés"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Recalculer
+                  </button>
+                </div>
               </div>
+
+              {/* Liste des snapshots disponibles — visible après clic sur "Reprendre" */}
+              {showSnapshots && (
+                <div className="glass-panel rounded-xl p-4 space-y-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-medium">Plannings provisoires sauvegardés</p>
+                    <button
+                      type="button"
+                      onClick={() => setShowSnapshots(false)}
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      Fermer
+                    </button>
+                  </div>
+                  {snapshots.length === 0 ? (
+                    <p className="text-xs text-muted-foreground italic">Aucun planning enregistré pour l'instant.</p>
+                  ) : (
+                    snapshots.map((s) => (
+                      <div key={s.id} className="flex items-center justify-between gap-3 py-1.5 border-b border-border-subtle last:border-0">
+                        <div>
+                          <p className="text-sm font-medium">{s.nom || '(sans nom)'}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(s.date_creation).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreSnapshot(s.id)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground transition-all"
+                        >
+                          <BookmarkCheck className="w-3 h-3" />
+                          Charger
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* Panneau de recalcul ciblé — visible après clic sur "Recalculer" */}
+              {showRecalcPanel && (
+                <div className="glass-panel rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-sm font-medium">Recalculer les propositions non verrouillées</p>
+                    <button
+                      type="button"
+                      onClick={() => setShowRecalcPanel(false)}
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      Fermer
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Sélectionnez les jours à recalculer. Les créneaux verrouillés ({lockedIds.size}) ne seront jamais modifiés.
+                  </p>
+                  {/* Sélecteur de jours : Lundi → Samedi (Dimanche exclu par défaut) */}
+                  <div className="flex flex-wrap gap-2">
+                    {['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'].map((jour) => {
+                      const actifs = joursARecalculer ?? ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi']
+                      const estActif = actifs.includes(jour)
+                      return (
+                        <button
+                          key={jour}
+                          type="button"
+                          onClick={() => {
+                            const base = joursARecalculer ?? ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi']
+                            if (estActif) {
+                              const next = base.filter((j) => j !== jour)
+                              setJoursARecalculer(next.length > 0 ? next : base)
+                            } else {
+                              setJoursARecalculer([...base, jour])
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                            estActif
+                              ? 'guitar-gradient text-white border-transparent'
+                              : 'border-border-subtle text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          {jour}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRecalculer}
+                    disabled={recalculating}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl guitar-gradient text-white text-xs font-medium disabled:opacity-40"
+                  >
+                    {recalculating
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <RefreshCw className="w-3.5 h-3.5" />}
+                    Lancer le recalcul
+                  </button>
+                </div>
+              )}
 
               {/* Grille — les propositions y sont affichées en style "envisagé" (bordure pointillée) */}
               <WeekGridPlanning
@@ -710,11 +1117,55 @@ export default function SchedulingAssistantPage() {
                 onDragEnd={handleDragEnd}
               />
 
-              {/* Panneau de confirmation — une ligne par réponse, partage handleConfirm avec la vue liste */}
-              <div className="space-y-2">
-                <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-                  Confirmer un créneau
-                </h2>
+              {/* ── Panneau "Acter ce planning" ──────────────────────────────── */}
+              <div className="space-y-3">
+                {/* En-tête avec compteur et bouton Acter */}
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div>
+                    <h2 className="text-sm font-medium text-foreground">Acter ce planning</h2>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Cochez les élèves à confirmer, puis actez la sélection — les cours récurrents seront créés jusqu'en juin.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Tout sélectionner / tout désélectionner */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const tousIds = responses
+                          .filter((r) => proposalOverrides[r.id] ?? proposalsMap[r.id]?.[0])
+                          .map((r) => r.id)
+                        if (selectedIds.size === tousIds.length) {
+                          setSelectedIds(new Set())
+                        } else {
+                          setSelectedIds(new Set(tousIds))
+                        }
+                      }}
+                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {selectedIds.size > 0 ? 'Tout désélectionner' : 'Tout sélectionner'}
+                    </button>
+
+                    {/* Bouton Acter — actif seulement si au moins un élève sélectionné */}
+                    <button
+                      type="button"
+                      onClick={handleActerSelection}
+                      disabled={actingPlan || selectedIds.size === 0}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl guitar-gradient text-white text-xs font-medium disabled:opacity-40"
+                    >
+                      {actingPlan
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <SquareCheckBig className="w-3.5 h-3.5" />}
+                      Acter ({selectedIds.size})
+                    </button>
+                  </div>
+                </div>
+
+                {actError && (
+                  <p className="text-xs text-guitar-400 px-1">{actError}</p>
+                )}
+
+                {/* Une ligne par réponse : case à cocher + détails de la proposition */}
                 {responses.map((response) => {
                   const override  = proposalOverrides[response.id]
                   const base      = proposalsMap[response.id]?.[0]
@@ -730,12 +1181,27 @@ export default function SchedulingAssistantPage() {
                     ? override.candidateDate
                     : (isoParJour[proposal.day] ?? proposal.candidateDate)
                   const dansLaSemaine = weekDays.some((d) => d.iso === dateAffichee)
+                  const estSelectionne = selectedIds.has(response.id)
 
                   return (
                     <div
                       key={response.id}
-                      className={`glass-panel rounded-xl p-3 flex items-center gap-3 flex-wrap transition-opacity ${dansLaSemaine ? '' : 'opacity-50'}`}
+                      onClick={() => setSelectedIds((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(response.id)) next.delete(response.id)
+                        else next.add(response.id)
+                        return next
+                      })}
+                      className={`glass-panel rounded-xl p-3 flex items-center gap-3 flex-wrap cursor-pointer transition-all select-none
+                        ${dansLaSemaine ? '' : 'opacity-50'}
+                        ${estSelectionne ? 'ring-2 ring-guitar-400/60 bg-guitar-600/5' : 'hover:bg-surface-overlay/30'}`}
                     >
+                      {/* Case à cocher visuelle */}
+                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors
+                        ${estSelectionne ? 'bg-guitar-500 border-guitar-500' : 'border-border'}`}>
+                        {estSelectionne && <Check className="w-2.5 h-2.5 text-white" />}
+                      </div>
+
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">
                           {response.first_name || '—'} {response.last_name || ''}
@@ -744,35 +1210,28 @@ export default function SchedulingAssistantPage() {
                           {proposal.day} · {proposal.startTime} · {proposal.durationMinutes} min
                           {override && <span className="ml-1.5 text-guitar-400">✎ modifié</span>}
                         </p>
-                        {/* Avertissement si l'élève n'a déclaré aucune disponibilité —
-                            le déplacement reste libre mais l'utilisateur est informé */}
                         {!Object.values(response.availabilities ?? {}).some((s) => Array.isArray(s) && s.length > 0) && (
                           <p className="text-[10px] text-amber-400 mt-0.5">
                             Aucune disponibilité connue — déplacement libre
                           </p>
                         )}
-                        {proposal.reasons?.length > 0 && (
-                          <p className="text-[10px] text-muted mt-0.5 truncate">
-                            {proposal.reasons[0]}
+                        {!dansLaSemaine && (
+                          <p className="text-[10px] text-muted mt-0.5 italic">
+                            Naviguez vers la bonne semaine pour voir cette proposition dans la grille
                           </p>
                         )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <ScoreBadge score={proposal.score} />
+                        {/* Verrou — stoppe propagation pour éviter le toggle de sélection */}
                         <button
                           type="button"
-                          onClick={async () => {
-                            const ok = await handleConfirm(response, proposal)
-                            // Retire la réponse confirmée de la liste sans recharger
-                            if (ok) setResponses((prev) => prev.filter((r) => r.id !== response.id))
-                          }}
-                          disabled={confirming || !dansLaSemaine}
-                          title={!dansLaSemaine ? 'Naviguez vers la semaine où se trouve cette proposition pour la confirmer' : undefined}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl guitar-gradient text-white text-xs font-medium disabled:opacity-40"
+                          onClick={(e) => { e.stopPropagation(); handleToggleLock(response.id) }}
+                          title={lockedIds.has(response.id) ? 'Déverrouiller' : 'Verrouiller (ne sera pas recalculé)'}
+                          className={`p-1 rounded-lg transition-colors ${lockedIds.has(response.id) ? 'text-amber-400 hover:text-amber-300' : 'text-muted hover:text-foreground'}`}
                         >
-                          {confirming ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                          Confirmer
+                          {lockedIds.has(response.id) ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />}
                         </button>
+                        <ScoreBadge score={proposal.score} />
                       </div>
                     </div>
                   )

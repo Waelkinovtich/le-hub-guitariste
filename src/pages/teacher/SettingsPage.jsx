@@ -57,7 +57,7 @@ const DEFAULT_PLANNING_WEIGHTS = {
   poids_distance:              100,
   poids_vacances:              100,
   poids_regroupement_age:        0,
-  poids_compacite:               0,
+  poids_compacite:             100,  // NULL en base → 100 par défaut dans le moteur
 }
 
 // Les 5 catégories du score pondéré (voir services/schools.js) — ordre d'affichage
@@ -140,8 +140,16 @@ export default function SettingsPage() {
   const weightsRef = useRef(weights)
 
   // ── Poids des facteurs du Planning intelligent ────────────────────────────
+  // Les valeurs null (jamais configurées) ne doivent pas écraser les défauts —
+  // on garde la valeur DEFAULT_PLANNING_WEIGHTS pour que le slider soit cohérent
+  // avec le comportement réel du moteur (null → valeur par défaut, pas 0).
   const initialPlanningWeights = user?.scoringWeights
-    ? { ...DEFAULT_PLANNING_WEIGHTS, ...user.scoringWeights }
+    ? {
+        ...DEFAULT_PLANNING_WEIGHTS,
+        ...Object.fromEntries(
+          Object.entries(user.scoringWeights).filter(([, v]) => v != null)
+        ),
+      }
     : DEFAULT_PLANNING_WEIGHTS
   const [planningWeights, setPlanningWeightsState] = useState(initialPlanningWeights)
   const [savingPlanningWeights, setSavingPlanningWeights] = useState(false)

@@ -378,7 +378,8 @@ export function scoreCandidate({
   }
 
   // ── Bonus : compacité horaire ─────────────────────────────────────────────
-  const poidsCompacite = w.poids_compacite ?? 0
+  // NULL = jamais configuré → priorité haute par défaut (100). 0 = désactivé explicitement.
+  const poidsCompacite = w.poids_compacite ?? 100
   if (poidsCompacite > 0) {
     const bonusCompacite = calculerScoreCompacite(startMin, endMin, sameDayLessons)
     if (bonusCompacite > 0) {

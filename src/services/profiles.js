@@ -50,7 +50,8 @@ export function mapProfileToUser(profile) {
       poids_vacances:             profile.poids_vacances             ?? null,
       poids_regroupement_age:     profile.poids_regroupement_age     ?? 0,
       ecart_age_proche:           profile.ecart_age_proche           ?? 4,
-      poids_compacite:            profile.poids_compacite            ?? 0,
+      // null = jamais configuré (→ 100 dans le moteur). 0 = désactivé explicitement.
+      poids_compacite:            profile.poids_compacite            ?? null,
     },
   }
 }
