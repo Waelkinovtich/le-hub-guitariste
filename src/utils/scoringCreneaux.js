@@ -212,9 +212,17 @@ export function scoreCandidate({
   const endMin          = startMin + durationMinutes
 
   // ── Conflits stricts : cours élèves existants (retourne null → créneau écarté) ─
-  const sameDayLessons = existingLessons.filter(
-    (l) => (l.lesson_date ?? l.lessonDate) === candidateDate
-  )
+  // Comparaison par jour de semaine (getDay) plutôt que par date ISO exacte :
+  // candidateDate = nextDateForDay() est toujours en semaine N+1, mais les cours
+  // existants sont souvent en semaine N. Sans ça, une proposition Lundi 10h00 (N+1)
+  // ne serait pas bloquée par un cours Lundi 10h00 (N) et chevaucherait visuellement.
+  const jourSemaineCandidat = JOURS_FR.indexOf(day)
+  const sameDayLessons = existingLessons.filter((l) => {
+    const dateStr = l.lesson_date ?? l.lessonDate
+    return dateStr
+      ? new Date(dateStr + 'T12:00:00').getDay() === jourSemaineCandidat
+      : false
+  })
   const hasLessonConflict = sameDayLessons.some((l) => {
     const ls = timeToMinutes(l.lesson_time ?? l.lessonTime ?? '00:00')
     const le = ls + (l.duration_minutes ?? l.durationMinutes ?? 45)
@@ -488,9 +496,17 @@ export function computeProposals({
     if (!Array.isArray(slots) || slots.length === 0) continue
     for (let i = 0; i < slots.length; i++) {
       // Utiliser uniquement le nombre de créneaux correspondant à la durée cible.
-      // Si pas assez de créneaux consécutifs disponibles, sauter ce point de départ.
+      // Si pas assez de créneaux disponibles ou s'ils ne sont pas consécutifs (trous),
+      // sauter ce point de départ.
       const count = targetSlots
       if (i + count > slots.length) continue
+      let consecutive = true
+      for (let j = 1; j < count; j++) {
+        const prevEnd   = timeToMinutes(parseStartTime(slots[i + j - 1])) + 15
+        const nextStart = timeToMinutes(parseStartTime(slots[i + j]))
+        if (nextStart !== prevEnd) { consecutive = false; break }
+      }
+      if (!consecutive) continue
       {
         const result = scoreCandidate({
           day,
