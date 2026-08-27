@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { StickyNote, CalendarDays, Plus, Trash2, Pencil, Check, Loader2, AlertCircle, X, ChevronDown, ChevronUp, Mic, MicOff, Square, Users, FileDown, Download, Music2 } from 'lucide-react'
+import { StickyNote, CalendarDays, Plus, Trash2, Pencil, Check, Loader2, AlertCircle, X, ChevronDown, ChevronUp, Mic, MicOff, Square, Users, FileDown, Download, Music2, ListMusic, Settings2, ArrowUp, ArrowDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import HelpTooltip from '../components/HelpTooltip'
 import DicteeAudio from '../components/DicteeAudio'
-import { exportEventRoutePDF } from '../utils/exportPDF'
+import { exportEventRoutePDF, exportFicheTechniquePDF, exportProgrammeConcertPDF } from '../utils/exportPDF'
 import { useAuth } from '../context/AuthContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -274,6 +274,14 @@ function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
   const [participantIds, setParticipantIds] = useState(null)
   const [saving, setSaving] = useState(false)
 
+  // ── Programme de concert ────────────────────────────────────────────────────
+  const [showProgramPanel, setShowProgramPanel] = useState(false)
+  // null = non chargé, [] = vide, [...] = chargé avec données
+  const [programItems, setProgramItems] = useState(null)
+  const [savingProgram, setSavingProgram] = useState(false)
+  // Formulaire d'ajout d'un item
+  const [newItem, setNewItem] = useState({ titre_piece: '', compositeur: '', student_id: '', duree_minutes: '', note: '' })
+
   // ── Propositions de créneaux de répétition ─────────────────────────────────
   const [showRepetitionPanel, setShowRepetitionPanel] = useState(false)
   // null = non calculé, [] = calculé sans résultat, [...] = propositions triées
@@ -387,6 +395,94 @@ function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
       await fetchRepetitionProposals()
     }
     setShowRepetitionPanel(v => !v)
+  }
+
+  // ── Handlers programme de concert ──────────────────────────────────────────
+
+  const loadProgram = async () => {
+    const { data } = await supabase
+      .from('event_program_items')
+      .select('id, ordre, titre_piece, compositeur, student_id, duree_minutes, note')
+      .eq('event_id', item.id)
+      .order('ordre')
+    setProgramItems(data ?? [])
+  }
+
+  const handleToggleProgramPanel = async () => {
+    if (!showProgramPanel && programItems === null) await loadProgram()
+    setShowProgramPanel((v) => !v)
+  }
+
+  const handleAddProgramItem = async () => {
+    if (!newItem.titre_piece.trim()) return
+    setSavingProgram(true)
+    const ordre = (programItems?.length ?? 0) + 1
+    const { data: { user: authUser } } = await supabase.auth.getUser()
+    const { data: inserted } = await supabase
+      .from('event_program_items')
+      .insert({
+        event_id:      item.id,
+        teacher_id:    authUser.id,
+        ordre,
+        titre_piece:   newItem.titre_piece.trim(),
+        compositeur:   newItem.compositeur.trim() || null,
+        student_id:    newItem.student_id || null,
+        duree_minutes: newItem.duree_minutes ? Number(newItem.duree_minutes) : null,
+        note:          newItem.note.trim() || null,
+      })
+      .select('id, ordre, titre_piece, compositeur, student_id, duree_minutes, note')
+      .single()
+    if (inserted) setProgramItems((prev) => [...(prev ?? []), inserted])
+    setNewItem({ titre_piece: '', compositeur: '', student_id: '', duree_minutes: '', note: '' })
+    setSavingProgram(false)
+  }
+
+  const handleDeleteProgramItem = async (id) => {
+    await supabase.from('event_program_items').delete().eq('id', id)
+    setProgramItems((prev) => {
+      const filtered = prev.filter((i) => i.id !== id)
+      // Renormaliser les ordres
+      return filtered.map((it, idx) => ({ ...it, ordre: idx + 1 }))
+    })
+  }
+
+  const handleMoveProgramItem = async (index, direction) => {
+    if (!programItems) return
+    const newList = [...programItems]
+    const swapIdx = index + direction
+    if (swapIdx < 0 || swapIdx >= newList.length) return
+    ;[newList[index], newList[swapIdx]] = [newList[swapIdx], newList[index]]
+    const renumbered = newList.map((it, idx) => ({ ...it, ordre: idx + 1 }))
+    setProgramItems(renumbered)
+    // Mettre à jour les ordres en base (deux updates)
+    await supabase.from('event_program_items').update({ ordre: renumbered[index].ordre }).eq('id', renumbered[index].id)
+    await supabase.from('event_program_items').update({ ordre: renumbered[swapIdx].ordre }).eq('id', renumbered[swapIdx].id)
+  }
+
+  const handleExportProgramme = () => {
+    if (!programItems) return
+    const items = programItems.map((it) => {
+      const student = schoolStudents.find((s) => s.id === it.student_id)
+      return {
+        ...it,
+        student_name: student ? [(student.first_name || ''), (student.last_name || '')].filter(Boolean).join(' ') : null,
+      }
+    })
+    exportProgrammeConcertPDF({
+      event: item, programItems: items,
+      teacherName: user?.name, teacherAddress: user?.address,
+      teacherPhone: user?.phone, teacherEmail: user?.email,
+    })
+  }
+
+  const handleExportFicheTechnique = () => {
+    if (!participantIds) return
+    const participantDetails = schoolStudents.filter((s) => participantIds.includes(s.id))
+    exportFicheTechniquePDF({
+      event: item, participants: participantDetails,
+      teacherName: user?.name, teacherAddress: user?.address,
+      teacherPhone: user?.phone, teacherEmail: user?.email,
+    })
   }
 
   const handleExportPDF = () => {
@@ -505,7 +601,26 @@ function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
             className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium hover:bg-surface-overlay transition-colors disabled:opacity-40"
           >
             <FileDown className="w-3.5 h-3.5" />
-            Générer la feuille de route
+            Feuille de route
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportFicheTechnique}
+            disabled={!participantIds}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-xs font-medium hover:bg-surface-overlay transition-colors disabled:opacity-40"
+          >
+            <Settings2 className="w-3.5 h-3.5" />
+            Fiche technique
+          </button>
+
+          <button
+            type="button"
+            onClick={handleToggleProgramPanel}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-guitar-600/30 bg-guitar-600/5 text-xs font-medium text-guitar-400 hover:bg-guitar-600/10 transition-colors"
+          >
+            <ListMusic className="w-3.5 h-3.5" />
+            {showProgramPanel ? 'Masquer le programme' : 'Programme de concert'}
           </button>
 
           {/* Créneaux de répétition — seulement si >= 2 participants cochés */}
@@ -582,6 +697,112 @@ function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
                 ))}
               </div>
             )}
+          </div>
+        )}
+        {/* ── Panel programme de concert ── */}
+        {showProgramPanel && (
+          <div className="mt-3 pt-3 border-t border-border-subtle space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-foreground">Programme de concert</p>
+              <button
+                type="button"
+                onClick={handleExportProgramme}
+                disabled={!programItems || programItems.length === 0}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border-subtle text-xs hover:bg-surface-overlay transition-colors disabled:opacity-40"
+              >
+                <FileDown className="w-3 h-3" />
+                Exporter PDF
+              </button>
+            </div>
+
+            {/* Liste des items existants */}
+            {programItems && programItems.length > 0 && (
+              <div className="space-y-1.5">
+                {programItems.map((it, idx) => {
+                  const student = schoolStudents.find((s) => s.id === it.student_id)
+                  return (
+                    <div key={it.id} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle bg-surface text-xs">
+                      <span className="text-muted-foreground w-5 text-center shrink-0">{it.ordre}</span>
+                      <div className="min-w-0 flex-1">
+                        <span className="font-medium">{it.titre_piece}</span>
+                        {it.compositeur && <span className="text-muted-foreground ml-1">— {it.compositeur}</span>}
+                        {student && <span className="text-muted-foreground ml-1">· {student.first_name}</span>}
+                        {it.duree_minutes && <span className="text-muted-foreground ml-1">({it.duree_minutes} min)</span>}
+                      </div>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <button onClick={() => handleMoveProgramItem(idx, -1)} disabled={idx === 0} className="p-0.5 text-muted hover:text-foreground disabled:opacity-30">
+                          <ArrowUp className="w-3 h-3" />
+                        </button>
+                        <button onClick={() => handleMoveProgramItem(idx, 1)} disabled={idx === programItems.length - 1} className="p-0.5 text-muted hover:text-foreground disabled:opacity-30">
+                          <ArrowDown className="w-3 h-3" />
+                        </button>
+                        <button onClick={() => handleDeleteProgramItem(it.id)} className="p-0.5 text-muted hover:text-guitar-400 ml-1">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {programItems !== null && programItems.length === 0 && (
+              <p className="text-xs text-muted-foreground italic">Aucune pièce encore ajoutée.</p>
+            )}
+
+            {/* Formulaire d'ajout */}
+            <div className="space-y-2 pt-1 border-t border-border-subtle">
+              <p className="text-xs text-muted-foreground font-medium">Ajouter une pièce</p>
+              <input
+                value={newItem.titre_piece}
+                onChange={e => setNewItem(p => ({ ...p, titre_piece: e.target.value }))}
+                placeholder="Titre de la pièce *"
+                className="w-full bg-surface border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  value={newItem.compositeur}
+                  onChange={e => setNewItem(p => ({ ...p, compositeur: e.target.value }))}
+                  placeholder="Compositeur"
+                  className="bg-surface border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60"
+                />
+                <select
+                  value={newItem.student_id}
+                  onChange={e => setNewItem(p => ({ ...p, student_id: e.target.value }))}
+                  className="bg-surface border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-guitar-600/60"
+                >
+                  <option value="">— Interprète —</option>
+                  {schoolStudents.map((s) => (
+                    <option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="number"
+                  value={newItem.duree_minutes}
+                  onChange={e => setNewItem(p => ({ ...p, duree_minutes: e.target.value }))}
+                  placeholder="Durée (min)"
+                  min={1}
+                  className="bg-surface border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60"
+                />
+                <input
+                  value={newItem.note}
+                  onChange={e => setNewItem(p => ({ ...p, note: e.target.value }))}
+                  placeholder="Remarque"
+                  className="bg-surface border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleAddProgramItem}
+                disabled={savingProgram || !newItem.titre_piece.trim()}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl guitar-gradient text-white text-xs font-medium disabled:opacity-40"
+              >
+                {savingProgram ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                Ajouter
+              </button>
+            </div>
           </div>
         )}
         </>

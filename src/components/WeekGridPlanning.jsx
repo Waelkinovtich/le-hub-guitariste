@@ -1,7 +1,7 @@
 import { useRef, useState, useMemo, useCallback, useEffect } from 'react'
 import { Trash2, Copy } from 'lucide-react'
 import { updateLesson } from '../services/lessons'
-import { getSchoolColor } from '../utils/schoolColors'
+import { getSchoolColor, SCHOOL_COLOR_DEFAULT } from '../utils/schoolColors'
 import DeleteLessonModal from './DeleteLessonModal'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -420,7 +420,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   const rsSlots  = durationToSlots(rs.dureeMinutes)
                   const rsColor  = rs.schoolName
                     ? getSchoolColor(rs.schoolName, allSchoolNames)
-                    : '#6b7280'
+                    : SCHOOL_COLOR_DEFAULT
                   if (rsStart < 0 || rsStart >= TOTAL_SLOTS) return null
                   return (
                     <div
@@ -513,7 +513,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                 {movePreview?.day === day.iso && (() => {
                   const { startSlot, slotCount, lessonId } = movePreview
                   const lesson = localLessons.find((l) => l.id === lessonId)
-                  const color  = lesson ? lessonColor(lesson) : '#6b7280'
+                  const color  = lesson ? lessonColor(lesson) : SCHOOL_COLOR_DEFAULT
                   return (
                     <div
                       style={{

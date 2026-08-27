@@ -234,10 +234,19 @@ export function scoreCandidate({
   })
   if (hasReservedConflict) return null
 
-  // ── Hard-exclude : vacances scolaires ────────────────────────────────────────
-  // Les vacances sont un blocage structurel (l'école est fermée) — retourne null
-  // plutôt qu'une pénalité de score, pour ne jamais proposer un créneau en vacances.
-  if (isVacances(candidateDate, zone)) return null
+  const w = scoringWeights ?? {}
+
+  // ── Pénalité douce : vacances scolaires ──────────────────────────────────────
+  // Les vacances ne bloquent pas structurellement (certains profs enseignent en vacances).
+  // poids_vacances = 0 → ignoré, 100 → pénalité pleine de -2 pts.
+  const vac = isVacances(candidateDate, zone)
+  if (vac) {
+    const s = appliquerPoids(SCORE_VACANCES, w.poids_vacances)
+    if (s !== 0) {
+      score += s
+      reasons.push(`${s.toFixed(2).replace(/\.?0+$/, '')} : période de vacances (${vac.label})`)
+    }
+  }
 
   // ── Hard-exclude : hors de la plage scolaire de l'école ──────────────────────
   // date_reprise_cours et date_fin_cours définissent la fenêtre réelle de l'année.
@@ -248,8 +257,6 @@ export function scoreCandidate({
     if (schoolInfo.date_reprise_cours && candidateDate < schoolInfo.date_reprise_cours) return null
     if (schoolInfo.date_fin_cours     && candidateDate > schoolInfo.date_fin_cours)     return null
   }
-
-  const w = scoringWeights ?? {}
 
   // ── Bonus : même école ce jour ────────────────────────────────────────────
   // schoolName et schoolInfo déjà calculés dans le bloc hard-exclude ci-dessus
@@ -469,15 +476,22 @@ export function computeProposals({
   teacherHomeLat = null, teacherHomeLng = null,
   scoringWeights = null,
 }) {
+  // Durée cible : contexte élève > sondage > défaut 30 min.
+  // effective_duration_minutes est calculé dans SchedulingAssistantPage avant l'appel.
+  const targetMinutes = response.effective_duration_minutes ?? response.desired_duration_minutes ?? 30
+  const targetSlots   = Math.max(1, Math.round(targetMinutes / 15))
+
   const avail = response.availabilities ?? {}
   const candidates = []
 
   for (const [day, slots] of Object.entries(avail)) {
     if (!Array.isArray(slots) || slots.length === 0) continue
     for (let i = 0; i < slots.length; i++) {
-      // Tenter 1 à 4 créneaux consécutifs de 15 min (15, 30, 45, 60 min)
-      const maxSlots = Math.min(4, slots.length - i)
-      for (let count = 1; count <= maxSlots; count++) {
+      // Utiliser uniquement le nombre de créneaux correspondant à la durée cible.
+      // Si pas assez de créneaux consécutifs disponibles, sauter ce point de départ.
+      const count = targetSlots
+      if (i + count > slots.length) continue
+      {
         const result = scoreCandidate({
           day,
           slot: slots[i],

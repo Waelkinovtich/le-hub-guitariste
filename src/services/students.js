@@ -96,11 +96,20 @@ export async function unarchiveStudent(studentId) {
 export async function fetchStudentContexts(studentId) {
   const { data, error } = await supabase
     .from('student_contexts')
-    .select('id, context_type, school_id, school_name, hourly_rate, payer_student_id, created_at')
+    .select('id, context_type, school_id, school_name, hourly_rate, payer_student_id, duree_cours_minutes, created_at')
     .eq('student_id', studentId)
     .order('created_at')
   if (error) throw new Error(error.message)
   return data ?? []
+}
+
+/** Met à jour la durée de cours d'un contexte élève. */
+export async function updateStudentContextDuration(contextId, dureeMinutes) {
+  const { error } = await supabase
+    .from('student_contexts')
+    .update({ duree_cours_minutes: dureeMinutes ?? null })
+    .eq('id', contextId)
+  if (error) throw new Error(error.message)
 }
 
 /**

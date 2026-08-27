@@ -119,15 +119,13 @@ export function getCurrentPériode(zone, dateStr) {
 }
 
 // ─── Métadonnées visuelles des vacances ───────────────────────────────────────
-// Clés = noms bruts utilisés dans getVacances() ci-dessous.
-// Note : 'Noel' et 'Ete' sont sans accent pour conserver la compatibilité avec
-// les références existantes à ces clés dans d'autres fichiers.
+// Clés = noms utilisés dans getVacances() et le tableau `noms` ci-dessous.
 export const VACANCES_META = {
   'Toussaint': { emoji: '🎃', color: '#f97316', label: 'Vacances de la Toussaint' },
-  'Noel':      { emoji: '🎄', color: '#16a34a', label: 'Vacances de Noël' },
+  'Noël':      { emoji: '🎄', color: '#16a34a', label: 'Vacances de Noël' },
   'Hiver':     { emoji: '❄️',  color: '#38bdf8', label: "Vacances d'hiver" },
   'Printemps': { emoji: '🌸', color: '#a3e635', label: 'Vacances de printemps' },
-  'Ete':       { emoji: '☀️',  color: '#facc15', label: "Vacances d'été" },
+  'Été':       { emoji: '☀️',  color: '#facc15', label: "Vacances d'été" },
 }
 
 // ─── Jours fériés ─────────────────────────────────────────────────────────────
@@ -136,7 +134,7 @@ export const JOURS_FERIES = [
   // 2025-2026
   { date: '2025-11-01', label: 'Toussaint',         emoji: '🎃' },
   { date: '2025-11-11', label: 'Armistice',          emoji: '🕊' },
-  { date: '2025-12-25', label: 'Noel',               emoji: '🎄' },
+  { date: '2025-12-25', label: 'Noël',               emoji: '🎄' },
   { date: '2026-01-01', label: 'Jour de l an',       emoji: '🎆' },
   { date: '2026-04-06', label: 'Lundi de Paques',    emoji: '🐣' },
   { date: '2026-05-01', label: 'Fete du Travail',    emoji: '🛠' },
@@ -148,7 +146,7 @@ export const JOURS_FERIES = [
   // 2026-2027
   { date: '2026-11-01', label: 'Toussaint',         emoji: '🎃' },
   { date: '2026-11-11', label: 'Armistice',          emoji: '🕊' },
-  { date: '2026-12-25', label: 'Noel',               emoji: '🎄' },
+  { date: '2026-12-25', label: 'Noël',               emoji: '🎄' },
   { date: '2027-01-01', label: 'Jour de l an',       emoji: '🎆' },
   { date: '2027-03-29', label: 'Lundi de Paques',    emoji: '🐣' }, // Pâques 2027 : 28 mars
   { date: '2027-05-01', label: 'Fete du Travail',    emoji: '🛠' },
@@ -160,7 +158,7 @@ export const JOURS_FERIES = [
   // 2027-2028
   { date: '2027-11-01', label: 'Toussaint',         emoji: '🎃' },
   { date: '2027-11-11', label: 'Armistice',          emoji: '🕊' },
-  { date: '2027-12-25', label: 'Noel',               emoji: '🎄' },
+  { date: '2027-12-25', label: 'Noël',               emoji: '🎄' },
   { date: '2028-01-01', label: 'Jour de l an',       emoji: '🎆' },
   { date: '2028-04-17', label: 'Lundi de Paques',    emoji: '🐣' }, // Pâques 2028 : 16 avril
   { date: '2028-05-01', label: 'Fete du Travail',    emoji: '🛠' },
@@ -173,11 +171,11 @@ export const JOURS_FERIES = [
 
 // Calcule les périodes de vacances comme les intervalles entre périodes de cours.
 // L'été inter-annuel (entre la dernière période d'une année et la première de la
-// suivante) est nommé 'Ete' — nom de position dans le cycle de 5 vacances.
+// suivante) est nommé 'Été' — nom de position dans le cycle de 5 vacances.
 export function getVacances(zone) {
   const périodes = getPériodes(zone)
   const vacances = []
-  const noms = ['Toussaint', 'Noel', 'Hiver', 'Printemps', 'Ete']
+  const noms = ['Toussaint', 'Noël', 'Hiver', 'Printemps', 'Été']
   for (let i = 0; i < périodes.length - 1; i++) {
     const debut = new Date(périodes[i].fin)
     debut.setDate(debut.getDate() + 1)
@@ -186,7 +184,7 @@ export function getVacances(zone) {
     const pad = (n) => String(n).padStart(2, '0')
     const toISO = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
     const nom = noms[i % noms.length] // modulo : cycle sur les 5 noms d'une année à l'autre
-    const meta = VACANCES_META[nom] ?? VACANCES_META['Ete']
+    const meta = VACANCES_META[nom] ?? VACANCES_META['Été']
     vacances.push({ nom, label: meta.label, emoji: meta.emoji, color: meta.color, debut: toISO(debut), fin: toISO(fin) })
   }
   return vacances

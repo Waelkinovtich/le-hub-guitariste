@@ -6,6 +6,7 @@ import { useFetch } from '../../hooks/useFetch'
 import {
   fetchTeacherStudents, deleteStudent, fetchSchoolNames,
   fetchStudentContexts, fetchStudentsPaidByStudent,
+  updateStudentContextDuration,
 } from '../../services/students'
 import { supabase } from '../../lib/supabase'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
@@ -354,6 +355,9 @@ function Section({ title, children, help }) {
 const CTX_COLORS = { ecole: '#7c3aed', cesu: '#dc2626' }
 const CTX_LABELS = { ecole: 'École de musique', cesu: 'Cours particulier (CESU)' }
 
+// Durées de cours proposables (en minutes). Source : grilles horaires standard.
+const DUREES_COURS = [15, 30, 45, 60, 90, 120]
+
 const payeurLabelReadOnly = (ctx, students) => {
   if (ctx.context_type !== 'cesu') return null
   if (ctx.payer_student_id) {
@@ -479,7 +483,7 @@ export default function StudentDetailPage() {
             {contexts.map((ctx) => {
               const pLabel = payeurLabelReadOnly(ctx, allStudents ?? [])
               return (
-                <div key={ctx.id} className="p-3 rounded-xl bg-surface-raised border border-border-subtle space-y-1">
+                <div key={ctx.id} className="p-3 rounded-xl bg-surface-raised border border-border-subtle space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-medium">{CTX_LABELS[ctx.context_type] ?? ctx.context_type}</span>
                     {ctx.context_type === 'ecole' && ctx.school_name && (
@@ -492,6 +496,28 @@ export default function StudentDetailPage() {
                     )}
                   </div>
                   {pLabel && <p className="text-xs text-muted-foreground">{pLabel}</p>}
+                  {/* Durée de cours — prime sur la durée déclarée dans le sondage */}
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-muted-foreground shrink-0">Durée de cours</label>
+                    <select
+                      className="text-xs border border-border-subtle rounded-lg px-2 py-1 bg-surface"
+                      value={ctx.duree_cours_minutes ?? ''}
+                      onChange={async (e) => {
+                        const val = e.target.value === '' ? null : Number(e.target.value)
+                        try {
+                          await updateStudentContextDuration(ctx.id, val)
+                          setContexts((prev) => prev.map((c) => c.id === ctx.id ? { ...c, duree_cours_minutes: val } : c))
+                        } catch (err) {
+                          alert('Erreur : ' + err.message)
+                        }
+                      }}
+                    >
+                      <option value="">— selon le sondage —</option>
+                      {DUREES_COURS.map((d) => (
+                        <option key={d} value={d}>{d} min</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               )
             })}

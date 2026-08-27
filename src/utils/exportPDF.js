@@ -2,6 +2,15 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { LESSON_STATUSES } from './lessonStatus'
 
+// ─── Constantes de mise en page PDF ──────────────────────────────────────────
+// Source : charte graphique interne — unités en points (pt), format A4.
+const PDF_MARGIN_X    = 14   // marge gauche/droite de tout le document
+const PDF_HEADER_Y    = 18   // position Y de départ de l'en-tête
+const PDF_FONT_TITLE  = 15   // taille du titre principal (nom du document)
+const PDF_FONT_NORMAL = 10   // taille du texte courant (métadonnées, corps)
+const PDF_FONT_SMALL  =  9   // taille du texte secondaire (tableaux, récapitulatifs)
+const PDF_LINE_H      =  7   // interligne standard entre deux lignes de texte
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtDate(dateStr) {
@@ -38,22 +47,22 @@ const STATUS_LABELS = LESSON_STATUSES.reduce((acc, s) => {
 // Les appelants existants (émargement, feuilles de route) ne le passent pas —
 // leur rendu reste donc strictement identique.
 function drawProfessionalHeader(doc, { teacherName, teacherPhone, teacherAddress, teacherEmail, documentTitle }) {
-  doc.setFontSize(15)
+  doc.setFontSize(PDF_FONT_TITLE)
   doc.setTextColor(192, 57, 43)
-  doc.text(teacherName || 'Professeur de guitare', 14, 18)
+  doc.text(teacherName || 'Professeur de guitare', PDF_MARGIN_X, PDF_HEADER_Y)
 
-  doc.setFontSize(9)
+  doc.setFontSize(PDF_FONT_SMALL)
   doc.setTextColor(100, 100, 100)
-  let y = 24
+  let y = PDF_HEADER_Y + 6
 
   if (teacherAddress) {
-    doc.text(teacherAddress, 14, y)
+    doc.text(teacherAddress, PDF_MARGIN_X, y)
     y += 6
   }
 
   const contact = [teacherPhone, teacherEmail].filter(Boolean).join('  •  ')
   if (contact) {
-    doc.text(contact, 14, y)
+    doc.text(contact, PDF_MARGIN_X, y)
     y += 6
   }
 
@@ -61,7 +70,7 @@ function drawProfessionalHeader(doc, { teacherName, teacherPhone, teacherAddress
   const titleY = y + 4
   doc.setFontSize(13)
   doc.setTextColor(0, 0, 0)
-  doc.text(documentTitle, 14, titleY)
+  doc.text(documentTitle, PDF_MARGIN_X, titleY)
 
   return titleY
 }
@@ -191,6 +200,159 @@ export function exportEventRoutePDF({ event, participants, teacherName, teacherA
   const safeTitre = toSafeFilename(event.title)
   const safeDate  = (event.event_date || '').replace(/-/g, '')
   doc.save('feuille-de-route-' + safeTitre + (safeDate ? '-' + safeDate : '') + '.pdf')
+}
+
+// ─── Fiche technique événement ────────────────────────────────────────────────
+
+/**
+ * Génère et télécharge la fiche technique d'un événement scolaire.
+ * Inclut les informations logistiques de base et la liste des participants.
+ *
+ * @param {object} event        - Ligne school_notes_events
+ * @param {Array}  participants - Élèves sélectionnés
+ * @param {string} teacherName / teacherPhone / teacherAddress / teacherEmail
+ */
+export function exportFicheTechniquePDF({ event, participants, teacherName, teacherAddress, teacherPhone, teacherEmail }) {
+  const doc = new jsPDF()
+
+  let y = drawProfessionalHeader(doc, {
+    teacherName, teacherAddress, teacherPhone, teacherEmail,
+    documentTitle: 'Fiche technique',
+  })
+  y += 10
+
+  doc.setFontSize(10)
+  doc.setTextColor(100, 100, 100)
+  doc.text('Événement : ' + (event.title || '—'), 14, y); y += 7
+  doc.text('École : '     + (event.school_name || '—'), 14, y); y += 7
+  doc.text('Date : '      + fmtDate(event.event_date), 14, y); y += 7
+  doc.text('Nombre de participants : ' + participants.length, 14, y); y += 7
+  doc.text('Généré le : ' + new Date().toLocaleDateString('fr-FR'), 14, y); y += 10
+
+  // ── Besoins matériels standard ────────────────────────────────────────────
+  doc.setFontSize(11)
+  doc.setTextColor(60, 60, 60)
+  doc.setFont(undefined, 'bold')
+  doc.text('Besoins matériels', 14, y); y += 7
+  doc.setFont(undefined, 'normal')
+
+  const materielRows = [
+    ['Chaises (interprètes)', String(participants.length), ''],
+    ['Chaises (public)', '—', 'À préciser selon la salle'],
+    ['Pupitres / porte-partitions', String(participants.length), ''],
+    ['Système de sonorisation', '—', 'Selon la salle'],
+    ['Micro(s) / DI box', '—', 'Selon le programme'],
+    ['Tables pour instruments', '—', ''],
+  ]
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Élément', 'Quantité', 'Remarque']],
+    body: materielRows,
+    headStyles: { fillColor: [192, 57, 43], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [245, 245, 245] },
+    styles: { fontSize: 9, cellPadding: 3 },
+    columnStyles: { 0: { cellWidth: 80 }, 1: { cellWidth: 25, halign: 'center' } },
+  })
+
+  y = doc.lastAutoTable.finalY + 10
+
+  // ── Liste des participants ────────────────────────────────────────────────
+  doc.setFontSize(11)
+  doc.setTextColor(60, 60, 60)
+  doc.setFont(undefined, 'bold')
+  doc.text('Participants (' + participants.length + ')', 14, y); y += 4
+  doc.setFont(undefined, 'normal')
+
+  const partRows = participants.map((p) => [
+    [(p.first_name || ''), (p.last_name || '')].filter(Boolean).join(' '),
+    p.phone || '—',
+  ])
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Nom', 'Téléphone']],
+    body: partRows.length > 0 ? partRows : [['Aucun participant sélectionné', '']],
+    headStyles: { fillColor: [192, 57, 43], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [245, 245, 245] },
+    styles: { fontSize: 9, cellPadding: 3 },
+  })
+
+  const safeTitre = toSafeFilename(event.title)
+  const safeDate  = (event.event_date || '').replace(/-/g, '')
+  doc.save('fiche-technique-' + safeTitre + (safeDate ? '-' + safeDate : '') + '.pdf')
+}
+
+// ─── Programme de concert ─────────────────────────────────────────────────────
+
+/**
+ * Génère et télécharge le programme de concert d'un événement scolaire.
+ *
+ * @param {object} event        - Ligne school_notes_events
+ * @param {Array}  programItems - Items ordonnés : { ordre, titre_piece, compositeur, student_name, duree_minutes, note }
+ * @param {string} teacherName / teacherPhone / teacherAddress / teacherEmail
+ */
+export function exportProgrammeConcertPDF({ event, programItems, teacherName, teacherAddress, teacherPhone, teacherEmail }) {
+  const doc = new jsPDF()
+
+  let y = drawProfessionalHeader(doc, {
+    teacherName, teacherAddress, teacherPhone, teacherEmail,
+    documentTitle: 'Programme de concert',
+  })
+  y += 10
+
+  doc.setFontSize(14)
+  doc.setTextColor(60, 60, 60)
+  doc.setFont(undefined, 'bold')
+  doc.text(event.title || 'Concert', 14, y); y += 8
+  doc.setFont(undefined, 'normal')
+
+  doc.setFontSize(10)
+  doc.setTextColor(100, 100, 100)
+  if (event.school_name) { doc.text(event.school_name, 14, y); y += 6 }
+  doc.text(fmtDate(event.event_date), 14, y); y += 10
+
+  if (event.content) {
+    const lines = doc.splitTextToSize(event.content, 180)
+    doc.text(lines, 14, y)
+    y += lines.length * 5 + 8
+  }
+
+  // ── Tableau du programme ──────────────────────────────────────────────────
+  const rows = programItems.map((item) => [
+    String(item.ordre),
+    item.titre_piece || '—',
+    item.compositeur || '—',
+    item.student_name || '—',
+    item.duree_minutes ? item.duree_minutes + ' min' : '—',
+    item.note || '',
+  ])
+
+  autoTable(doc, {
+    startY: y,
+    head: [['N°', 'Pièce', 'Compositeur', 'Interprète', 'Durée', 'Remarque']],
+    body: rows.length > 0 ? rows : [['—', 'Programme vide', '', '', '', '']],
+    headStyles: { fillColor: [192, 57, 43], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [245, 245, 245] },
+    styles: { fontSize: 9, cellPadding: 3 },
+    columnStyles: {
+      0: { cellWidth: 10, halign: 'center' },
+      4: { cellWidth: 18, halign: 'center' },
+    },
+  })
+
+  // Durée totale
+  const dureeTotal = programItems.reduce((s, i) => s + (i.duree_minutes ?? 0), 0)
+  if (dureeTotal > 0) {
+    const finalY = doc.lastAutoTable.finalY + 6
+    doc.setFontSize(9)
+    doc.setTextColor(100, 100, 100)
+    doc.text('Durée totale estimée : ' + dureeTotal + ' min', 14, finalY)
+  }
+
+  const safeTitre = toSafeFilename(event.title)
+  const safeDate  = (event.event_date || '').replace(/-/g, '')
+  doc.save('programme-concert-' + safeTitre + (safeDate ? '-' + safeDate : '') + '.pdf')
 }
 
 // ─── Déplacements professionnels ──────────────────────────────────────────────

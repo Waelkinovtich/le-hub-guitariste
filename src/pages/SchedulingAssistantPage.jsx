@@ -72,11 +72,18 @@ function computeWeekDays(offset) {
 
 // ScoreBadge importé depuis components/ScoreBadge.jsx.
 
-function ProposalCard({ response, proposals, onConfirm, confirming }) {
+function ProposalCard({ response, proposals, onConfirm, confirming, schools = [] }) {
   const [open, setOpen] = useState(false)
   const [chosen, setChosen] = useState(null)
   const [done, setDone] = useState(false)
   const best = proposals[0]
+
+  // Avertissement : la durée effective n'est pas dans les durées disponibles de l'école.
+  const effectiveDuration = response.effective_duration_minutes ?? 30
+  const schoolInfo = schools.find((s) => s.name === response.school_name)
+  const durationNotAvailable =
+    schoolInfo?.available_slot_durations?.length > 0 &&
+    !schoolInfo.available_slot_durations.includes(effectiveDuration)
 
   const handleAccept = async (proposal) => {
     if (!onConfirm) return
@@ -115,6 +122,17 @@ function ProposalCard({ response, proposals, onConfirm, confirming }) {
           </div>
           {best && <ScoreBadge score={best.score} />}
         </div>
+
+        {/* Durée effective affichée — avertissement si hors des durées acceptées par l'école */}
+        <p className="text-xs text-muted-foreground mt-1">
+          Durée visée : <span className="font-medium">{effectiveDuration} min</span>
+          {durationNotAvailable && (
+            <span className="ml-2 text-amber-400">
+              ⚠ durée non disponible dans les créneaux de {response.school_name}
+              {schoolInfo?.available_slot_durations && ` (disponibles : ${schoolInfo.available_slot_durations.join(', ')} min)`}
+            </span>
+          )}
+        </p>
 
         {proposals.length === 0 ? (
           <p className="mt-3 text-xs text-muted-foreground italic">Aucun créneau compatible trouvé dans les disponibilités.</p>
@@ -241,12 +259,39 @@ export default function SchedulingAssistantPage() {
         const [respRes, lessonsRes, schoolsRes, reservedSlotsData] = await Promise.all([
           supabase.from('survey_responses').select('*').neq('status', 'confirme').order('submitted_at', { ascending: false }),
           supabase.from('lessons').select('id, lesson_date, lesson_time, duration_minutes, student_id, students(school_name, level)').eq('teacher_id', tInfo.id).gte('lesson_date', today).lte('lesson_date', inFourWeeks),
-          // latitude + longitude pour le bonus de proximité domicile
-          supabase.from('schools').select('id, name, current_weekly_hours, desired_weekly_hours, latitude, longitude').eq('teacher_id', tInfo.id),
+          // latitude + longitude pour le bonus de proximité domicile + durées de créneaux disponibles
+          supabase.from('schools').select('id, name, current_weekly_hours, desired_weekly_hours, latitude, longitude, available_slot_durations').eq('teacher_id', tInfo.id),
           fetchReservedSlots(tInfo.id),
         ])
 
         if (respRes.error) throw new Error(respRes.error.message)
+
+        const rawResponses = respRes.data ?? []
+
+        // Charger les contextes élèves pour récupérer la durée de cours convenue.
+        // Un contexte par (student_id, school_name) — on cherche celui de l'école du sondage.
+        const studentIds = [...new Set(rawResponses.map((r) => r.student_id).filter(Boolean))]
+        let contextsMap = {}
+        if (studentIds.length > 0) {
+          const { data: ctxData } = await supabase
+            .from('student_contexts')
+            .select('student_id, school_name, duree_cours_minutes')
+            .in('student_id', studentIds)
+          ;(ctxData ?? []).forEach((c) => {
+            const key = `${c.student_id}|${c.school_name ?? ''}`
+            contextsMap[key] = c.duree_cours_minutes
+          })
+        }
+
+        // Enrichir chaque réponse avec la durée effective (priorité : contexte > sondage > 30).
+        const enrichedResponses = rawResponses.map((r) => {
+          const ctxKey = `${r.student_id ?? ''}|${r.school_name ?? ''}`
+          const contextDuree = contextsMap[ctxKey] ?? null
+          return {
+            ...r,
+            effective_duration_minutes: contextDuree ?? r.desired_duration_minutes ?? 30,
+          }
+        })
 
         const mappedLessons = (lessonsRes.data ?? []).map((l) => ({
           ...l,
@@ -258,7 +303,7 @@ export default function SchedulingAssistantPage() {
           studentName:     null,  // non affiché dans la grille — ce sont les cours existants en fond
         }))
 
-        setResponses(respRes.data ?? [])
+        setResponses(enrichedResponses)
         setExistingLessons(mappedLessons)
         setSchools(schoolsRes.data ?? [])
         setReservedSlots(reservedSlotsData)
@@ -629,6 +674,7 @@ export default function SchedulingAssistantPage() {
                   proposals={proposalsMap[r.id] ?? []}
                   onConfirm={handleConfirm}
                   confirming={confirming}
+                  schools={schools}
                 />
               ))}
             </div>

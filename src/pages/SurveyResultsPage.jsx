@@ -59,10 +59,32 @@ function Divider() {
 
 // ─── Vue détail ───────────────────────────────────────────────────────────────
 
+// Durées proposables dans le sondage (en minutes). Source : grilles standard.
+const DUREES_SONDAGE = [15, 30, 45, 60, 90, 120]
+
 function DetailView({ response, onBack }) {
   const availabilities = fmtAvailabilities(response.availabilities)
   const hasGuardian1 = response.guardian1_name || response.guardian1_phone || response.guardian1_email
   const hasGuardian2 = response.guardian2_name || response.guardian2_phone || response.guardian2_email
+  const [desiredDuration, setDesiredDuration] = useState(response.desired_duration_minutes ?? null)
+  const [savingDuration, setSavingDuration] = useState(false)
+
+  const handleDurationChange = async (val) => {
+    const parsed = val === '' ? null : Number(val)
+    setDesiredDuration(parsed)
+    setSavingDuration(true)
+    try {
+      const { error } = await supabase
+        .from('survey_responses')
+        .update({ desired_duration_minutes: parsed })
+        .eq('id', response.id)
+      if (error) throw new Error(error.message)
+    } catch (e) {
+      alert('Erreur : ' + e.message)
+    } finally {
+      setSavingDuration(false)
+    }
+  }
 
   return (
     <div className="p-6 max-w-2xl">
@@ -109,6 +131,29 @@ function DetailView({ response, onBack }) {
         <Section title="Pratique">
           <InfoRow icon={Guitar} label="Instrument"           value={response.instrument} />
           <InfoRow icon={Users}  label="Cours collectifs"     value={response.open_to_group === true ? 'Oui' : response.open_to_group === false ? 'Non' : null} />
+          {/* Durée souhaitée — modifiable directement pour affiner la proposition du Planning intelligent */}
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-surface-overlay border border-border flex items-center justify-center flex-shrink-0 mt-0.5">
+              <Clock className="w-4 h-4 text-muted" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Durée de cours souhaitée</p>
+              <div className="flex items-center gap-2">
+                <select
+                  className="text-sm border border-border-subtle rounded-lg px-2 py-1 bg-surface"
+                  value={desiredDuration ?? ''}
+                  onChange={(e) => handleDurationChange(e.target.value)}
+                  disabled={savingDuration}
+                >
+                  <option value="">— non précisée —</option>
+                  {DUREES_SONDAGE.map((d) => (
+                    <option key={d} value={d}>{d} min</option>
+                  ))}
+                </select>
+                {savingDuration && <Loader2 className="w-3 h-3 animate-spin text-muted" />}
+              </div>
+            </div>
+          </div>
         </Section>
 
         {(hasGuardian1 || hasGuardian2) && (
