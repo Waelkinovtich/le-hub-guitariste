@@ -45,10 +45,27 @@ async function query(path, params = {}) {
 
 // ─── Reproduction de la logique computeProposals (version allégée) ───────────
 
+const JOURS_FR = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi']
+
 function parseStartTime(slot) { return slot.split('–')[0].trim() }
 function timeToMinutes(t) {
   const [h, m] = (t ?? '00:00').split(':').map(Number)
   return h * 60 + (m || 0)
+}
+
+// Reproduit nextDateForDayAfter de scoringCreneaux.js
+function nextDateForDayAfter(dayName, minDateISO) {
+  const target = JOURS_FR.indexOf(dayName)
+  const today  = new Date()
+  const d      = new Date(today)
+  let diff     = target - today.getDay()
+  if (diff <= 0) diff += 7
+  d.setDate(today.getDate() + diff)
+  if (minDateISO) {
+    const min = new Date(minDateISO + 'T12:00:00')
+    while (d < min) d.setDate(d.getDate() + 7)
+  }
+  return d.toISOString().slice(0, 10)
 }
 
 function countCandidates(response) {
@@ -74,6 +91,21 @@ function countCandidates(response) {
   return totalCandidats
 }
 
+// Vérifie si tous les créneaux d'une réponse tombent avant la date de reprise de l'école.
+// Retourne la date candidate (première occurrence valide) pour chaque jour, ou null si bloqué.
+function diagDateReprise(response, schoolsMap) {
+  const avail      = response.availabilities ?? {}
+  const schoolInfo = schoolsMap[response.school_name ?? ''] ?? null
+  if (!schoolInfo?.date_reprise_cours) return null  // pas de contrainte → pas de problème
+  const reprise = schoolInfo.date_reprise_cours
+  const bloquesParReprise = []
+  for (const day of Object.keys(avail)) {
+    const candidateDate = nextDateForDayAfter(day, null)  // date sans ajustement
+    if (candidateDate < reprise) bloquesParReprise.push({ day, candidateDate, reprise })
+  }
+  return bloquesParReprise.length > 0 ? { reprise, bloquesParReprise } : null
+}
+
 // ─── Rapport ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -81,6 +113,14 @@ async function main() {
   console.log('Heure :', new Date().toLocaleString('fr-FR'))
   if (SCHOOL_FILTER) console.log('Filtre école :', SCHOOL_FILTER)
   console.log()
+
+  // ── 0. Charger les écoles pour les contraintes de dates ──────────────────────
+  const schoolsRaw = await query('schools', {
+    select: 'name,date_reprise_cours,date_fin_cours,available_slot_durations',
+    limit:  '100',
+  }).catch(() => [])
+  const schoolsMap = {}
+  for (const s of (schoolsRaw ?? [])) schoolsMap[s.name] = s
 
   // ── 1. Toutes les réponses (sans filtre de status — clé service)
   const allRaw = await query('survey_responses', {
@@ -144,11 +184,29 @@ async function main() {
   const avecCandidats   = avecDispos.filter((r) => countCandidates(r) > 0)
   const sansCandidats   = avecDispos.filter((r) => countCandidates(r) === 0)
 
+  // Parmi avecCandidats, certains peuvent quand même échouer à cause de date_reprise_cours
+  // (AVANT le correctif nextDateForDayAfter).
+  const bloquesDates = avecCandidats.filter((r) => diagDateReprise(r, schoolsMap) !== null)
+
   console.log(`Réponses visibles par le Planning (status != 'confirme' ET non NULL) : ${enAttente.length}`)
-  console.log(`  → Sans disponibilités renseignées  : ${sansDispos.length}`)
-  console.log(`  → Avec disponibilités mais aucun créneau assez long (durée cible incompatible) : ${sansCandidats.length}`)
-  console.log(`  → Avec au moins un créneau candidat valide  : ${avecCandidats.length}`)
+  console.log(`  → Sans disponibilités renseignées       : ${sansDispos.length}`)
+  console.log(`  → Durée cible incompatible              : ${sansCandidats.length}`)
+  console.log(`  → Bloqués par date_reprise_cours        : ${bloquesDates.length}`)
+  console.log(`  → Avec au moins un créneau candidat valide : ${avecCandidats.length - bloquesDates.length}`)
   console.log()
+
+  if (bloquesDates.length > 0) {
+    console.log('⚠ ÉLÈVES BLOQUÉS par date_reprise_cours (correctif nextDateForDayAfter nécessaire) :')
+    bloquesDates.forEach((r) => {
+      const info = diagDateReprise(r, schoolsMap)
+      console.log(`   - ${r.first_name ?? '?'} ${r.last_name ?? ''} (${r.school_name ?? '?'})`)
+      console.log(`     date_reprise_cours : ${info.reprise}`)
+      info.bloquesParReprise.forEach(({ day, candidateDate }) => {
+        console.log(`     ${day} : candidateDate=${candidateDate} < reprise → rejeté sans correctif`)
+      })
+    })
+    console.log()
+  }
 
   if (sansCandidats.length > 0) {
     console.log('Élèves avec disponibilités mais AUCUN créneau assez long :')
@@ -169,14 +227,15 @@ async function main() {
   }
 
   // ── 4. Résumé global
-  const totalManquants = statusNull.length + sansCandidats.length + sansDispos.length
+  const totalManquants = statusNull.length + sansCandidats.length + sansDispos.length + bloquesDates.length
   console.log('=== RÉSUMÉ ===')
-  console.log(`Total en base         : ${tous.length}`)
-  console.log(`Confirmés (actés)     : ${confirmes.length}`)
-  console.log(`BUG status NULL       : ${statusNull.length}  ← EXCLUES SILENCIEUSEMENT`)
-  console.log(`Pas de disponibilités : ${sansDispos.length}  ← affichées mais sans proposition`)
-  console.log(`Durée incompatible    : ${sansCandidats.length}  ← affichées mais sans proposition`)
-  console.log(`Plaçables avec succès : ${avecCandidats.length}`)
+  console.log(`Total en base                    : ${tous.length}`)
+  console.log(`Confirmés (actés)                : ${confirmes.length}`)
+  console.log(`BUG status NULL                  : ${statusNull.length}  ← EXCLUES SILENCIEUSEMENT`)
+  console.log(`Pas de disponibilités            : ${sansDispos.length}  ← affichées mais sans proposition`)
+  console.log(`Durée incompatible               : ${sansCandidats.length}  ← affichées mais sans proposition`)
+  console.log(`Bloqués par date_reprise_cours   : ${bloquesDates.length}  ← CORRIGÉ par nextDateForDayAfter`)
+  console.log(`Plaçables avec succès            : ${avecCandidats.length - bloquesDates.length}`)
   console.log(`Total manquants ou sans proposition : ${totalManquants}`)
 }
 

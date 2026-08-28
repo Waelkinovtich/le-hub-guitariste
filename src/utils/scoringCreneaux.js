@@ -19,6 +19,27 @@ export function nextDateForDay(dayName) {
   return d.toISOString().slice(0, 10)
 }
 
+/**
+ * Retourne la première occurrence future d'un jour nommé qui soit >= minDateISO.
+ * Si minDateISO est absent ou déjà passé, identique à nextDateForDay.
+ * Utilisé pour ne pas proposer de cours avant la date de reprise de l'école.
+ */
+export function nextDateForDayAfter(dayName, minDateISO) {
+  const target = JOURS_FR.indexOf(dayName)
+  const today  = new Date()
+  // Point de départ : demain au minimum
+  const d = new Date(today)
+  let diff = target - today.getDay()
+  if (diff <= 0) diff += 7
+  d.setDate(today.getDate() + diff)
+  // Avancer semaine par semaine jusqu'à atteindre la date de reprise
+  if (minDateISO) {
+    const min = new Date(minDateISO + 'T12:00:00')
+    while (d < min) d.setDate(d.getDate() + 7)
+  }
+  return d.toISOString().slice(0, 10)
+}
+
 /** Extrait l'heure de début d'un créneau formaté "HH:MM–HH:MM". */
 export function parseStartTime(slot) {
   return slot.split('–')[0].trim()
@@ -205,7 +226,13 @@ export function scoreCandidate({
   const reasons = []
   let score = 0
 
-  const candidateDate   = nextDateForDay(day)
+  // schoolInfo résolu en premier : date_reprise_cours sert à choisir candidateDate.
+  const schoolName = response.school_name ?? ''
+  const schoolInfo = schools.find((s) => s.name === schoolName)
+
+  // Première occurrence du jour à partir de la date de reprise de l'école.
+  // Sans date_reprise_cours, se comporte comme nextDateForDay (semaine N+1).
+  const candidateDate   = nextDateForDayAfter(day, schoolInfo?.date_reprise_cours ?? null)
   const startTime       = parseStartTime(slot)
   const startMin        = timeToMinutes(startTime)
   const durationMinutes = slotsCount * 15
@@ -213,9 +240,8 @@ export function scoreCandidate({
 
   // ── Conflits stricts : cours élèves existants (retourne null → créneau écarté) ─
   // Comparaison par jour de semaine (getDay) plutôt que par date ISO exacte :
-  // candidateDate = nextDateForDay() est toujours en semaine N+1, mais les cours
-  // existants sont souvent en semaine N. Sans ça, une proposition Lundi 10h00 (N+1)
-  // ne serait pas bloquée par un cours Lundi 10h00 (N) et chevaucherait visuellement.
+  // candidateDate est toujours en semaine N+1 ou plus tard (après date_reprise_cours),
+  // mais les cours existants sont souvent en semaine N.
   const jourSemaineCandidat = JOURS_FR.indexOf(day)
   const sameDayLessons = existingLessons.filter((l) => {
     const dateStr = l.lesson_date ?? l.lessonDate
@@ -256,18 +282,13 @@ export function scoreCandidate({
     }
   }
 
-  // ── Hard-exclude : hors de la plage scolaire de l'école ──────────────────────
-  // date_reprise_cours et date_fin_cours définissent la fenêtre réelle de l'année.
-  // Un créneau hors plage ne peut pas donner lieu à un cours — exclusion stricte.
-  const schoolName = response.school_name ?? ''
-  const schoolInfo = schools.find((s) => s.name === schoolName)
-  if (schoolInfo) {
-    if (schoolInfo.date_reprise_cours && candidateDate < schoolInfo.date_reprise_cours) return null
-    if (schoolInfo.date_fin_cours     && candidateDate > schoolInfo.date_fin_cours)     return null
-  }
+  // ── Hard-exclude : après la fin de l'année scolaire ─────────────────────────
+  // date_reprise_cours est maintenant gérée par nextDateForDayAfter (candidateDate
+  // ne peut pas être avant la reprise). date_fin_cours reste une exclusion stricte.
+  if (schoolInfo?.date_fin_cours && candidateDate > schoolInfo.date_fin_cours) return null
 
   // ── Bonus : même école ce jour ────────────────────────────────────────────
-  // schoolName et schoolInfo déjà calculés dans le bloc hard-exclude ci-dessus
+  // schoolName et schoolInfo calculés en début de fonction
   const sameDaySchool = sameDayLessons.filter(
     (l) => (l.schoolName ?? l.student?.school_name ?? '') === schoolName && schoolName
   )

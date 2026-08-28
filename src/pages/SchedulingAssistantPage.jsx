@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { Loader2, CalendarDays, AlertCircle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw } from 'lucide-react'
+import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
 import ScoreBadge from '../components/ScoreBadge'
@@ -295,6 +295,8 @@ export default function SchedulingAssistantPage() {
   const [joursARecalculer, setJoursARecalculer] = useState(null)
   const [showRecalcPanel, setShowRecalcPanel]   = useState(false)
   const [recalculating, setRecalculating]       = useState(false)
+  // Mode "vue avec chevauchements" : affiche les élèves sans créneau sur leurs dispo réelles
+  const [showConflicts, setShowConflicts]       = useState(false)
 
   useEffect(() => {
     if (!user?.id) return
@@ -423,10 +425,12 @@ export default function SchedulingAssistantPage() {
   // (aucun créneau compatible : disponibilités vides ou durée cible sans créneau assez long).
   // Permet à l'utilisateur de savoir si un élève manque à cause d'un bug ou d'un vrai conflit.
   const statsPlacement = useMemo(() => {
-    const places     = responses.filter((r) => (proposalsMap[r.id] ?? []).length > 0)
-    const nonPlaces  = responses.filter((r) => (proposalsMap[r.id] ?? []).length === 0)
+    // Un élève est "placé" s'il a au moins une proposition calculée OU un override manuel
+    // (l'utilisateur a glissé-déposé un créneau en conflit vers une position libre).
+    const places    = responses.filter((r) => (proposalsMap[r.id] ?? []).length > 0 || proposalOverrides[r.id])
+    const nonPlaces = responses.filter((r) => (proposalsMap[r.id] ?? []).length === 0 && !proposalOverrides[r.id])
     return { total: responses.length, places: places.length, nonPlaces, nonPlacesCount: nonPlaces.length }
-  }, [responses, proposalsMap])
+  }, [responses, proposalsMap, proposalOverrides])
 
   // Notifié par WeekGridPlanning quand un drag commence — identifie la réponse
   const handleDragStart = useCallback((lesson) => {
@@ -540,8 +544,74 @@ export default function SchedulingAssistantPage() {
   }, [responses, proposalsMap, proposalOverrides, weekDays])
 
   /**
+   * En mode "avec chevauchements", créneaux fantômes pour les élèves sans proposition.
+   * Chaque carte est positionnée sur la première fenêtre disponible déclarée par l'élève
+   * (consécutive si la durée cible le permet, sinon créneau de 15 min).
+   * planningStatus 'conflit' → style bordure rouge dans WeekGridPlanning.
+   * Déplaçables : un drag-and-drop vers un créneau libre crée un proposalOverride.
+   */
+  const conflictLessons = useMemo(() => {
+    if (!showConflicts || statsPlacement.nonPlaces.length === 0) return []
+
+    const isoParJour = {}
+    for (const d of weekDays) {
+      const nomJour = JOURS_FR[new Date(d.iso + 'T12:00:00').getDay()]
+      isoParJour[nomJour] = d.iso
+    }
+
+    const result = []
+    for (const response of statsPlacement.nonPlaces) {
+      const avail       = response.availabilities ?? {}
+      const targetMin   = response.effective_duration_minutes ?? 30
+      const targetSlots = Math.max(1, Math.round(targetMin / 15))
+
+      let bestDay = null, bestSlot = null, bestDuration = targetMin
+
+      // Cherche d'abord une fenêtre consécutive de la durée cible
+      outer:
+      for (const [day, slots] of Object.entries(avail)) {
+        if (!Array.isArray(slots) || slots.length === 0) continue
+        for (let i = 0; i < slots.length; i++) {
+          if (i + targetSlots > slots.length) continue
+          let consecutive = true
+          for (let j = 1; j < targetSlots; j++) {
+            const prevEnd   = timeToMinutes(parseStartTime(slots[i + j - 1])) + 15
+            const nextStart = timeToMinutes(parseStartTime(slots[i + j]))
+            if (nextStart !== prevEnd) { consecutive = false; break }
+          }
+          if (consecutive) {
+            bestDay = day; bestSlot = slots[i]; bestDuration = targetMin
+            break outer
+          }
+          // Retient le premier slot disponible comme fallback (durée 15 min)
+          if (!bestDay) { bestDay = day; bestSlot = slots[i]; bestDuration = 15 }
+        }
+      }
+
+      if (!bestDay || !bestSlot) continue
+
+      // Ne montre que les jours présents dans la semaine affichée
+      const lessonDate = isoParJour[bestDay]
+      if (!lessonDate) continue
+
+      result.push({
+        id:              `conflit-${response.id}`,
+        lessonDate,
+        lessonTime:      parseStartTime(bestSlot),
+        timeLabel:       parseStartTime(bestSlot),
+        durationMinutes: bestDuration,
+        studentName:     [response.first_name, response.last_name].filter(Boolean).join(' ') || 'Élève',
+        schoolName:      response.school_name ?? null,
+        planningStatus:  'conflit',
+        _responseId:     response.id,
+      })
+    }
+    return result
+  }, [showConflicts, statsPlacement.nonPlaces, weekDays])
+
+  /**
    * Cours affichés dans la grille = cours réels de la semaine (en lecture seule, fond)
-   * + propositions (déplaçables).
+   * + propositions (déplaçables) + créneaux en conflit si le mode est activé.
    * Les cours réels ont nonMovable: true pour bloquer le drag et éviter toute modification.
    */
   const lessonsForGrid = useMemo(() => {
@@ -549,8 +619,8 @@ export default function SchedulingAssistantPage() {
     const coursReels = existingLessons
       .filter((l) => weekIsos.has(l.lessonDate))
       .map((l) => ({ ...l, nonMovable: true }))
-    return [...coursReels, ...proposalLessons]
-  }, [existingLessons, proposalLessons, weekDays])
+    return [...coursReels, ...proposalLessons, ...(showConflicts ? conflictLessons : [])]
+  }, [existingLessons, proposalLessons, conflictLessons, weekDays, showConflicts])
 
   /**
    * Appelé par WeekGridPlanning quand une proposition est glissée vers un nouveau créneau.
@@ -899,9 +969,9 @@ export default function SchedulingAssistantPage() {
               ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
               : 'bg-surface-raised border border-border-subtle text-muted-foreground'}`}>
             <span>
-              <span className="font-semibold text-foreground">{statsPlacement.total}</span> réponse{statsPlacement.total > 1 ? 's' : ''} en attente
+              <span className="font-semibold text-foreground">{statsPlacement.total}</span> formulaire{statsPlacement.total > 1 ? 's' : ''} en attente
               {' · '}
-              <span className="font-semibold text-green-400">{statsPlacement.places}</span> placée{statsPlacement.places > 1 ? 's' : ''}
+              <span className="font-semibold text-green-400">{statsPlacement.places}</span> placé{statsPlacement.places > 1 ? 's' : ''}
               {statsPlacement.nonPlacesCount > 0 && (
                 <>
                   {' · '}
@@ -910,9 +980,20 @@ export default function SchedulingAssistantPage() {
               )}
             </span>
             {statsPlacement.nonPlacesCount > 0 && (
-              <span className="text-muted-foreground">
-                ({statsPlacement.nonPlaces.map((r) => [r.first_name, r.last_name].filter(Boolean).join(' ') || '?').join(', ')})
-              </span>
+              <>
+                <span className="text-muted-foreground">
+                  ({statsPlacement.nonPlaces.map((r) => [r.first_name, r.last_name].filter(Boolean).join(' ') || '?').join(', ')})
+                </span>
+                {/* Bascule vers la grille en mode chevauchement pour visualiser les conflits */}
+                <button
+                  type="button"
+                  onClick={() => { setVue('grille'); setShowConflicts(true) }}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 transition-colors font-medium"
+                >
+                  <Layers className="w-3 h-3" />
+                  Voir en conflit
+                </button>
+              </>
             )}
           </div>
 
@@ -1006,6 +1087,12 @@ export default function SchedulingAssistantPage() {
                     <span className="inline-block w-3 h-3 rounded-sm border-2 border-solid border-muted" />
                     Cours existant (lecture seule)
                   </span>
+                  {showConflicts && (
+                    <span className="flex items-center gap-1.5 text-red-400">
+                      <span className="inline-block w-3 h-3 rounded-sm border-2 border-dashed border-red-400 opacity-80" />
+                      En conflit (déplaçable)
+                    </span>
+                  )}
                   <span className="text-muted italic">Glissez une proposition pour ajuster son créneau.</span>
                 </div>
 
@@ -1047,6 +1134,29 @@ export default function SchedulingAssistantPage() {
                     <RefreshCw className="w-3.5 h-3.5" />
                     Recalculer
                   </button>
+
+                  {/* Toggle "vue avec chevauchements" — visible seulement s'il y a des élèves non placés */}
+                  {statsPlacement.nonPlacesCount > 0 && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowConflicts((v) => !v)}
+                        title={showConflicts ? 'Masquer les créneaux en conflit' : 'Afficher les créneaux en conflit'}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                          showConflicts
+                            ? 'border-red-500/40 bg-red-500/10 text-red-400'
+                            : 'border-border-subtle text-muted-foreground hover:text-foreground hover:border-border'
+                        }`}
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        {showConflicts ? 'Masquer conflits' : 'Voir conflits'}
+                      </button>
+                      <HelpTooltip
+                        texte="Mode normal : seuls les créneaux sans chevauchement sont affichés. Mode conflits : les élèves sans créneau disponible apparaissent en rouge sur leur première disponibilité déclarée — même si elle chevauche un autre cours. Glissez-les vers un créneau libre pour résoudre le conflit manuellement."
+                        position="bottom"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 

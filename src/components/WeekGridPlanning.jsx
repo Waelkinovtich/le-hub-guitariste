@@ -539,6 +539,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   const slotCount    = durationToSlots(lesson.durationMinutes ?? 45)
                   const color        = lessonColor(lesson)
                   const isEnvisage   = lesson.planningStatus === 'envisage'
+                  const isConflit    = lesson.planningStatus === 'conflit'
                   const isBeingMoved = movePreview?.lessonId === lesson.id
 
                   if (startSlot < 0 || startSlot >= TOTAL_SLOTS) return null
@@ -551,7 +552,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         height: Math.min(slotCount, TOTAL_SLOTS - startSlot) * SLOT_H,
                         left: 2, right: 2,
                         position: 'absolute', zIndex: 10,
-                        opacity: isBeingMoved ? 0.25 : isEnvisage ? 0.6 : 1,
+                        opacity: isBeingMoved ? 0.25 : (isEnvisage || isConflit) ? 0.75 : 1,
                         cursor: 'grab',
                       }}
                       className="rounded overflow-hidden group"
@@ -574,15 +575,17 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                       <div
                         className="h-full px-1 py-0.5 flex flex-col gap-0.5 overflow-hidden"
                         style={{
-                          background:  color + '30',
-                          borderLeft: `3px ${isEnvisage ? 'dashed' : 'solid'} ${color}`,
+                          background:  isConflit
+                            ? 'repeating-linear-gradient(135deg, #ef444420 0px, #ef444420 4px, transparent 4px, transparent 10px)'
+                            : color + '30',
+                          borderLeft: `3px ${(isEnvisage || isConflit) ? 'dashed' : 'solid'} ${isConflit ? '#ef4444' : color}`,
                         }}
                       >
-                        <p className="text-[10px] font-semibold leading-tight truncate" style={{ color }}>
+                        <p className="text-[10px] font-semibold leading-tight truncate" style={{ color: isConflit ? '#ef4444' : color }}>
                           {lesson.studentName || 'Élève'}
                         </p>
                         {slotCount >= 3 && (
-                          <p className="text-[9px] leading-tight opacity-70" style={{ color }}>
+                          <p className="text-[9px] leading-tight opacity-70" style={{ color: isConflit ? '#ef4444' : color }}>
                             {lesson.timeLabel} · {lesson.durationMinutes} min
                           </p>
                         )}

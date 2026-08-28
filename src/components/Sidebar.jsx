@@ -219,23 +219,40 @@ function useBadges(userId) {
   useEffect(() => {
     if (!userId) return
     let cancelled = false
-    Promise.all([
-      supabase
-        .from('survey_responses')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'attente'),
-      supabase
-        .from('lessons')
-        .select('*', { count: 'exact', head: true })
-        .eq('teacher_id', userId)
-        .eq('status', 'annule_prof'),
-    ]).then(([sondResp, rattResp]) => {
-      if (cancelled) return
-      setBadges({
-        sondages:   sondResp.count  ?? 0,
-        rattrapage: rattResp.count  ?? 0,
-      })
-    }).catch(() => {})
+
+    ;(async () => {
+      try {
+        // Étape 1 : tokens des réponses en attente (statut 'attente' ou NULL)
+        const { data: pendingResps } = await supabase
+          .from('survey_responses')
+          .select('token_id')
+          .or('status.eq.attente,status.is.null')
+        if (cancelled) return
+
+        const tokenIds = (pendingResps ?? []).map((r) => r.token_id).filter(Boolean)
+
+        // Étape 2 : élèves individuels = 1 ligne survey_registrations = 1 élève
+        const studentsQ = tokenIds.length > 0
+          ? supabase.from('survey_registrations').select('id', { count: 'exact', head: true }).in('token_id', tokenIds)
+          : Promise.resolve({ count: 0 })
+
+        // Rattrapage : cours annulés par le prof non encore replanifiés
+        const rattrapageQ = supabase
+          .from('lessons')
+          .select('id', { count: 'exact', head: true })
+          .eq('teacher_id', userId)
+          .eq('status', 'annule_prof')
+
+        const [studentsResp, rattResp] = await Promise.all([studentsQ, rattrapageQ])
+        if (cancelled) return
+
+        setBadges({
+          sondages:   studentsResp.count ?? 0,
+          rattrapage: rattResp.count     ?? 0,
+        })
+      } catch { /* erreur réseau ignorée */ }
+    })()
+
     return () => { cancelled = true }
   }, [userId])
 

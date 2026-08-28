@@ -439,14 +439,17 @@ function SlotAssignPanel({ response, onConfirmed, onClose }) {
 // ─── Carte de réponse ─────────────────────────────────────────────────────────
 
 function RegistrationsList({ registrations }) {
-  if (!registrations || registrations.length === 0) return null
+  // Seules les personnes supplémentaires (non-répondants) apparaissent ici.
+  // Le répondant est déjà affiché dans l'en-tête de la carte ResponseCard.
+  const supplementaires = (registrations ?? []).filter((r) => !r.is_respondent)
+  if (supplementaires.length === 0) return null
   return (
     <div className="px-5 pb-4 pt-1">
       <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">
-        Inscriptions ({registrations.length})
+        Personnes inscrites ({supplementaires.length})
       </p>
       <div className="space-y-1.5">
-        {registrations.map((reg) => {
+        {supplementaires.map((reg) => {
           // Créneaux disponibles des personnes supplémentaires (champ JSONB — migration T1b)
           const avail = reg.availabilities && typeof reg.availabilities === 'object'
             ? Object.entries(reg.availabilities)
@@ -456,12 +459,7 @@ function RegistrationsList({ registrations }) {
             <div key={reg.id}
               className="text-xs px-3 py-2 rounded-lg bg-surface border border-border-subtle space-y-1.5">
               <div className="flex flex-wrap items-center gap-2">
-                {reg.is_respondent && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-guitar-600/15 text-guitar-400 border border-guitar-600/25 flex-shrink-0">
-                    Répondant
-                  </span>
-                )}
-                {!reg.is_respondent && reg.registration_type === 'reinscription' && (
+                {reg.registration_type === 'reinscription' && (
                   <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 flex-shrink-0">
                     Réinscription
                   </span>
@@ -484,8 +482,7 @@ function RegistrationsList({ registrations }) {
                   <span className="text-muted-foreground flex-shrink-0"><PhoneActions number={reg.telephone} /></span>
                 )}
               </div>
-              {/* Créneaux disponibles — visibles uniquement pour les personnes supplémentaires */}
-              {!reg.is_respondent && totalSlots > 0 && (
+              {totalSlots > 0 && (
                 <div className="pt-1 border-t border-border-subtle/50">
                   <p className="text-[10px] text-muted uppercase tracking-wider mb-1">
                     Disponibilités ({totalSlots} créneau{totalSlots > 1 ? 'x' : ''})
@@ -816,8 +813,8 @@ function ResponseCard({ r, registrations, genericTokens, openPanelId, setOpenPan
             }`}>
               {r.status === 'confirme'
                 ? r.assigned_day
-                  ? `Confirmé — ${r.assigned_day} ${r.assigned_time ?? ''}`
-                  : 'Confirmé'
+                  ? `Attribué — ${r.assigned_day} ${r.assigned_time ?? ''}`
+                  : 'Créneau attribué'
                 : 'En attente'}
             </span>
             <div className="flex items-center gap-1.5 text-xs text-muted">
@@ -1013,15 +1010,20 @@ export default function SurveyResultsPage() {
   const confirmes = responses.filter(r => r.status === 'confirme')
   const attente   = responses.filter(r => r.status !== 'confirme')
 
+  // Nombre d'élèves individuels par section (1 ligne survey_registrations = 1 élève)
+  const totalEleves       = registrations.length
+  const elevesConfirmes   = confirmes.reduce((s, r) => s + (regsByToken[r.token_id]?.length || 1), 0)
+  const elevesAttente     = attente.reduce((s, r)   => s + (regsByToken[r.token_id]?.length || 1), 0)
+
   return (
     <div className="p-6 max-w-2xl">
       <div className="mb-8">
         <div className="flex items-center gap-1.5">
           <h1 className="font-display text-3xl text-foreground mb-1">Réponses au sondage</h1>
-          <HelpTooltip texte="Chaque réponse correspond à un formulaire d'inscription rempli par une famille. Cliquez sur une ligne pour voir le détail complet avec les disponibilités." position="bottom" />
+          <HelpTooltip texte="Chaque carte correspond à un formulaire rempli par une famille. Une même réponse peut inscrire plusieurs élèves. Cliquez pour voir les disponibilités." position="bottom" />
         </div>
         <p className="text-sm text-muted-foreground">
-          {responses.length} réponse{responses.length !== 1 ? 's' : ''} au total
+          {responses.length} répondant{responses.length !== 1 ? 's' : ''} · {totalEleves} élève{totalEleves !== 1 ? 's' : ''} au total
         </p>
         {fetchError && (
           <p className="mt-2 text-sm text-guitar-400 bg-guitar-600/10 border border-guitar-600/20 rounded-lg px-3 py-2">
@@ -1039,7 +1041,7 @@ export default function SurveyResultsPage() {
         <div className="space-y-8">
           {confirmes.length > 0 && (
             <div>
-              <SectionTitle count={confirmes.length}>Élèves confirmés</SectionTitle>
+              <SectionTitle count={`${elevesConfirmes} élève${elevesConfirmes !== 1 ? 's' : ''}`}>Créneaux attribués</SectionTitle>
               <div className="space-y-3">
                 {confirmes.map(r => (
                   <ResponseCard
@@ -1062,7 +1064,7 @@ export default function SurveyResultsPage() {
           )}
           {attente.length > 0 && (
             <div>
-              <SectionTitle count={attente.length}>Liste d&apos;attente</SectionTitle>
+              <SectionTitle count={`${elevesAttente} élève${elevesAttente !== 1 ? 's' : ''}`}>En attente de créneau</SectionTitle>
               <div className="space-y-3">
                 {attente.map(r => (
                   <ResponseCard
