@@ -114,11 +114,34 @@ function buildRawEmail({ to, subject, html }) {
   return Buffer.from(message).toString('base64url')
 }
 
+// ─── Vérification du JWT Supabase ─────────────────────────────────────────────
+// Vérifie que la requête vient d'un utilisateur authentifié (professeur connecté).
+// Utilise la clé anon pour vérifier le JWT — la clé service ne sert qu'aux opérations DB.
+async function verifierAuth(req, supabaseUrl, supabaseAnonKey) {
+  const authHeader = req.headers?.authorization ?? ''
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+  if (!token) return null
+  const client = createClient(supabaseUrl, supabaseAnonKey)
+  const { data, error } = await client.auth.getUser(token)
+  if (error || !data?.user) return null
+  return data.user
+}
+
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
+  }
+
+  const supabaseUrl     = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL
+  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
+  const supabaseKey     = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  // Vérification d'authentification — rejette les appels non authentifiés
+  const utilisateur = await verifierAuth(req, supabaseUrl, supabaseAnonKey)
+  if (!utilisateur) {
+    return res.status(401).json({ error: 'Non authentifié. Un token Supabase valide est requis.' })
   }
 
   const { tokens, surveyType = 'inscription', surveyTitle } = req.body ?? {}
@@ -130,9 +153,6 @@ export default async function handler(req, res) {
   if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) {
     return res.status(500).json({ error: 'Variables Gmail manquantes : GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN.' })
   }
-
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!supabaseUrl || !supabaseKey) {
     return res.status(500).json({ error: 'Variables Supabase manquantes.' })
   }

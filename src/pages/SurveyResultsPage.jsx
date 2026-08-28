@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
-import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home, Link2 } from 'lucide-react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home, Link2, Merge, Search, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import HelpTooltip from '../components/HelpTooltip'
 import PhoneActions from '../components/PhoneActions'
@@ -507,7 +507,279 @@ function RegistrationsList({ registrations }) {
   )
 }
 
-function ResponseCard({ r, registrations, genericTokens, openPanelId, setOpenPanelId, onSelect, onConfirmed, onReassign, onDelete }) {
+// ─── Panneau de fusion manuelle ───────────────────────────────────────────────
+/**
+ * Permet de rapprocher une réponse de sondage d'une fiche élève existante.
+ * Aucune décision n'est automatique : l'utilisateur choisit explicitement
+ * chaque champ à importer depuis le sondage vers la fiche existante.
+ *
+ * Colonne matched_student_id sur survey_responses (migration additive SQL) :
+ * marque la réponse comme rapprochée pour éviter un double traitement.
+ */
+
+// Champs comparables entre survey_response et fiche student.
+// label : libellé affiché · surveyKey : clé dans survey_response · studentKey : clé dans student
+const CHAMPS_COMPARABLES = [
+  { label: 'Prénom',      surveyKey: 'first_name',   studentKey: 'first_name'  },
+  { label: 'Nom',         surveyKey: 'last_name',    studentKey: 'last_name'   },
+  { label: 'Email',       surveyKey: 'email',        studentKey: 'email'       },
+  { label: 'Téléphone',   surveyKey: 'phone',        studentKey: 'phone'       },
+  { label: 'Naissance',   surveyKey: 'birth_year',   studentKey: 'birth_year'  },
+  { label: 'École',       surveyKey: 'school_name',  studentKey: 'school_name' },
+  { label: 'Niveau',      surveyKey: 'level',        studentKey: 'level'       },
+]
+
+function FusionPanel({ response, onClose, onFused }) {
+  const [recherche, setRecherche]       = useState('')
+  const [students, setStudents]         = useState([])
+  const [loadingStudents, setLoadingStudents] = useState(true)
+  const [selectedStudent, setSelectedStudent] = useState(null)
+  // fieldsToImport : Set des surveyKeys que l'utilisateur choisit d'importer
+  const [fieldsToImport, setFieldsToImport] = useState(new Set())
+  const [saving, setSaving]             = useState(false)
+  const [error, setError]               = useState('')
+
+  // Chargement de tous les élèves du prof au montage
+  useEffect(() => {
+    supabase
+      .from('students')
+      .select('id, first_name, last_name, email, phone, birth_year, school_name, level')
+      .order('last_name')
+      .then(({ data }) => {
+        setStudents(data ?? [])
+        setLoadingStudents(false)
+      })
+  }, [])
+
+  // Élèves filtrés par la recherche
+  const studentsFiltrés = useMemo(() => {
+    if (!recherche.trim()) return students
+    const q = recherche.toLowerCase()
+    return students.filter((s) =>
+      [s.first_name, s.last_name, s.school_name, s.email]
+        .filter(Boolean).some((v) => v.toLowerCase().includes(q))
+    )
+  }, [students, recherche])
+
+  // Sélection d'un élève — pré-coche les champs vides dans la fiche existante
+  const handleSelectStudent = useCallback((student) => {
+    setSelectedStudent(student)
+    // Pré-sélectionner uniquement les champs vides dans la fiche existante
+    // (ne jamais écraser une valeur existante sans décision explicite)
+    const preCoches = new Set()
+    for (const { surveyKey, studentKey } of CHAMPS_COMPARABLES) {
+      const valSondage = response[surveyKey]
+      const valFiche   = student[studentKey]
+      if (valSondage && !valFiche) preCoches.add(surveyKey)
+    }
+    setFieldsToImport(preCoches)
+    setError('')
+  }, [response])
+
+  // Basculer la sélection d'un champ
+  const toggleField = (surveyKey) => {
+    setFieldsToImport((prev) => {
+      const next = new Set(prev)
+      if (next.has(surveyKey)) next.delete(surveyKey)
+      else next.add(surveyKey)
+      return next
+    })
+  }
+
+  // Confirmer le rapprochement
+  const handleConfirmer = async () => {
+    if (!selectedStudent) return
+    setSaving(true)
+    setError('')
+    try {
+      // 1. Construire la mise à jour student à partir des champs cochés
+      const updates = {}
+      for (const { surveyKey, studentKey } of CHAMPS_COMPARABLES) {
+        if (fieldsToImport.has(surveyKey) && response[surveyKey] != null) {
+          updates[studentKey] = response[surveyKey]
+        }
+      }
+      if (Object.keys(updates).length > 0) {
+        const { error: updErr } = await supabase
+          .from('students')
+          .update(updates)
+          .eq('id', selectedStudent.id)
+        if (updErr) throw new Error(updErr.message)
+      }
+
+      // 2. Marquer la réponse comme rapprochée (additive — jamais destructif)
+      const { error: matchErr } = await supabase
+        .from('survey_responses')
+        .update({ matched_student_id: selectedStudent.id })
+        .eq('id', response.id)
+      if (matchErr) throw new Error(matchErr.message)
+
+      onFused(response.id, selectedStudent)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="w-full mt-3 rounded-xl border border-border bg-surface p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium flex items-center gap-2">
+          <Merge className="w-4 h-4 text-muted" />
+          Rapprocher d'un élève existant
+        </p>
+        <button type="button" onClick={onClose} className="text-xs text-muted hover:text-foreground transition-colors">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Avertissement : décision manuelle uniquement */}
+      <p className="text-xs text-muted-foreground bg-surface-raised rounded-lg px-3 py-2">
+        Rapprochement <strong>manuel uniquement</strong> — vous choisissez explicitement quels champs importer vers la fiche existante. Aucune donnée ne sera écrasée sans votre accord.
+      </p>
+
+      {/* Recherche d'un élève */}
+      {!selectedStudent && (
+        <div className="space-y-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Rechercher par nom, prénom, école…"
+              value={recherche}
+              onChange={(e) => setRecherche(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-border-subtle bg-surface-raised text-sm placeholder:text-muted-foreground focus:outline-none focus:border-guitar-500"
+            />
+          </div>
+          {loadingStudents ? (
+            <p className="text-xs text-muted-foreground py-2 text-center">Chargement…</p>
+          ) : (
+            <div className="max-h-48 overflow-y-auto space-y-1">
+              {studentsFiltrés.length === 0 && (
+                <p className="text-xs text-muted-foreground italic py-2 text-center">Aucun élève trouvé.</p>
+              )}
+              {studentsFiltrés.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => handleSelectStudent(s)}
+                  className="w-full text-left px-3 py-2 rounded-lg border border-border-subtle bg-surface-raised hover:bg-guitar-600/8 hover:border-guitar-600/30 transition-all text-sm"
+                >
+                  <span className="font-medium">{s.first_name} {s.last_name}</span>
+                  {s.school_name && <span className="ml-2 text-xs text-muted-foreground">{s.school_name}</span>}
+                  {s.email && <span className="ml-2 text-xs text-muted">{s.email}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Vue de comparaison champ par champ */}
+      {selectedStudent && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-muted uppercase tracking-wider">
+              Comparaison avec {selectedStudent.first_name} {selectedStudent.last_name}
+            </p>
+            <button
+              type="button"
+              onClick={() => setSelectedStudent(null)}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Changer d'élève
+            </button>
+          </div>
+
+          {/* Tableau de comparaison */}
+          <div className="rounded-lg border border-border-subtle overflow-hidden text-xs">
+            <div className="grid grid-cols-[auto_1fr_1fr_auto] bg-surface-raised px-3 py-1.5 text-muted-foreground font-medium gap-3">
+              <span />
+              <span>Fiche existante</span>
+              <span>Réponse sondage</span>
+              <span>Importer ?</span>
+            </div>
+            {CHAMPS_COMPARABLES.map(({ label, surveyKey, studentKey }) => {
+              const valFiche   = selectedStudent[studentKey]
+              const valSondage = response[surveyKey]
+              const identiques = String(valFiche ?? '') === String(valSondage ?? '')
+              const cochable   = valSondage && !identiques
+              return (
+                <div
+                  key={surveyKey}
+                  className="grid grid-cols-[auto_1fr_1fr_auto] items-center px-3 py-2 border-t border-border-subtle gap-3 hover:bg-surface-raised/50 transition-colors"
+                >
+                  <span className="text-muted-foreground min-w-[60px]">{label}</span>
+                  <span className={valFiche ? 'text-foreground' : 'text-muted italic'}>
+                    {valFiche ?? '—'}
+                  </span>
+                  <span className={valSondage && !identiques ? 'text-guitar-400' : valSondage ? 'text-muted-foreground' : 'text-muted italic'}>
+                    {valSondage ?? '—'}
+                    {identiques && valSondage && <span className="ml-1 text-green-400">✓</span>}
+                  </span>
+                  <div className="flex justify-end">
+                    {cochable ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleField(surveyKey)}
+                        className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
+                          fieldsToImport.has(surveyKey)
+                            ? 'bg-guitar-500 border-guitar-500'
+                            : 'border-border'
+                        }`}
+                      >
+                        {fieldsToImport.has(surveyKey) && <Check className="w-2.5 h-2.5 text-white" />}
+                      </button>
+                    ) : (
+                      <span className="w-4" />
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Raccourci : tout accepter pour les champs vides */}
+          <button
+            type="button"
+            onClick={() => {
+              const preCoches = new Set()
+              for (const { surveyKey, studentKey } of CHAMPS_COMPARABLES) {
+                if (response[surveyKey] && !selectedStudent[studentKey]) preCoches.add(surveyKey)
+              }
+              setFieldsToImport(preCoches)
+            }}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors underline-offset-2 hover:underline"
+          >
+            Tout accepter pour les champs vides seulement
+          </button>
+
+          {error && <p className="text-xs text-guitar-400">{error}</p>}
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleConfirmer}
+              disabled={saving}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl guitar-gradient text-white text-xs font-medium disabled:opacity-40"
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              Confirmer le rapprochement
+            </button>
+            <span className="text-xs text-muted-foreground">
+              {fieldsToImport.size > 0
+                ? `${fieldsToImport.size} champ${fieldsToImport.size > 1 ? 's' : ''} à importer`
+                : 'Rapprochement seul, sans import de champs'}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ResponseCard({ r, registrations, genericTokens, openPanelId, setOpenPanelId, onSelect, onConfirmed, onReassign, onDelete, onFused }) {
   // Indique si la réponse provient d'un lien partagé générique plutôt qu'un envoi individuel
   const genericMeta = genericTokens?.[r.token_id]
   return (
@@ -583,6 +855,22 @@ function ResponseCard({ r, registrations, genericTokens, openPanelId, setOpenPan
           </button>
         )}
 
+        {/* Rapprochement manuel — jamais automatique */}
+        <button
+          onClick={(e) => { e.stopPropagation(); setOpenPanelId(openPanelId === `fusion-${r.id}` ? null : `fusion-${r.id}`) }}
+          className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${
+            r.matched_student_id
+              ? 'border-green-600/40 bg-green-600/8 text-green-400'
+              : openPanelId === `fusion-${r.id}`
+                ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
+                : 'border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
+          }`}
+          title={r.matched_student_id ? 'Déjà rapproché — cliquer pour modifier' : 'Rapprocher avec une fiche élève existante'}
+        >
+          <Merge className="w-3.5 h-3.5" />
+          {r.matched_student_id ? 'Rapproché' : 'Rapprocher'}
+        </button>
+
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -602,6 +890,16 @@ function ResponseCard({ r, registrations, genericTokens, openPanelId, setOpenPan
               response={r}
               onClose={() => setOpenPanelId(null)}
               onConfirmed={onConfirmed}
+            />
+          </div>
+        )}
+
+        {openPanelId === `fusion-${r.id}` && (
+          <div className="w-full">
+            <FusionPanel
+              response={r}
+              onClose={() => setOpenPanelId(null)}
+              onFused={onFused}
             />
           </div>
         )}
@@ -674,6 +972,14 @@ export default function SurveyResultsPage() {
       setResponses(prev => prev.filter(x => x.id !== r.id))
     }
   }
+
+  // Appelé quand l'utilisateur confirme un rapprochement — met à jour la réponse en mémoire
+  const handleFused = useCallback((responseId, student) => {
+    setResponses((prev) => prev.map((x) =>
+      x.id === responseId ? { ...x, matched_student_id: student.id } : x
+    ))
+    setOpenPanelId(null)
+  }, [])
 
   const handleReassign = async (r) => {
     const today = new Date().toISOString().slice(0, 10)
@@ -748,6 +1054,7 @@ export default function SurveyResultsPage() {
                     onConfirmed={handleConfirmed}
                     onReassign={handleReassign}
                     onDelete={handleDelete}
+                    onFused={handleFused}
                   />
                 ))}
               </div>
@@ -769,6 +1076,7 @@ export default function SurveyResultsPage() {
                     onSelect={setSelected}
                     onConfirmed={handleConfirmed}
                     onDelete={handleDelete}
+                    onFused={handleFused}
                   />
                 ))}
               </div>

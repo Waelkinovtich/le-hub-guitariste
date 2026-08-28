@@ -91,9 +91,11 @@ function SurveyCard({ survey, onDelete }) {
         return
       }
 
+      const { data: sessionData } = await supabase.auth.getSession()
+      const jwt = sessionData?.session?.access_token ?? ''
       const res = await fetch('/api/send-surveys', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({
           surveyType: 'rapide',
           surveyTitle: survey.title,

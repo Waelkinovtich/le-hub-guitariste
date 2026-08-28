@@ -1,4 +1,5 @@
 import { google } from 'googleapis'
+import { createClient } from '@supabase/supabase-js'
 
 // ─── Config (identique à send-surveys.js) ─────────────────────────────────────
 
@@ -74,11 +75,31 @@ function buildRawEmail({ to, subject, html }) {
   return Buffer.from(message).toString('base64url')
 }
 
+// ─── Vérification du JWT Supabase ─────────────────────────────────────────────
+async function verifierAuth(req) {
+  const supabaseUrl     = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL
+  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
+  if (!supabaseUrl || !supabaseAnonKey) return null
+  const authHeader = req.headers?.authorization ?? ''
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+  if (!token) return null
+  const client = createClient(supabaseUrl, supabaseAnonKey)
+  const { data, error } = await client.auth.getUser(token)
+  if (error || !data?.user) return null
+  return data.user
+}
+
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Méthode non autorisée' })
+  }
+
+  // Vérification d'authentification — rejette les appels non authentifiés
+  const utilisateur = await verifierAuth(req)
+  if (!utilisateur) {
+    return res.status(401).json({ error: 'Non authentifié.' })
   }
 
   const { to, studentFirstName, contenuTravaille, contenuAFaire, dateSeance, customSubject, customHtml } = req.body ?? {}

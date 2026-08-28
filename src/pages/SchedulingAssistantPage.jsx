@@ -309,7 +309,11 @@ export default function SchedulingAssistantPage() {
         const inFourWeeks = new Date(Date.now() + 28 * 86400000).toISOString().slice(0, 10)
 
         const [respRes, lessonsRes, schoolsRes, reservedSlotsData] = await Promise.all([
-          supabase.from('survey_responses').select('*').neq('status', 'confirme').order('submitted_at', { ascending: false }),
+          // neq('confirme') exclut silencieusement les NULL en Postgres (NULL != 'confirme' → NULL).
+          // On inclut explicitement les lignes dont status est NULL (réponses sans initialisation).
+          supabase.from('survey_responses').select('*')
+            .or('status.neq.confirme,status.is.null')
+            .order('submitted_at', { ascending: false }),
           supabase.from('lessons').select('id, lesson_date, lesson_time, duration_minutes, student_id, students(school_name, level)').eq('teacher_id', tInfo.id).gte('lesson_date', today).lte('lesson_date', inFourWeeks),
           // latitude + longitude pour le bonus de proximité domicile + durées de créneaux disponibles
           supabase.from('schools').select('id, name, current_weekly_hours, desired_weekly_hours, latitude, longitude, available_slot_durations').eq('teacher_id', tInfo.id),
@@ -414,6 +418,16 @@ export default function SchedulingAssistantPage() {
     return zones
   }, [draggedResponseId, responses, weekDays])
 
+  // ── Statistiques de placement ──────────────────────────────────────────────
+  // Distingue les réponses placées (au moins une proposition trouvée) des non placées
+  // (aucun créneau compatible : disponibilités vides ou durée cible sans créneau assez long).
+  // Permet à l'utilisateur de savoir si un élève manque à cause d'un bug ou d'un vrai conflit.
+  const statsPlacement = useMemo(() => {
+    const places     = responses.filter((r) => (proposalsMap[r.id] ?? []).length > 0)
+    const nonPlaces  = responses.filter((r) => (proposalsMap[r.id] ?? []).length === 0)
+    return { total: responses.length, places: places.length, nonPlaces, nonPlacesCount: nonPlaces.length }
+  }, [responses, proposalsMap])
+
   // Notifié par WeekGridPlanning quand un drag commence — identifie la réponse
   const handleDragStart = useCallback((lesson) => {
     if (lesson._responseId) setDraggedResponseId(lesson._responseId)
@@ -497,11 +511,17 @@ export default function SchedulingAssistantPage() {
         const proposal = override ?? base
         if (!proposal) return null
 
-        // Si l'utilisateur a déplacé la proposition, conserver sa date exacte ;
-        // sinon la projeter sur la semaine affichée pour qu'elle soit toujours visible.
-        const lessonDate = override
+        // Règle de projection des dates :
+        // • Drag-and-drop manuel : l'utilisateur a choisi une date DANS la semaine affichée
+        //   → on conserve cette date exacte (elle est déjà dans isoParJour).
+        // • Recalcul automatique (handleRecalculer) : candidateDate = nextDateForDay() = semaine N+1
+        //   → la date n'est PAS dans la semaine affichée, on projette par nom de jour comme
+        //   pour les propositions sans override (même comportement que le moteur initial).
+        // Cela corrige le bug : recalcul → proposition disparaît de la semaine courante.
+        const overrideEnSemaine = override && weekDays.some((d) => d.iso === override.candidateDate)
+        const lessonDate = overrideEnSemaine
           ? override.candidateDate
-          : (isoParJour[proposal.day] ?? proposal.candidateDate)
+          : (isoParJour[(override ?? proposal).day] ?? (override ?? proposal).candidateDate)
 
         return {
           id:              `proposal-${response.id}`,
@@ -872,6 +892,30 @@ export default function SchedulingAssistantPage() {
         </div>
       ) : (
         <>
+          {/* ── Compteur de placement ────────────────────────────────────────── */}
+          {/* Toujours visible — permet de distinguer un bug d'un manque réel de disponibilités */}
+          <div className={`flex items-center gap-4 flex-wrap px-4 py-2.5 rounded-xl text-xs mb-4
+            ${statsPlacement.nonPlacesCount > 0
+              ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
+              : 'bg-surface-raised border border-border-subtle text-muted-foreground'}`}>
+            <span>
+              <span className="font-semibold text-foreground">{statsPlacement.total}</span> réponse{statsPlacement.total > 1 ? 's' : ''} en attente
+              {' · '}
+              <span className="font-semibold text-green-400">{statsPlacement.places}</span> placée{statsPlacement.places > 1 ? 's' : ''}
+              {statsPlacement.nonPlacesCount > 0 && (
+                <>
+                  {' · '}
+                  <span className="font-semibold">{statsPlacement.nonPlacesCount}</span> sans créneau disponible
+                </>
+              )}
+            </span>
+            {statsPlacement.nonPlacesCount > 0 && (
+              <span className="text-muted-foreground">
+                ({statsPlacement.nonPlaces.map((r) => [r.first_name, r.last_name].filter(Boolean).join(' ') || '?').join(', ')})
+              </span>
+            )}
+          </div>
+
           {/* ── Sélecteur de vue ─────────────────────────────────────────────── */}
           <div className="flex items-center justify-between gap-4 mb-6">
             <div className="flex gap-1 p-1 rounded-xl bg-surface-raised border border-border-subtle">

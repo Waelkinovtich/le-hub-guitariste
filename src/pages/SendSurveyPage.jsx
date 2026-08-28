@@ -244,9 +244,12 @@ export default function SendSurveyPage() {
       const payload = generatedLinks.map(l => ({
         tokenId: l.id, email: l.email, studentId: l.studentId ?? null, token: l.token,
       }))
+      // Passer le JWT pour que l'API vérifie l'authentification du professeur.
+      const { data: sessionData } = await supabase.auth.getSession()
+      const jwt = sessionData?.session?.access_token ?? ''
       const res = await fetch('/api/send-surveys', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({ tokens: payload }),
       })
       setSendResult(await res.json())
