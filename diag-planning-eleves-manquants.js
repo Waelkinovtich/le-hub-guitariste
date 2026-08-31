@@ -178,7 +178,7 @@ async function main() {
   }
   enAttente.forEach((r) => {
     const key = `${r.student_id ?? ''}|${r.school_name ?? ''}`
-    r.effective_duration_minutes = contextsMap[key] ?? r.desired_duration_minutes ?? 30
+    r.effective_duration_minutes = contextsMap[key] || r.desired_duration_minutes || 30
   })
 
   const avecCandidats   = avecDispos.filter((r) => countCandidates(r) > 0)

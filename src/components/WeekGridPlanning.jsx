@@ -1,5 +1,5 @@
 import { useRef, useState, useMemo, useCallback, useEffect } from 'react'
-import { Trash2, Copy } from 'lucide-react'
+import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight } from 'lucide-react'
 import { updateLesson } from '../services/lessons'
 import { getSchoolColor, SCHOOL_COLOR_DEFAULT } from '../utils/schoolColors'
 import DeleteLessonModal from './DeleteLessonModal'
@@ -9,7 +9,8 @@ import DeleteLessonModal from './DeleteLessonModal'
 const START_HOUR     = 8
 const END_HOUR       = 22
 const TOTAL_SLOTS    = (END_HOUR - START_HOUR) * 4  // 56 créneaux de 15 min
-const SLOT_H         = 18                            // px par créneau
+const SLOT_H         = 18                            // px par créneau en vue semaine
+const SLOT_H_JOUR    = 32                            // px par créneau en vue jour (plus lisible)
 const MOVE_THRESHOLD = 10                            // px avant activation du déplacement
 const CESU_COLOR     = '#3b82f6'                     // bleu fixe pour cours particuliers
 const RESERVED_OPACITY = 0.85                        // opacité du fond hachuré des créneaux réservés
@@ -109,12 +110,33 @@ function hasReservedOverlap(reservedByDay, targetDay, targetStart, slotCount) {
 // onDragEnd() : appelé à la fin du drag (dépôt ou annulation).
 // validDropZones : zones à surligner pendant le drag (fond vert léger) :
 //   [{ date: 'YYYY-MM-DD', startTime: 'HH:MM', durationMinutes: 15 }]
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd }) {
+// onViewStudent(lesson) : appelé au clic sur "Voir la fiche" d'une proposition planifiée
+//   (tuiles envisage/conflit uniquement). Permet d'ouvrir la fiche élève depuis la grille.
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
   // Synchronise quand PlanningPage recharge (ajout, édition, etc.)
   useEffect(() => { setLocalLessons(lessons) }, [lessons])
+
+  // ── Vue : 'semaine' (grille 7 colonnes) ou 'jour' (colonne unique) ────────
+  const [vueMode,   setVueMode]   = useState('semaine')
+  // Index du jour actif dans weekDays (0 = premier jour de la semaine).
+  // Initialisé sur "aujourd'hui" s'il est dans la semaine, sinon sur le premier jour.
+  const [jourIdx, setJourIdx] = useState(() => {
+    const todayIso = new Date().toISOString().slice(0, 10)
+    const idx = weekDays.findIndex((d) => d.iso === todayIso)
+    return idx >= 0 ? idx : 0
+  })
+  // Resynchronise si la semaine change (weekOffset) — on reste sur le même numéro de jour si possible.
+  useEffect(() => {
+    setJourIdx((prev) => Math.min(prev, weekDays.length - 1))
+  }, [weekDays])
+
+  // Jours effectivement affichés : tous en mode semaine, un seul en mode jour.
+  const activeDays = vueMode === 'jour' ? [weekDays[jourIdx] ?? weekDays[0]] : weekDays
+  // Hauteur d'un créneau selon la vue
+  const slotH = vueMode === 'jour' ? SLOT_H_JOUR : SLOT_H
 
   // ── Refs ──────────────────────────────────────────────────────────────────
   const gridRef    = useRef(null)
@@ -351,10 +373,57 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  const totalH = TOTAL_SLOTS * SLOT_H
+  const totalH = TOTAL_SLOTS * slotH
 
   return (
     <div className="glass-panel rounded-2xl overflow-hidden select-none">
+      {/* Barre de vue Semaine / Jour */}
+      <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-border-subtle bg-surface/80">
+        <div className="flex gap-1 p-0.5 rounded-lg bg-surface-raised border border-border-subtle">
+          <button
+            type="button"
+            onClick={() => setVueMode('semaine')}
+            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${vueMode === 'semaine' ? 'guitar-gradient text-white' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            Semaine
+          </button>
+          <button
+            type="button"
+            onClick={() => setVueMode('jour')}
+            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${vueMode === 'jour' ? 'guitar-gradient text-white' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            Jour
+          </button>
+        </div>
+
+        {/* Navigation jour — visible uniquement en mode Jour */}
+        {vueMode === 'jour' && (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setJourIdx((i) => Math.max(0, i - 1))}
+              disabled={jourIdx === 0}
+              className="p-1 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors disabled:opacity-30"
+              aria-label="Jour précédent"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <span className="text-xs font-medium min-w-[90px] text-center">
+              {activeDays[0]?.label} {activeDays[0]?.dayNum}
+            </span>
+            <button
+              type="button"
+              onClick={() => setJourIdx((i) => Math.min(weekDays.length - 1, i + 1))}
+              disabled={jourIdx === weekDays.length - 1}
+              className="p-1 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors disabled:opacity-30"
+              aria-label="Jour suivant"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Message d'erreur déplacement */}
       {moveError && (
         <div className="px-4 py-2.5 bg-guitar-600/15 border-b border-guitar-600/30 text-sm text-guitar-400 font-medium">
@@ -365,10 +434,10 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
       {/* En-têtes des jours */}
       <div
         className="grid border-b border-border-subtle bg-surface/80 sticky top-0 z-20"
-        style={{ gridTemplateColumns: `3rem repeat(${weekDays.length}, 1fr)` }}
+        style={{ gridTemplateColumns: `3rem repeat(${activeDays.length}, 1fr)` }}
       >
         <div className="py-2" />
-        {weekDays.map((day) => (
+        {activeDays.map((day) => (
           <div
             key={day.iso}
             className={`py-2 text-center border-l border-border-subtle ${day.isToday ? 'text-guitar-400' : 'text-muted-foreground'}`}
@@ -385,7 +454,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
           ref={gridRef}
           className="grid cursor-crosshair"
           style={{
-            gridTemplateColumns: `3rem repeat(${weekDays.length}, 1fr)`,
+            gridTemplateColumns: `3rem repeat(${activeDays.length}, 1fr)`,
             height: totalH,
             touchAction: isDragging ? 'none' : 'pan-y',
           }}
@@ -397,7 +466,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
           {/* Colonne des heures */}
           <div className="relative z-10 pointer-events-none">
             {Array.from({ length: TOTAL_SLOTS }).map((_, i) => (
-              <div key={i} style={{ height: SLOT_H, top: i * SLOT_H, position: 'absolute', left: 0, right: 0 }}>
+              <div key={i} style={{ height: slotH, top: i * slotH, position: 'absolute', left: 0, right: 0 }}>
                 {i % 4 === 0 && (
                   <span className="absolute right-1.5 -top-2 text-[9px] text-muted/60 font-mono">
                     {slotToTimeStr(i)}
@@ -408,7 +477,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
           </div>
 
           {/* Colonnes des jours */}
-          {weekDays.map((day) => {
+          {activeDays.map((day) => {
             const dayLessons = lessonsByDay[day.iso] ?? []
 
             return (
@@ -426,8 +495,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                     <div
                       key={rs.id}
                       style={{
-                        top:    rsStart * SLOT_H,
-                        height: Math.min(rsSlots, TOTAL_SLOTS - rsStart) * SLOT_H,
+                        top:    rsStart * slotH,
+                        height: Math.min(rsSlots, TOTAL_SLOTS - rsStart) * slotH,
                         left: 0, right: 0,
                         position: 'absolute', zIndex: 8,
                         // Motif hachuré : fond semi-transparent + diagonales pour distinguer visuellement
@@ -471,8 +540,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                     <div
                       key={i}
                       style={{
-                        top:    zStart * SLOT_H,
-                        height: Math.min(zSlots, TOTAL_SLOTS - zStart) * SLOT_H,
+                        top:    zStart * slotH,
+                        height: Math.min(zSlots, TOTAL_SLOTS - zStart) * slotH,
                         left: 0, right: 0,
                         position: 'absolute', zIndex: 7,
                         background: '#22c55e14',
@@ -497,7 +566,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                       key={slotIdx}
                       data-day={day.iso}
                       data-slot={slotIdx}
-                      style={{ height: SLOT_H, top: slotIdx * SLOT_H, position: 'absolute', left: 0, right: 0 }}
+                      style={{ height: slotH, top: slotIdx * slotH, position: 'absolute', left: 0, right: 0 }}
                       className={[
                         'transition-colors',
                         isHour  ? 'border-t border-border-subtle/60'
@@ -517,8 +586,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   return (
                     <div
                       style={{
-                        top: startSlot * SLOT_H,
-                        height: Math.min(slotCount, TOTAL_SLOTS - startSlot) * SLOT_H,
+                        top: startSlot * slotH,
+                        height: Math.min(slotCount, TOTAL_SLOTS - startSlot) * slotH,
                         left: 2, right: 2,
                         position: 'absolute', zIndex: 20,
                         opacity: 0.6, pointerEvents: 'none',
@@ -548,8 +617,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                     <div
                       key={lesson.id}
                       style={{
-                        top: startSlot * SLOT_H,
-                        height: Math.min(slotCount, TOTAL_SLOTS - startSlot) * SLOT_H,
+                        top: startSlot * slotH,
+                        height: Math.min(slotCount, TOTAL_SLOTS - startSlot) * slotH,
                         left: 2, right: 2,
                         position: 'absolute', zIndex: 10,
                         opacity: isBeingMoved ? 0.25 : (isEnvisage || isConflit) ? 0.75 : 1,
@@ -565,7 +634,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         // pouvait pas fournir (tuile masquait les [data-slot]).
                         const rect = e.currentTarget.getBoundingClientRect()
                         const grabOffset = Math.max(0, Math.min(
-                          Math.floor((e.clientY - rect.top) / SLOT_H),
+                          Math.floor((e.clientY - rect.top) / slotH),
                           slotCount - 1
                         ))
                         startMove(e, lesson, day.iso, startSlot, slotCount, grabOffset)
@@ -621,6 +690,22 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                                      focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
                         >
                           <Copy className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      {/* Fiche élève — visible sur les propositions (envisagé/conflit) ayant un _studentId */}
+                      {onViewStudent && (isEnvisage || isConflit) && lesson._studentId && (
+                        <button
+                          type="button"
+                          aria-label="Voir la fiche élève"
+                          title="Voir la fiche élève (correction durée, contexte…)"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); onViewStudent(lesson) }}
+                          className="absolute bottom-0 left-0 z-20 p-0.5 rounded-tr-md bg-void/50 text-white/80
+                                     opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity
+                                     focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
+                        >
+                          <UserRound className="w-3 h-3" />
                         </button>
                       )}
                     </div>

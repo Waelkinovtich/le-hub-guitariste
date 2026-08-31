@@ -432,14 +432,53 @@ export function scoreCandidate({
   return { score, reasons, candidateDate, startTime, durationMinutes }
 }
 
+// Nombre maximal de tentatives d'échange par élève non placé (borne anti-explosion combinatoire).
+// Source : spec T2 — "garde-fou strict".
+const MAX_TENTATIVES_ECHANGE = 2
+
+/**
+ * Vérifie que l'élève `response` peut occuper le créneau décrit par `proposal`
+ * en consultant uniquement ses disponibilités déclarées.
+ * Pur, sans accès réseau.
+ */
+function studentPeutPrendreSlot(response, proposal) {
+  const slotsJour = (response.availabilities ?? {})[proposal.day] ?? []
+  if (slotsJour.length === 0) return false
+  const targetSlots = Math.max(1, Math.round(proposal.durationMinutes / 15))
+  const idx = slotsJour.findIndex((s) => parseStartTime(s) === proposal.startTime)
+  if (idx === -1 || idx + targetSlots > slotsJour.length) return false
+  for (let j = 1; j < targetSlots; j++) {
+    const prevEnd   = timeToMinutes(parseStartTime(slotsJour[idx + j - 1])) + 15
+    const nextStart = timeToMinutes(parseStartTime(slotsJour[idx + j]))
+    if (nextStart !== prevEnd) return false
+  }
+  return true
+}
+
+/**
+ * Reconstruit la chaîne de créneau "HH:MM–HH:MM" à partir d'un startTime et d'une durée.
+ * Nécessaire pour appeler scoreCandidate qui attend ce format.
+ */
+function rebuilderSlot(startTime, durationMinutes) {
+  const [h, m] = startTime.split(':').map(Number)
+  const endMin  = h * 60 + m + durationMinutes
+  const eh = Math.floor(endMin / 60)
+  const em = endMin % 60
+  return `${startTime}–${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}`
+}
+
 /**
  * Calcule les meilleures propositions pour TOUTES les réponses en traitant
  * séquentiellement, de façon à ce que deux réponses ne se voient jamais
  * proposer le même créneau.
  *
- * Principe : après avoir attribué la meilleure proposition à une réponse,
- * elle est ajoutée en tant que "cours virtuel" dans la liste des conflits
- * avant de traiter la réponse suivante.
+ * Principe (passe 1 — greedy) : après avoir attribué la meilleure proposition
+ * à une réponse, elle est ajoutée en tant que "cours virtuel" dans la liste
+ * des conflits avant de traiter la réponse suivante.
+ *
+ * Principe (passe 2 — échanges) : pour chaque élève non placé, on tente jusqu'à
+ * MAX_TENTATIVES_ECHANGE échanges avec un élève placé.  L'échange n'est appliqué
+ * que si les deux élèves se retrouvent placés (amélioration stricte).
  *
  * @param {Array}  responses — réponses à traiter (dans l'ordre de priorité voulu)
  * @param {Array}  existingLessons — cours confirmés en base (non modifié)
@@ -452,30 +491,96 @@ export function computeAllProposals({
   teacherHomeLat = null, teacherHomeLng = null,
   scoringWeights = null,
 }) {
+  const sharedArgs = { schools, zone, maxResults, reservedSlots, preferredDaysOff, preferredProximityDays, teacherHomeLat, teacherHomeLng, scoringWeights }
+
+  // ── Passe 1 : greedy séquentiel ──────────────────────────────────────────────
   // Copie locale augmentée au fur et à mesure des attributions — garantit
   // que chaque nouvelle réponse voit les propositions déjà réservées comme des conflits.
   const virtualLessons = [...existingLessons]
+  // Index responseId → entrée cours virtuel pour pouvoir la retirer lors des échanges.
+  const virtualParId = {}
   const map = {}
 
   for (const response of responses) {
-    const proposals = computeProposals({
-      response,
-      existingLessons: virtualLessons,
-      schools, zone, maxResults, reservedSlots,
-      preferredDaysOff, preferredProximityDays,
-      teacherHomeLat, teacherHomeLng,
-      scoringWeights,
-    })
+    const proposals = computeProposals({ response, existingLessons: virtualLessons, ...sharedArgs })
     map[response.id] = proposals
 
-    // Réserver le créneau de la meilleure proposition comme cours virtuel
-    // pour bloquer les réponses suivantes sur ce même créneau.
     if (proposals[0]) {
-      virtualLessons.push({
+      const vl = {
         lessonDate:      proposals[0].candidateDate,
         lessonTime:      proposals[0].startTime,
         durationMinutes: proposals[0].durationMinutes,
+      }
+      virtualLessons.push(vl)
+      virtualParId[response.id] = vl
+    }
+  }
+
+  // ── Passe 2 : échanges pour réduire les conflits ─────────────────────────────
+  // Identifie les non-placés APRÈS la passe greedy.
+  const nonPlaces = responses.filter((r) => map[r.id].length === 0)
+  const places    = responses.filter((r) => map[r.id].length > 0)
+
+  for (const studentN of nonPlaces) {
+    let tentatives = 0
+    let echangeEffectue = false
+
+    for (const studentP of places) {
+      if (echangeEffectue || tentatives >= MAX_TENTATIVES_ECHANGE) break
+      tentatives++
+
+      const proposalP = map[studentP.id][0]
+      // N peut-il occuper le créneau actuel de P ?
+      if (!studentPeutPrendreSlot(studentN, proposalP)) continue
+
+      // Retirer le cours virtuel de P pour tester si P trouve un autre créneau
+      const vlP = virtualParId[studentP.id]
+      // virtualSansP : tous les cours virtuels sauf l'ancien slot de P.
+      const virtualSansP = virtualLessons.filter((vl) => vl !== vlP)
+      // Pour le recalcul de P, l'ancien slot de P est maintenant donné à N → bloqué.
+      // Sans ce bloqueur, P re-prendrait son propre slot et l'échange serait fictif.
+      const virtualPourRecalcP = [
+        ...virtualSansP,
+        { lessonDate: proposalP.candidateDate, lessonTime: proposalP.startTime, durationMinutes: proposalP.durationMinutes },
+      ]
+
+      const nouvellesProposalsP = computeProposals({
+        response: studentP,
+        existingLessons: virtualPourRecalcP,
+        ...sharedArgs,
+        maxResults: 1,
       })
+      if (nouvellesProposalsP.length === 0) continue  // P n'a pas d'alternative → échange impossible
+
+      // Vérifier que N peut réellement scorer ce créneau (date_fin_cours, conflits, etc.)
+      // On utilise virtualSansP (sans le slot de P) car N va l'occuper.
+      const scoreN = scoreCandidate({
+        day:       proposalP.day,
+        slot:      rebuilderSlot(proposalP.startTime, proposalP.durationMinutes),
+        slotsCount: Math.max(1, Math.round(proposalP.durationMinutes / 15)),
+        response:  studentN,
+        existingLessons: virtualSansP,
+        ...sharedArgs,
+      })
+      if (!scoreN) continue  // exclu par une règle dure (date_fin_cours, créneau réservé…)
+
+      // Les deux sont placés — échange valide.
+      const nouvProposalP = nouvellesProposalsP[0]
+      map[studentN.id] = [{ day: proposalP.day, slot: rebuilderSlot(proposalP.startTime, proposalP.durationMinutes), slotsCount: Math.max(1, Math.round(proposalP.durationMinutes / 15)), ...scoreN }]
+      map[studentP.id] = nouvellesProposalsP
+
+      // Mettre à jour virtualLessons : retirer l'ancien slot de P, ajouter les deux nouveaux
+      const idxVlP = virtualLessons.indexOf(vlP)
+      if (idxVlP !== -1) virtualLessons.splice(idxVlP, 1)
+      delete virtualParId[studentP.id]
+
+      const vlN = { lessonDate: proposalP.candidateDate, lessonTime: proposalP.startTime, durationMinutes: proposalP.durationMinutes }
+      const vlPnouveau = { lessonDate: nouvProposalP.candidateDate, lessonTime: nouvProposalP.startTime, durationMinutes: nouvProposalP.durationMinutes }
+      virtualLessons.push(vlN, vlPnouveau)
+      virtualParId[studentN.id] = vlN
+      virtualParId[studentP.id] = vlPnouveau
+
+      echangeEffectue = true
     }
   }
 
@@ -508,7 +613,8 @@ export function computeProposals({
 }) {
   // Durée cible : contexte élève > sondage > défaut 30 min.
   // effective_duration_minutes est calculé dans SchedulingAssistantPage avant l'appel.
-  const targetMinutes = response.effective_duration_minutes ?? response.desired_duration_minutes ?? 30
+  // || au lieu de ?? : une valeur 0 (insaisie en base) est traitée comme absente.
+  const targetMinutes = response.effective_duration_minutes || response.desired_duration_minutes || 30
   const targetSlots   = Math.max(1, Math.round(targetMinutes / 15))
 
   const avail = response.availabilities ?? {}

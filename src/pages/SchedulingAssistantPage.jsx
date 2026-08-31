@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
@@ -92,7 +93,7 @@ function computeWeekDays(offset) {
 
 // ScoreBadge importé depuis components/ScoreBadge.jsx.
 
-function ProposalCard({ response, proposals, onConfirm, confirming, schools = [], isLocked = false, onToggleLock }) {
+function ProposalCard({ response, proposals, onConfirm, confirming, schools = [], isLocked = false, onToggleLock, onViewStudent }) {
   const [open, setOpen] = useState(false)
   const [chosen, setChosen] = useState(null)
   const [done, setDone] = useState(false)
@@ -129,7 +130,19 @@ function ProposalCard({ response, proposals, onConfirm, confirming, schools = []
       <div className="p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="font-medium text-foreground">{response.first_name || '—'} {response.last_name || ''}</p>
+            <div className="flex items-center gap-2">
+              <p className="font-medium text-foreground">{response.first_name || '—'} {response.last_name || ''}</p>
+              {/* Lien vers la fiche élève — permet de corriger duree_cours_minutes sans quitter le planning */}
+              {response.student_id && onViewStudent && (
+                <button
+                  type="button"
+                  onClick={() => onViewStudent(response.student_id)}
+                  className="text-[10px] text-guitar-400 hover:underline"
+                >
+                  Voir la fiche
+                </button>
+              )}
+            </div>
             <p className="text-xs text-muted-foreground mt-0.5">
               {response.school_name || 'École non précisée'}
               {response.level ? ` · ${response.level}` : ''}
@@ -258,7 +271,8 @@ function ProposalCard({ response, proposals, onConfirm, confirming, schools = []
 // ─── Page principale ──────────────────────────────────────────────────────────
 
 export default function SchedulingAssistantPage() {
-  const { user } = useAuth()
+  const { user }    = useAuth()
+  const navigate    = useNavigate()
   const [responses, setResponses]         = useState([])
   const [existingLessons, setExistingLessons] = useState([])
   const [schools, setSchools]             = useState([])
@@ -347,7 +361,8 @@ export default function SchedulingAssistantPage() {
           const contextDuree = contextsMap[ctxKey] ?? null
           return {
             ...r,
-            effective_duration_minutes: contextDuree ?? r.desired_duration_minutes ?? 30,
+            // || au lieu de ?? : 0 en base est traité comme "non renseigné"
+            effective_duration_minutes: contextDuree || r.desired_duration_minutes || 30,
           }
         })
 
@@ -538,6 +553,7 @@ export default function SchedulingAssistantPage() {
           planningStatus:  'envisage',  // → bordure pointillée dans WeekGridPlanning
           // Méta : retrouver le contexte pour recalculer le score après déplacement
           _responseId:     response.id,
+          _studentId:      response.student_id ?? null,
         }
       })
       .filter(Boolean)
@@ -562,7 +578,7 @@ export default function SchedulingAssistantPage() {
     const result = []
     for (const response of statsPlacement.nonPlaces) {
       const avail       = response.availabilities ?? {}
-      const targetMin   = response.effective_duration_minutes ?? 30
+      const targetMin   = response.effective_duration_minutes || 30
       const targetSlots = Math.max(1, Math.round(targetMin / 15))
 
       let bestDay = null, bestSlot = null, bestDuration = targetMin
@@ -604,6 +620,7 @@ export default function SchedulingAssistantPage() {
         schoolName:      response.school_name ?? null,
         planningStatus:  'conflit',
         _responseId:     response.id,
+        _studentId:      response.student_id ?? null,
       })
     }
     return result
@@ -1068,6 +1085,7 @@ export default function SchedulingAssistantPage() {
                   schools={schools}
                   isLocked={lockedIds.has(r.id)}
                   onToggleLock={handleToggleLock}
+                  onViewStudent={(studentId) => navigate(`/eleves/${studentId}`)}
                 />
               ))}
             </div>
@@ -1269,6 +1287,7 @@ export default function SchedulingAssistantPage() {
                 onMoveLesson={handleMoveProposal}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
+                onViewStudent={(lesson) => lesson._studentId && navigate(`/eleves/${lesson._studentId}`)}
               />
 
               {/* ── Panneau "Acter ce planning" ──────────────────────────────── */}
