@@ -1338,7 +1338,7 @@ export default function SettingsPage() {
               <p className="text-sm text-muted-foreground">Importances relatives des critères dans les propositions de créneaux</p>
               <button
                 type="button"
-                onClick={() => navigate('/professeur/planning-intelligent')}
+                onClick={() => navigate('/admin/planning-intelligent')}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
               >
                 <CalendarDays className="w-3.5 h-3.5" />

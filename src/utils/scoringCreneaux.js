@@ -363,21 +363,25 @@ export function scoreCandidate({
   // ── Malus : jour à éviter (preferred_days_off) ────────────────────────────
   // Rétrocompat : ancien format string[] → toute_la_journee.
   // N'élimine jamais la proposition — influence uniquement le classement.
+  // poids_jours_evites : pondérable (null → 100, comportement inchangé).
+  // Rendre ce malus pondérable permet à poids_compacite=100 + tout le reste à 0
+  // de ne pas être contrecarré par ce malus fixe.
   const joursEvites = normaliserJoursAEviter(preferredDaysOff)
   for (const pref of joursEvites) {
     if (pref.jour !== day) continue
+    let s = 0
     if (pref.mode === 'toute_la_journee') {
-      score += SCORE_JOUR_EVITE
-      reasons.push(`${SCORE_JOUR_EVITE} : jour à éviter selon vos préférences`)
+      s = appliquerPoids(SCORE_JOUR_EVITE, w.poids_jours_evites ?? 100)
+      if (s !== 0) reasons.push(`${s.toFixed(2).replace(/\.?0+$/, '')} : jour à éviter selon vos préférences`)
     } else if (pref.mode === 'plage' && pref.heure_debut && pref.heure_fin) {
       const plageDebut = timeToMinutes(pref.heure_debut)
       const plageFin   = timeToMinutes(pref.heure_fin)
-      // Le créneau chevauche la plage à éviter
       if (startMin < plageFin && endMin > plageDebut) {
-        score += SCORE_JOUR_EVITE
-        reasons.push(`${SCORE_JOUR_EVITE} : plage horaire à éviter ce ${day} (${pref.heure_debut}–${pref.heure_fin})`)
+        s = appliquerPoids(SCORE_JOUR_EVITE, w.poids_jours_evites ?? 100)
+        if (s !== 0) reasons.push(`${s.toFixed(2).replace(/\.?0+$/, '')} : plage horaire à éviter ce ${day} (${pref.heure_debut}–${pref.heure_fin})`)
       }
     }
+    if (s !== 0) score += s
     break  // un seul enregistrement par jour attendu
   }
 
@@ -497,6 +501,15 @@ export function computeAllProposals({
   const sharedArgs = { schools, zone, maxResults, reservedSlots, preferredDaysOff, preferredProximityDays, teacherHomeLat, teacherHomeLng, scoringWeights }
 
   // ── Passe 1 : greedy séquentiel ──────────────────────────────────────────────
+  // Trier les réponses par école avant le greedy : les élèves d'une même école
+  // sont traités consécutivement, ce qui garantit que le 2e élève d'une école
+  // voit le cours virtuel du 1er dans sameDayLessons → score de compacité > 0.
+  // Sans ce tri, l'ordre de la base (soumission) peut interleaver les écoles
+  // et priver chaque élève de tout voisin → score compacité = 0 pour tous.
+  const responsesTriees = [...responses].sort((a, b) =>
+    (a.school_name ?? '').localeCompare(b.school_name ?? '', 'fr')
+  )
+
   // Copie locale augmentée au fur et à mesure des attributions — garantit
   // que chaque nouvelle réponse voit les propositions déjà réservées comme des conflits.
   const virtualLessons = [...existingLessons]
@@ -504,7 +517,7 @@ export function computeAllProposals({
   const virtualParId = {}
   const map = {}
 
-  for (const response of responses) {
+  for (const response of responsesTriees) {
     const proposals = computeProposals({ response, existingLessons: virtualLessons, ...sharedArgs })
     map[response.id] = proposals
 
@@ -521,8 +534,9 @@ export function computeAllProposals({
 
   // ── Passe 2 : échanges pour réduire les conflits ─────────────────────────────
   // Identifie les non-placés APRÈS la passe greedy.
-  const nonPlaces = responses.filter((r) => map[r.id].length === 0)
-  const places    = responses.filter((r) => map[r.id].length > 0)
+  // On travaille sur responsesTriees pour rester cohérent avec la passe 1.
+  const nonPlaces = responsesTriees.filter((r) => map[r.id].length === 0)
+  const places    = responsesTriees.filter((r) => map[r.id].length > 0)
 
   for (const studentN of nonPlaces) {
     let tentatives = 0

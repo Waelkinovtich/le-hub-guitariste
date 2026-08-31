@@ -695,6 +695,40 @@ export default function SchedulingAssistantPage() {
   }, [existingLessons, proposalLessons, conflictLessons, weekDays, showConflicts, hiddenResponseIds])
 
   /**
+   * Détecte les chevauchements entre propositions dans lessonsForGrid.
+   * Seules les propositions (envisagé/conflit) sont comparées entre elles :
+   * les cours réels (nonMovable) sont déjà confirmés et ne constituent pas un chevauchement
+   * d'édition provisoire — ils bloquent via reservedSlots côté moteur.
+   * Retourne la liste des paires en chevauchement pour affichage dans le panneau Acter.
+   */
+  const chevauchementsProvisoires = useMemo(() => {
+    const propositions = lessonsForGrid.filter(
+      (l) => l.planningStatus === 'envisage' || l.planningStatus === 'conflit'
+    )
+    // Grouper par date ISO
+    const parDate = {}
+    for (const p of propositions) {
+      if (!parDate[p.lessonDate]) parDate[p.lessonDate] = []
+      parDate[p.lessonDate].push(p)
+    }
+    const paires = []
+    for (const dayLessons of Object.values(parDate)) {
+      for (let i = 0; i < dayLessons.length; i++) {
+        for (let j = i + 1; j < dayLessons.length; j++) {
+          const aStart = timeToMinutes(dayLessons[i].lessonTime)
+          const aEnd   = aStart + dayLessons[i].durationMinutes
+          const bStart = timeToMinutes(dayLessons[j].lessonTime)
+          const bEnd   = bStart + dayLessons[j].durationMinutes
+          if (aStart < bEnd && aEnd > bStart) {
+            paires.push({ a: dayLessons[i], b: dayLessons[j] })
+          }
+        }
+      }
+    }
+    return paires
+  }, [lessonsForGrid])
+
+  /**
    * Appelé par WeekGridPlanning quand une proposition est glissée vers un nouveau créneau.
    * - Vérifie que le créneau cible est déclaré disponible par l'élève (Bug 2).
    *   Si ce n'est pas le cas, lève une exception → WeekGridPlanning rollback + message.
@@ -1401,6 +1435,8 @@ export default function SchedulingAssistantPage() {
               )}
 
               {/* Grille — les propositions y sont affichées en style "envisagé" (bordure pointillée) */}
+              {/* allowOverlap : autorise le chevauchement temporaire lors de la réorganisation
+                  manuelle — signalé en orange dans la grille, bloqué à la validation finale. */}
               <WeekGridPlanning
                 weekDays={weekDays}
                 lessons={lessonsForGrid}
@@ -1414,6 +1450,7 @@ export default function SchedulingAssistantPage() {
                 onDragEnd={handleDragEnd}
                 onViewStudent={(lesson) => lesson._studentId && navigate(`/eleves/${lesson._studentId}`)}
                 onDurationChange={handleDurationChange}
+                allowOverlap
               />
 
               {/* ── Panneau "Acter ce planning" ──────────────────────────────── */}
@@ -1445,11 +1482,13 @@ export default function SchedulingAssistantPage() {
                       {selectedIds.size > 0 ? 'Tout désélectionner' : 'Tout sélectionner'}
                     </button>
 
-                    {/* Bouton Acter — actif seulement si au moins un élève sélectionné */}
+                    {/* Bouton Acter — actif seulement si au moins un élève sélectionné
+                        ET aucun chevauchement provisoire non résolu dans la grille */}
                     <button
                       type="button"
                       onClick={handleActerSelection}
-                      disabled={actingPlan || selectedIds.size === 0}
+                      disabled={actingPlan || selectedIds.size === 0 || chevauchementsProvisoires.length > 0}
+                      title={chevauchementsProvisoires.length > 0 ? 'Résolvez les chevauchements orange avant d\'acter' : undefined}
                       className="flex items-center gap-1.5 px-4 py-2 rounded-xl guitar-gradient text-white text-xs font-medium disabled:opacity-40"
                     >
                       {actingPlan
@@ -1459,6 +1498,22 @@ export default function SchedulingAssistantPage() {
                     </button>
                   </div>
                 </div>
+
+                {/* Avertissement chevauchements non résolus */}
+                {chevauchementsProvisoires.length > 0 && (
+                  <div className="px-3 py-2.5 rounded-xl bg-orange-500/10 border border-orange-500/25 text-xs text-orange-400 space-y-1">
+                    <p className="font-medium">
+                      {chevauchementsProvisoires.length === 1
+                        ? '1 chevauchement à résoudre avant de pouvoir acter :'
+                        : `${chevauchementsProvisoires.length} chevauchements à résoudre avant de pouvoir acter :`}
+                    </p>
+                    {chevauchementsProvisoires.map((c, i) => (
+                      <p key={i} className="opacity-80">
+                        • {c.a.studentName} et {c.b.studentName} — {c.a.lessonDate} {c.a.lessonTime}–{c.b.lessonTime}
+                      </p>
+                    ))}
+                  </div>
+                )}
 
                 {actError && (
                   <p className="text-xs text-guitar-400 px-1">{actError}</p>

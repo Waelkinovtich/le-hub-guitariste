@@ -242,7 +242,10 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
 //   (tuiles envisage/conflit uniquement). Permet d'ouvrir la fiche élève depuis la grille.
 // onDurationChange(lesson, newMinutes) : appelé après sauvegarde en base pour que
 // le parent mette à jour effective_duration_minutes et relance le calcul de propositions.
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange }) {
+// allowOverlap : quand true, un dépôt sur un emplacement occupé n'est pas bloqué.
+// Réservé au mode édition provisoire (SchedulingAssistantPage) — PlanningPage laisse false.
+// L'appelant doit signaler les chevauchements résiduels avant toute validation finale.
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, allowOverlap = false }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -293,6 +296,29 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
 
   const lessonsByDay    = useMemo(() => groupByDay(localLessons), [localLessons])
   const reservedByDay   = useMemo(() => indexReservedByDay(reservedSlots, weekDays), [reservedSlots, weekDays])
+
+  // Ids des cours en chevauchement actif (uniquement utile quand allowOverlap=true).
+  // En mode édition provisoire, deux propositions peuvent temporairement se superposer
+  // en attendant que l'utilisateur réorganise — signalé en orange dans la grille.
+  const idsEnChevauchement = useMemo(() => {
+    if (!allowOverlap) return new Set()
+    const ids = new Set()
+    for (const dayLessons of Object.values(lessonsByDay)) {
+      for (let i = 0; i < dayLessons.length; i++) {
+        for (let j = i + 1; j < dayLessons.length; j++) {
+          const aStart = timeToSlot(dayLessons[i].lessonTime)
+          const aEnd   = aStart + durationToSlots(dayLessons[i].durationMinutes ?? 45)
+          const bStart = timeToSlot(dayLessons[j].lessonTime)
+          const bEnd   = bStart + durationToSlots(dayLessons[j].durationMinutes ?? 45)
+          if (aStart < bEnd && aEnd > bStart) {
+            ids.add(dayLessons[i].id)
+            ids.add(dayLessons[j].id)
+          }
+        }
+      }
+    }
+    return ids
+  }, [lessonsByDay, allowOverlap])
 
   const allSchoolNames = useMemo(() => {
     const names = new Set()
@@ -422,12 +448,18 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
     // Pas de déplacement réel
     if (m.currentDay === m.origDay && m.currentStartSlot === m.origStartSlot) return
 
-    // Vérification de chevauchement avec les cours existants
+    // Vérification de chevauchement avec les cours existants.
+    // En mode allowOverlap (planning provisoire), le dépôt est autorisé même en cas de
+    // chevauchement — la grille l'affiche en orange pour inviter à résoudre avant validation.
     if (hasOverlap(lessonsByDay, m.lesson.id, m.currentDay, m.currentStartSlot, m.slotCount)) {
-      showMoveError('Ce créneau est déjà occupé par un autre cours.')
-      return
+      if (!allowOverlap) {
+        showMoveError('Ce créneau est déjà occupé par un autre cours.')
+        return
+      }
+      // Mode provisoire : avertissement temporaire visible 2 s
+      showMoveError('Chevauchement temporaire — résolvez-le avant d\'acter le planning.')
     }
-    // Vérification de chevauchement avec les créneaux réservés
+    // Les créneaux réservés (écoles) restent bloquants en toutes circonstances.
     if (hasReservedOverlap(reservedByDay, m.currentDay, m.currentStartSlot, m.slotCount)) {
       showMoveError('Ce créneau est réservé pour une intervention école — déplacement impossible.')
       return
@@ -742,6 +774,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   const isEnvisage   = lesson.planningStatus === 'envisage'
                   const isConflit    = lesson.planningStatus === 'conflit'
                   const isBeingMoved = movePreview?.lessonId === lesson.id
+                  // Chevauchement temporaire autorisé (mode Planning intelligent) → signalé en orange
+                  const isChevauchement = idsEnChevauchement.has(lesson.id)
 
                   if (startSlot < 0 || startSlot >= TOTAL_SLOTS) return null
 
@@ -776,17 +810,21 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                       <div
                         className="h-full px-1 py-0.5 flex flex-col gap-0.5 overflow-hidden"
                         style={{
-                          background:  isConflit
+                          background: isChevauchement
+                            // Orange ambre hachuré : signale visuellement un chevauchement temporaire à résoudre
+                            ? 'repeating-linear-gradient(135deg, #f9731620 0px, #f9731620 4px, transparent 4px, transparent 10px)'
+                            : isConflit
                             ? 'repeating-linear-gradient(135deg, #ef444420 0px, #ef444420 4px, transparent 4px, transparent 10px)'
                             : color + '30',
-                          borderLeft: `3px ${(isEnvisage || isConflit) ? 'dashed' : 'solid'} ${isConflit ? '#ef4444' : color}`,
+                          borderLeft: `3px ${(isEnvisage || isConflit || isChevauchement) ? 'dashed' : 'solid'} ${isChevauchement ? '#f97316' : isConflit ? '#ef4444' : color}`,
+                          outline: isChevauchement ? '1px solid #f9731660' : undefined,
                         }}
                       >
-                        <p className="text-[10px] font-semibold leading-tight truncate" style={{ color: isConflit ? '#ef4444' : color }}>
+                        <p className="text-[10px] font-semibold leading-tight truncate" style={{ color: isChevauchement ? '#f97316' : isConflit ? '#ef4444' : color }}>
                           {lesson.studentName || 'Élève'}
                         </p>
                         {slotCount >= 3 && (
-                          <p className="text-[9px] leading-tight opacity-70" style={{ color: isConflit ? '#ef4444' : color }}>
+                          <p className="text-[9px] leading-tight opacity-70" style={{ color: isChevauchement ? '#f97316' : isConflit ? '#ef4444' : color }}>
                             {lesson.timeLabel} · {lesson.durationMinutes} min
                           </p>
                         )}
