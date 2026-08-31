@@ -103,12 +103,15 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
     try {
       if (lesson._studentId) {
         // Cherche un contexte existant avant de créer (pas de contrainte unique garantie côté SQL)
-        const { data: ctx } = await supabase
+        // PostgreSQL distingue NULL et '' : .eq('school_name', '') ne matche pas les lignes IS NULL.
+        let ctxQuery = supabase
           .from('student_contexts')
           .select('id')
           .eq('student_id', lesson._studentId)
-          .eq('school_name', lesson.schoolName || '')
-          .maybeSingle()
+        ctxQuery = lesson.schoolName
+          ? ctxQuery.eq('school_name', lesson.schoolName)
+          : ctxQuery.is('school_name', null)
+        const { data: ctx } = await ctxQuery.maybeSingle()
 
         if (ctx) {
           const { error: updErr } = await supabase

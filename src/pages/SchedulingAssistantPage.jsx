@@ -660,7 +660,10 @@ export default function SchedulingAssistantPage() {
         lessonDate,
         lessonTime:      parseStartTime(bestSlot),
         timeLabel:       parseStartTime(bestSlot),
-        durationMinutes: bestDuration,
+        // durationMinutes = durée désirée (targetMin), pas le fallback 15 min :
+        // le panneau DurationEditPanel s'initialise sur cette valeur, donc l'utilisateur
+        // voit toujours la durée qu'il a choisie, même si bestDuration était contraint à 15.
+        durationMinutes: targetMin,
         studentName:     [response.first_name, response.last_name].filter(Boolean).join(' ') || 'Élève',
         schoolName:      response.school_name ?? null,
         planningStatus:  'conflit',
