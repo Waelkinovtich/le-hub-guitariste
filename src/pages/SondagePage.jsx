@@ -865,14 +865,21 @@ export default function SondagePage() {
         desired_duration_minutes: form.desired_duration_minutes ?? null,
         expectations: form.expectations || null,
       }
-      const { error: insertError } = await supabase.from('survey_responses').insert(payload)
+      // Récupérer l'id généré pour lier les inscriptions à cette réponse précise
+      const { data: responseData, error: insertError } = await supabase
+        .from('survey_responses')
+        .insert(payload)
+        .select('id')
+        .single()
       if (insertError) throw insertError
+      const responseId = responseData?.id ?? null
 
       // ── Inscriptions individuelles ────────────────────────────────────────
       // Répondant principal (is_respondent = true) + personnes supplémentaires
       const regsToInsert = [
         {
           token_id: tokenRow.id,
+          response_id: responseId,
           is_respondent: true,
           prenom: form.first_name || null,
           nom: form.last_name || null,
@@ -884,6 +891,7 @@ export default function SondagePage() {
         },
         ...(form.inscriptions_supplementaires ?? []).map((p) => ({
           token_id: tokenRow.id,
+          response_id: responseId,
           is_respondent: false,
           prenom: p.prenom || null,
           nom: p.nom || null,

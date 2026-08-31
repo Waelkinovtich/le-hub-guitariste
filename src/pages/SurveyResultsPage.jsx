@@ -62,8 +62,9 @@ function Divider() {
 // Durées proposables dans le sondage (en minutes). Source : grilles standard.
 const DUREES_SONDAGE = [15, 30, 45, 60, 90, 120]
 
-function DetailView({ response, onBack }) {
+function DetailView({ response, registrations, onBack }) {
   const availabilities = fmtAvailabilities(response.availabilities)
+  const supplementaires = (registrations ?? []).filter((r) => !r.is_respondent)
   const hasGuardian1 = response.guardian1_name || response.guardian1_phone || response.guardian1_email
   const hasGuardian2 = response.guardian2_name || response.guardian2_phone || response.guardian2_email
   const [desiredDuration, setDesiredDuration] = useState(response.desired_duration_minutes ?? null)
@@ -216,6 +217,34 @@ function DetailView({ response, onBack }) {
             <Section title="Attentes">
               <div className="rounded-xl bg-surface border border-border-subtle px-4 py-3">
                 <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{response.expectations}</p>
+              </div>
+            </Section>
+          </>
+        )}
+
+        {supplementaires.length > 0 && (
+          <>
+            <Divider />
+            <Section title={`Personnes inscrites par ${response.first_name || 'ce répondant'} (${supplementaires.length})`}>
+              <div className="space-y-3">
+                {supplementaires.map((reg) => (
+                  <div key={reg.id} className="rounded-xl bg-surface border border-border-subtle px-4 py-3 space-y-1.5">
+                    <p className="text-sm font-medium text-foreground">
+                      {reg.prenom || '—'} {reg.nom || ''}
+                      {reg.birth_year && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({reg.birth_year})</span>}
+                    </p>
+                    {reg.registration_type === 'reinscription' && (
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25">
+                        Réinscription
+                      </span>
+                    )}
+                    {reg.school_name && <p className="text-xs text-muted-foreground">{reg.school_name}</p>}
+                    {reg.email && <p className="text-xs text-muted-foreground">{reg.email}</p>}
+                    {reg.telephone && (
+                      <p className="text-xs text-muted-foreground"><PhoneActions number={reg.telephone} /></p>
+                    )}
+                  </div>
+                ))}
               </div>
             </Section>
           </>
@@ -438,68 +467,23 @@ function SlotAssignPanel({ response, onConfirmed, onClose }) {
 
 // ─── Carte de réponse ─────────────────────────────────────────────────────────
 
-function RegistrationsList({ registrations }) {
-  // Seules les personnes supplémentaires (non-répondants) apparaissent ici.
-  // Le répondant est déjà affiché dans l'en-tête de la carte ResponseCard.
-  const supplementaires = (registrations ?? []).filter((r) => !r.is_respondent)
-  if (supplementaires.length === 0) return null
+// Remplace l'ancien RegistrationsList : affiche un lien compteur discret au lieu
+// d'exposer toutes les données des inscriptions supplémentaires sur la carte.
+// Évite la fuite inter-familles sur les tokens génériques (plusieurs familles
+// partageant le même token_id pourraient voir les données des autres).
+function VoirAussiInscriptions({ prenom, supplementaires, onOpenDetail }) {
+  if (!supplementaires || supplementaires.length === 0) return null
+  const n = supplementaires.length
   return (
-    <div className="px-5 pb-4 pt-1">
-      <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">
-        Personnes inscrites ({supplementaires.length})
-      </p>
-      <div className="space-y-1.5">
-        {supplementaires.map((reg) => {
-          // Créneaux disponibles des personnes supplémentaires (champ JSONB — migration T1b)
-          const avail = reg.availabilities && typeof reg.availabilities === 'object'
-            ? Object.entries(reg.availabilities)
-            : []
-          const totalSlots = avail.reduce((s, [, slots]) => s + slots.length, 0)
-          return (
-            <div key={reg.id}
-              className="text-xs px-3 py-2 rounded-lg bg-surface border border-border-subtle space-y-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                {reg.registration_type === 'reinscription' && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 flex-shrink-0">
-                    Réinscription
-                  </span>
-                )}
-                <span className="font-medium text-foreground">
-                  {reg.prenom || '—'} {reg.nom || ''}
-                  {reg.birth_year && <span className="ml-1 font-normal text-muted-foreground">({reg.birth_year})</span>}
-                </span>
-                {reg.choix_structure === 'cesu' ? (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/25 flex items-center gap-1 flex-shrink-0">
-                    <Home className="w-2.5 h-2.5" />CESU
-                  </span>
-                ) : reg.school_name ? (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-surface-raised border border-border-subtle text-muted-foreground flex-shrink-0">
-                    {reg.school_name}
-                  </span>
-                ) : null}
-                {reg.email && <span className="text-muted-foreground truncate">{reg.email}</span>}
-                {reg.telephone && (
-                  <span className="text-muted-foreground flex-shrink-0"><PhoneActions number={reg.telephone} /></span>
-                )}
-              </div>
-              {totalSlots > 0 && (
-                <div className="pt-1 border-t border-border-subtle/50">
-                  <p className="text-[10px] text-muted uppercase tracking-wider mb-1">
-                    Disponibilités ({totalSlots} créneau{totalSlots > 1 ? 'x' : ''})
-                  </p>
-                  <div className="flex flex-wrap gap-1">
-                    {avail.map(([jour, slots]) => (
-                      <span key={jour} className="text-[10px] px-1.5 py-0.5 rounded bg-surface-raised border border-border-subtle text-muted-foreground">
-                        {jour} : {slots.length} créneau{slots.length > 1 ? 'x' : ''}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
+    <div className="px-5 pb-3 pt-0.5">
+      <button
+        type="button"
+        onClick={onOpenDetail}
+        className="text-xs text-guitar-400 hover:underline flex items-center gap-1.5"
+      >
+        <Users className="w-3 h-3 flex-shrink-0" />
+        Voir aussi : {prenom || 'ce répondant'} a inscrit {n} autre{n > 1 ? 's' : ''} personne{n > 1 ? 's' : ''}
+      </button>
     </div>
   )
 }
@@ -776,7 +760,7 @@ function FusionPanel({ response, onClose, onFused }) {
   )
 }
 
-function ResponseCard({ r, registrations, genericTokens, openPanelId, setOpenPanelId, onSelect, onConfirmed, onReassign, onDelete, onFused }) {
+function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenPanelId, onSelect, onConfirmed, onReassign, onDelete, onFused }) {
   // Indique si la réponse provient d'un lien partagé générique plutôt qu'un envoi individuel
   const genericMeta = genericTokens?.[r.token_id]
   return (
@@ -825,7 +809,11 @@ function ResponseCard({ r, registrations, genericTokens, openPanelId, setOpenPan
         </div>
       </div>
 
-      <RegistrationsList registrations={registrations} />
+      <VoirAussiInscriptions
+        prenom={r.first_name}
+        supplementaires={supplementaires}
+        onOpenDetail={() => onSelect(r)}
+      />
 
       <div className="px-5 pb-4 border-t border-border-subtle pt-3 flex flex-wrap gap-2">
         {r.status !== 'confirme' && (
@@ -924,6 +912,16 @@ export default function SurveyResultsPage() {
   const [selected, setSelected] = useState(null)
   const [fetchError, setFetchError] = useState(null)
   const [openPanelId, setOpenPanelId] = useState(null)
+  const [recherche, setRecherche] = useState('')
+
+  // Filtrage réactif par prénom / nom — insensible à la casse et aux espaces superflus
+  const responsesFiltrees = useMemo(() => {
+    if (!recherche.trim()) return responses
+    const q = recherche.trim().toLowerCase()
+    return responses.filter((r) =>
+      [r.first_name, r.last_name].filter(Boolean).some((v) => v.toLowerCase().includes(q))
+    )
+  }, [responses, recherche])
 
   useEffect(() => {
     async function load() {
@@ -952,6 +950,25 @@ export default function SurveyResultsPage() {
     }
     return map
   }, [registrations])
+
+  // Groupage par response_id — source de vérité pour les nouvelles soumissions.
+  // Pour les anciennes inscriptions (response_id NULL), on retombe sur regsByToken.
+  const regsByResponse = useMemo(() => {
+    const map = {}
+    for (const reg of registrations) {
+      if (!reg.response_id) continue
+      if (!map[reg.response_id]) map[reg.response_id] = []
+      map[reg.response_id].push(reg)
+    }
+    return map
+  }, [registrations])
+
+  // Renvoie les inscriptions supplémentaires (non-répondants) liées à une réponse précise.
+  // Priorité : response_id (sûr) > token_id (fallback données anciennes, tokens individuels).
+  const getSupplementaires = (r) => {
+    const regs = regsByResponse[r.id] ?? regsByToken[r.token_id] ?? []
+    return regs.filter((reg) => !reg.is_respondent)
+  }
 
   const handleConfirmed = (count, slot) => {
     setResponses(prev => prev.map(x =>
@@ -995,7 +1012,14 @@ export default function SurveyResultsPage() {
   }
 
   if (selected) {
-    return <DetailView response={selected} onBack={() => setSelected(null)} />
+    const regsSelected = regsByResponse[selected.id] ?? regsByToken[selected.token_id] ?? []
+    return (
+      <DetailView
+        response={selected}
+        registrations={regsSelected}
+        onBack={() => setSelected(null)}
+      />
+    )
   }
 
   if (loading) {
@@ -1007,8 +1031,8 @@ export default function SurveyResultsPage() {
     )
   }
 
-  const confirmes = responses.filter(r => r.status === 'confirme')
-  const attente   = responses.filter(r => r.status !== 'confirme')
+  const confirmes = responsesFiltrees.filter(r => r.status === 'confirme')
+  const attente   = responsesFiltrees.filter(r => r.status !== 'confirme')
 
   // Nombre d'élèves individuels par section (1 ligne survey_registrations = 1 élève)
   const totalEleves       = registrations.length
@@ -1025,6 +1049,31 @@ export default function SurveyResultsPage() {
         <p className="text-sm text-muted-foreground">
           {responses.length} répondant{responses.length !== 1 ? 's' : ''} · {totalEleves} élève{totalEleves !== 1 ? 's' : ''} au total
         </p>
+
+        {/* Barre de recherche — filtre par prénom ou nom, réactif */}
+        {responses.length > 0 && (
+          <div className="relative mt-4">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Rechercher par prénom ou nom…"
+              value={recherche}
+              onChange={(e) => setRecherche(e.target.value)}
+              className="w-full pl-10 pr-8 py-2 rounded-xl border border-border-subtle bg-surface text-sm placeholder:text-muted-foreground focus:outline-none focus:border-guitar-500 transition-colors"
+            />
+            {recherche && (
+              <button
+                type="button"
+                onClick={() => setRecherche('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Effacer la recherche"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+
         {fetchError && (
           <p className="mt-2 text-sm text-guitar-400 bg-guitar-600/10 border border-guitar-600/20 rounded-lg px-3 py-2">
             Erreur Supabase : {fetchError}
@@ -1037,6 +1086,18 @@ export default function SurveyResultsPage() {
           <ClipboardList className="w-8 h-8 text-muted mx-auto mb-3" />
           <p className="text-sm text-muted-foreground">Aucune réponse enregistrée.</p>
         </div>
+      ) : responsesFiltrees.length === 0 ? (
+        <div className="glass-panel rounded-2xl p-10 text-center">
+          <Search className="w-8 h-8 text-muted mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground">Aucun résultat pour « {recherche} ».</p>
+          <button
+            type="button"
+            onClick={() => setRecherche('')}
+            className="mt-3 text-xs text-guitar-400 hover:underline"
+          >
+            Effacer la recherche
+          </button>
+        </div>
       ) : (
         <div className="space-y-8">
           {confirmes.length > 0 && (
@@ -1047,7 +1108,7 @@ export default function SurveyResultsPage() {
                   <ResponseCard
                     key={r.id}
                     r={r}
-                    registrations={regsByToken[r.token_id] ?? []}
+                    supplementaires={getSupplementaires(r)}
                     genericTokens={genericTokens}
                     openPanelId={openPanelId}
                     setOpenPanelId={setOpenPanelId}
@@ -1070,7 +1131,7 @@ export default function SurveyResultsPage() {
                   <ResponseCard
                     key={r.id}
                     r={r}
-                    registrations={regsByToken[r.token_id] ?? []}
+                    supplementaires={getSupplementaires(r)}
                     genericTokens={genericTokens}
                     openPanelId={openPanelId}
                     setOpenPanelId={setOpenPanelId}

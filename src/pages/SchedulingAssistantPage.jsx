@@ -444,7 +444,52 @@ export default function SchedulingAssistantPage() {
     // (l'utilisateur a glissé-déposé un créneau en conflit vers une position libre).
     const places    = responses.filter((r) => (proposalsMap[r.id] ?? []).length > 0 || proposalOverrides[r.id])
     const nonPlaces = responses.filter((r) => (proposalsMap[r.id] ?? []).length === 0 && !proposalOverrides[r.id])
-    return { total: responses.length, places: places.length, nonPlaces, nonPlacesCount: nonPlaces.length }
+
+    // Catégoriser chaque non-placé pour distinguer CONFLITS et TROUS :
+    //   'sans-disponibilites' — aucun créneau déclaré → hors du champ de la passe d'échanges
+    //   'duree-incompatible'  — créneaux déclarés, mais aucune fenêtre consécutive assez longue
+    //   'conflit'             — fenêtres valides existent MAIS toutes prises (la passe d'échanges
+    //                          peut potentiellement libérer une d'entre elles)
+    // NB : un "trou" (slot libre que le greedy n'a pas utilisé) est théoriquement impossible :
+    //   si un slot valide était libre, le greedy l'aurait pris en priorité.
+    const nonPlacesAvecMotif = nonPlaces.map((r) => {
+      const avail = r.availabilities ?? {}
+      const hasSomeAvail = Object.values(avail).some((s) => Array.isArray(s) && s.length > 0)
+      if (!hasSomeAvail) return { r, motif: 'sans-disponibilites' }
+
+      const targetMin   = r.effective_duration_minutes || 30
+      const targetSlots = Math.max(1, Math.round(targetMin / 15))
+      let hasCandidats  = false
+
+      outer:
+      for (const [, slots] of Object.entries(avail)) {
+        if (!Array.isArray(slots)) continue
+        for (let i = 0; i < slots.length; i++) {
+          if (i + targetSlots > slots.length) continue
+          let ok = true
+          for (let j = 1; j < targetSlots; j++) {
+            const prevEnd   = timeToMinutes(parseStartTime(slots[i + j - 1])) + 15
+            const nextStart = timeToMinutes(parseStartTime(slots[i + j]))
+            if (nextStart !== prevEnd) { ok = false; break }
+          }
+          if (ok) { hasCandidats = true; break outer }
+        }
+      }
+
+      if (!hasCandidats) return { r, motif: 'duree-incompatible' }
+      // A des fenêtres valides → elles étaient toutes occupées par d'autres élèves (conflit réel).
+      return { r, motif: 'conflit' }
+    })
+
+    const conflits    = nonPlacesAvecMotif.filter((x) => x.motif === 'conflit')
+    const sansDispos  = nonPlacesAvecMotif.filter((x) => x.motif === 'sans-disponibilites')
+    const dureeIncomp = nonPlacesAvecMotif.filter((x) => x.motif === 'duree-incompatible')
+
+    return {
+      total: responses.length, places: places.length,
+      nonPlaces, nonPlacesCount: nonPlaces.length,
+      nonPlacesAvecMotif, conflits, sansDispos, dureeIncomp,
+    }
   }, [responses, proposalsMap, proposalOverrides])
 
   // Notifié par WeekGridPlanning quand un drag commence — identifie la réponse
@@ -820,6 +865,22 @@ export default function SchedulingAssistantPage() {
       existingLessons, schools, reservedSlots])
 
   /**
+   * Met à jour effective_duration_minutes d'une réponse après que l'utilisateur
+   * a modifié la durée directement depuis la grille (DurationEditPanel).
+   * La persistance Supabase a déjà eu lieu dans DurationEditPanel ;
+   * ici on met à jour le state React pour déclencher le recalcul via useMemo proposalsMap.
+   */
+  const handleDurationChange = useCallback((lesson, newMinutes) => {
+    const responseId = lesson._responseId
+    if (!responseId) return
+    setResponses((prev) => prev.map((r) =>
+      r.id === responseId
+        ? { ...r, effective_duration_minutes: newMinutes, desired_duration_minutes: newMinutes }
+        : r
+    ))
+  }, [])
+
+  /**
    * Transforme une proposition acceptée en série de cours hebdomadaires jusqu'à la fin de l'année scolaire.
    * Partagé entre vue liste et vue grille — les deux appellent cette même fonction.
    * Dans la vue grille, proposal = proposalOverrides[id] ?? proposalsMap[id][0],
@@ -979,38 +1040,69 @@ export default function SchedulingAssistantPage() {
         </div>
       ) : (
         <>
-          {/* ── Compteur de placement ────────────────────────────────────────── */}
-          {/* Toujours visible — permet de distinguer un bug d'un manque réel de disponibilités */}
-          <div className={`flex items-center gap-4 flex-wrap px-4 py-2.5 rounded-xl text-xs mb-4
+          {/* ── Bandeau de placement — toujours visible ──────────────────────── */}
+          {/* Distingue les CONFLITS (créneaux pris par d'autres, résolubles par échange)
+              des cas sans disponibilité ou durée incompatible (passe d'échanges inutile) */}
+          <div className={`rounded-xl text-xs mb-4 overflow-hidden border
             ${statsPlacement.nonPlacesCount > 0
-              ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
-              : 'bg-surface-raised border border-border-subtle text-muted-foreground'}`}>
-            <span>
-              <span className="font-semibold text-foreground">{statsPlacement.total}</span> formulaire{statsPlacement.total > 1 ? 's' : ''} en attente
-              {' · '}
-              <span className="font-semibold text-green-400">{statsPlacement.places}</span> placé{statsPlacement.places > 1 ? 's' : ''}
-              {statsPlacement.nonPlacesCount > 0 && (
-                <>
-                  {' · '}
-                  <span className="font-semibold">{statsPlacement.nonPlacesCount}</span> sans créneau disponible
-                </>
-              )}
-            </span>
-            {statsPlacement.nonPlacesCount > 0 && (
-              <>
-                <span className="text-muted-foreground">
-                  ({statsPlacement.nonPlaces.map((r) => [r.first_name, r.last_name].filter(Boolean).join(' ') || '?').join(', ')})
-                </span>
-                {/* Bascule vers la grille en mode chevauchement pour visualiser les conflits */}
+              ? 'bg-amber-500/8 border-amber-500/20'
+              : 'bg-surface-raised border-border-subtle'}`}>
+            {/* Ligne de résumé */}
+            <div className="flex items-center gap-3 flex-wrap px-4 py-2.5">
+              <span className={statsPlacement.nonPlacesCount > 0 ? 'text-amber-400' : 'text-muted-foreground'}>
+                <span className="font-semibold text-foreground">{statsPlacement.total}</span> formulaire{statsPlacement.total > 1 ? 's' : ''} en attente
+                {' · '}
+                <span className="font-semibold text-green-400">{statsPlacement.places}</span> avec proposition
+                {statsPlacement.nonPlacesCount > 0 && (
+                  <>
+                    {' · '}
+                    <span className="font-semibold text-amber-400">{statsPlacement.nonPlacesCount}</span> sans proposition
+                  </>
+                )}
+              </span>
+              {statsPlacement.conflits.length > 0 && (
                 <button
                   type="button"
                   onClick={() => { setVue('grille'); setShowConflicts(true) }}
                   className="flex items-center gap-1 px-2 py-1 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 transition-colors font-medium"
                 >
                   <Layers className="w-3 h-3" />
-                  Voir en conflit
+                  Voir les conflits
                 </button>
-              </>
+              )}
+            </div>
+
+            {/* Détail par catégorie — affiché uniquement s'il y a des non-placés */}
+            {statsPlacement.nonPlacesCount > 0 && (
+              <div className="border-t border-amber-500/15 px-4 py-2.5 space-y-1.5">
+                {statsPlacement.conflits.length > 0 && (
+                  <div>
+                    <span className="font-medium text-amber-400">En conflit</span>
+                    <span className="text-amber-400/70 ml-1">(créneaux pris, passe d'échanges active)</span>
+                    <span className="text-muted-foreground ml-2">
+                      {statsPlacement.conflits.map(({ r }) => [r.first_name, r.last_name].filter(Boolean).join(' ') || '?').join(' · ')}
+                    </span>
+                  </div>
+                )}
+                {statsPlacement.dureeIncomp.length > 0 && (
+                  <div>
+                    <span className="font-medium text-muted-foreground">Durée incompatible</span>
+                    <span className="text-muted/70 ml-1">(aucune fenêtre assez longue dans les disponibilités)</span>
+                    <span className="text-muted-foreground ml-2">
+                      {statsPlacement.dureeIncomp.map(({ r }) => [r.first_name, r.last_name].filter(Boolean).join(' ') || '?').join(' · ')}
+                    </span>
+                  </div>
+                )}
+                {statsPlacement.sansDispos.length > 0 && (
+                  <div>
+                    <span className="font-medium text-muted-foreground">Sans disponibilités</span>
+                    <span className="text-muted/70 ml-1">(aucun créneau renseigné dans le sondage)</span>
+                    <span className="text-muted-foreground ml-2">
+                      {statsPlacement.sansDispos.map(({ r }) => [r.first_name, r.last_name].filter(Boolean).join(' ') || '?').join(' · ')}
+                    </span>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
@@ -1288,6 +1380,7 @@ export default function SchedulingAssistantPage() {
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
                 onViewStudent={(lesson) => lesson._studentId && navigate(`/eleves/${lesson._studentId}`)}
+                onDurationChange={handleDurationChange}
               />
 
               {/* ── Panneau "Acter ce planning" ──────────────────────────────── */}

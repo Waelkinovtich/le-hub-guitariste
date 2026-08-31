@@ -1,10 +1,14 @@
 import { useRef, useState, useMemo, useCallback, useEffect } from 'react'
-import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X } from 'lucide-react'
 import { updateLesson } from '../services/lessons'
 import { getSchoolColor, SCHOOL_COLOR_DEFAULT } from '../utils/schoolColors'
 import DeleteLessonModal from './DeleteLessonModal'
+import { supabase } from '../lib/supabase'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
+
+// Durées sélectionnables depuis la grille (identique à DUREES_SONDAGE côté SurveyResultsPage).
+const DUREES_MODIFIABLES = [15, 30, 45, 60, 90, 120]
 
 const START_HOUR     = 8
 const END_HOUR       = 22
@@ -78,6 +82,127 @@ function hasReservedOverlap(reservedByDay, targetDay, targetStart, slotCount) {
   })
 }
 
+// ─── Panneau de modification de durée ────────────────────────────────────────
+/**
+ * Approche de persistance (priorité décroissante) :
+ *   1. Si l'élève est connu (_studentId) : met à jour student_contexts.duree_cours_minutes
+ *      → durée contractuelle la plus haute priorité dans le moteur de scoring.
+ *   2. Sinon : met à jour survey_responses.desired_duration_minutes (_responseId).
+ * Après sauvegarde, appelle onSaved(newMinutes) pour que le parent
+ * mette à jour responses[].effective_duration_minutes et déclenche le recalcul.
+ */
+function DurationEditPanel({ lesson, onClose, onSaved }) {
+  const [selected, setSelected] = useState(lesson.durationMinutes ?? 30)
+  const [saving,   setSaving]   = useState(false)
+  const [error,    setError]    = useState('')
+
+  const handleSave = async () => {
+    if (selected === lesson.durationMinutes) { onClose(); return }
+    setSaving(true)
+    setError('')
+    try {
+      if (lesson._studentId) {
+        // Cherche un contexte existant avant de créer (pas de contrainte unique garantie côté SQL)
+        const { data: ctx } = await supabase
+          .from('student_contexts')
+          .select('id')
+          .eq('student_id', lesson._studentId)
+          .eq('school_name', lesson.schoolName || '')
+          .maybeSingle()
+
+        if (ctx) {
+          const { error: updErr } = await supabase
+            .from('student_contexts')
+            .update({ duree_cours_minutes: selected })
+            .eq('id', ctx.id)
+          if (updErr) throw new Error(updErr.message)
+        } else {
+          const { error: insErr } = await supabase
+            .from('student_contexts')
+            .insert({ student_id: lesson._studentId, school_name: lesson.schoolName || null, duree_cours_minutes: selected })
+          if (insErr) throw new Error(insErr.message)
+        }
+      } else if (lesson._responseId) {
+        const { error: updErr } = await supabase
+          .from('survey_responses')
+          .update({ desired_duration_minutes: selected })
+          .eq('id', lesson._responseId)
+        if (updErr) throw new Error(updErr.message)
+      }
+      onSaved(selected)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button type="button" className="absolute inset-0 bg-void/80 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-sm glass-panel rounded-2xl p-6 shadow-2xl border border-border">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Clock className="w-4 h-4 text-muted" />
+            Durée du cours
+          </h2>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-sm text-muted-foreground mb-5">
+          {lesson.studentName} —{' '}
+          {lesson._studentId
+            ? 'modifie la durée dans la fiche élève (priorité haute)'
+            : 'modifie la durée dans la réponse au sondage'}
+        </p>
+
+        <div className="grid grid-cols-3 gap-2 mb-5">
+          {DUREES_MODIFIABLES.map((d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setSelected(d)}
+              className={`py-2.5 rounded-xl text-sm font-medium border transition-all ${
+                selected === d
+                  ? 'guitar-gradient text-white border-transparent shadow-md shadow-guitar-600/20'
+                  : 'border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
+              }`}
+            >
+              {d} min
+            </button>
+          ))}
+        </div>
+
+        {error && (
+          <p className="text-xs text-guitar-400 bg-guitar-600/10 border border-guitar-600/20 rounded-lg px-3 py-2 mb-3">
+            {error}
+          </p>
+        )}
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-40"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
+            Enregistrer
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
+          >
+            Annuler
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Composant principal ──────────────────────────────────────────────────────
 
 /**
@@ -112,7 +237,9 @@ function hasReservedOverlap(reservedByDay, targetDay, targetStart, slotCount) {
 //   [{ date: 'YYYY-MM-DD', startTime: 'HH:MM', durationMinutes: 15 }]
 // onViewStudent(lesson) : appelé au clic sur "Voir la fiche" d'une proposition planifiée
 //   (tuiles envisage/conflit uniquement). Permet d'ouvrir la fiche élève depuis la grille.
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent }) {
+// onDurationChange(lesson, newMinutes) : appelé après sauvegarde en base pour que
+// le parent mette à jour effective_duration_minutes et relance le calcul de propositions.
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -157,7 +284,9 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
   const [isDragging, setIsDragging] = useState(false)
   // Cours en attente de confirmation de suppression (réutilise DeleteLessonModal,
   // déjà utilisé sur Émargement — même service deleteLesson, aucune logique dupliquée)
-  const [deleteLessonItem, setDeleteLessonItem] = useState(null)
+  const [deleteLessonItem,   setDeleteLessonItem]   = useState(null)
+  // Proposition dont on modifie la durée depuis la grille (ouvre DurationEditPanel)
+  const [durationEditLesson, setDurationEditLesson] = useState(null)
 
   const lessonsByDay    = useMemo(() => groupByDay(localLessons), [localLessons])
   const reservedByDay   = useMemo(() => indexReservedByDay(reservedSlots, weekDays), [reservedSlots, weekDays])
@@ -708,6 +837,22 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           <UserRound className="w-3 h-3" />
                         </button>
                       )}
+
+                      {/* Modifier la durée — visible sur les propositions (envisagé/conflit) */}
+                      {(isEnvisage || isConflit) && lesson._responseId && (
+                        <button
+                          type="button"
+                          aria-label="Modifier la durée du cours"
+                          title="Modifier la durée de ce cours"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); setDurationEditLesson(lesson) }}
+                          className="absolute top-0 left-0 z-20 p-0.5 rounded-br-md bg-void/50 text-white/80
+                                     opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity
+                                     focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
+                        >
+                          <Clock className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
                   )
                 })}
@@ -716,6 +861,22 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
           })}
         </div>
       </div>
+
+      {durationEditLesson && (
+        <DurationEditPanel
+          lesson={durationEditLesson}
+          onClose={() => setDurationEditLesson(null)}
+          onSaved={(newMinutes) => {
+            // Mise à jour optimiste locale (le créneau se redimensionne immédiatement)
+            setLocalLessons((prev) => prev.map((l) =>
+              l.id === durationEditLesson.id ? { ...l, durationMinutes: newMinutes } : l
+            ))
+            // Le parent recalcule effective_duration_minutes et relance computeAllProposals
+            onDurationChange?.(durationEditLesson, newMinutes)
+            setDurationEditLesson(null)
+          }}
+        />
+      )}
 
       {deleteLessonItem && (
         <DeleteLessonModal
