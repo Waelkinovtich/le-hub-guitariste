@@ -1324,7 +1324,7 @@ export default function SettingsPage() {
       </section>
 
       {/* ── Réglages du Planning intelligent ─────────────────────────────────── */}
-      <section className="glass-panel rounded-2xl p-6">
+      <section id="planning-intelligent" className="glass-panel rounded-2xl p-6">
         <div className="flex items-center gap-3 mb-5">
           <div className="w-9 h-9 rounded-xl bg-guitar-600/15 flex items-center justify-center">
             <SlidersHorizontal className="w-4 h-4 text-guitar-400" />
@@ -1334,7 +1334,17 @@ export default function SettingsPage() {
               <h2 className="font-semibold">Réglages du Planning intelligent</h2>
               <HelpTooltip texte="Ces curseurs pondèrent les facteurs du moteur de propositions. Un curseur à 0 désactive complètement le critère." position="right" />
             </div>
-            <p className="text-sm text-muted-foreground">Importances relatives des critères dans les propositions de créneaux</p>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <p className="text-sm text-muted-foreground">Importances relatives des critères dans les propositions de créneaux</p>
+              <button
+                type="button"
+                onClick={() => navigate('/professeur/planning-intelligent')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+              >
+                <CalendarDays className="w-3.5 h-3.5" />
+                Voir le Planning
+              </button>
+            </div>
           </div>
         </div>
 

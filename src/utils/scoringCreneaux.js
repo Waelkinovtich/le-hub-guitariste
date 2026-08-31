@@ -122,7 +122,8 @@ function appliquerPoids(score, poids) {
 }
 
 // Seuil en dessous duquel un écart entre deux cours est considéré "serré" (demi-bonus compacité).
-const COMPACITE_GAP_SERRE_MIN = 30
+// 60 min : une pause d'une heure reste "serrée" sur une journée de déplacements.
+const COMPACITE_GAP_SERRE_MIN = 60
 
 // ─── Facteur compacité horaire ────────────────────────────────────────────────
 
@@ -134,7 +135,7 @@ const COMPACITE_GAP_SERRE_MIN = 30
  * @param {number} startMin — début du candidat (minutes depuis minuit)
  * @param {number} endMin   — fin du candidat
  * @param {Array}  sameDayLessons — cours du même jour
- * @returns {number} 0, 1 (serre) ou 2 (adjacent)
+ * @returns {number} 0, 2 (serré ≤ 60 min) ou 3 (adjacent ≤ 5 min)
  */
 export function calculerScoreCompacite(startMin, endMin, sameDayLessons) {
   if (sameDayLessons.length === 0) return 0
@@ -147,8 +148,10 @@ export function calculerScoreCompacite(startMin, endMin, sameDayLessons) {
     else if (endMin <= ls) minGap = Math.min(minGap, ls - endMin)
   }
   if (minGap === Infinity) return 0
-  if (minGap <= ADJACENCE_TOLERANCE_MIN)  return 2  // adjacent : bonus plein
-  if (minGap <= COMPACITE_GAP_SERRE_MIN)  return 1  // écart serré : demi-bonus
+  // 3 pts pour adjacence : sur pied d'égalité avec SCORE_MEME_ECOLE (3),
+  // ce qui permet à poids_compacite=100 d'être réellement déterminant.
+  if (minGap <= ADJACENCE_TOLERANCE_MIN)  return 3  // adjacent : bonus plein
+  if (minGap <= COMPACITE_GAP_SERRE_MIN)  return 2  // écart serré : demi-bonus
   return 0
 }
 

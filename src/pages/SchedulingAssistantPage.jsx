@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers } from 'lucide-react'
+import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers, SlidersHorizontal } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
 import ScoreBadge from '../components/ScoreBadge'
@@ -311,6 +311,10 @@ export default function SchedulingAssistantPage() {
   const [recalculating, setRecalculating]       = useState(false)
   // Mode "vue avec chevauchements" : affiche les élèves sans créneau sur leurs dispo réelles
   const [showConflicts, setShowConflicts]       = useState(false)
+  // Propositions masquées localement (clic sur Supprimer dans la grille).
+  // Stocké en mémoire uniquement : réapparaît après rechargement (comportement intentionnel —
+  // la proposition redeviendra pertinente si les données n'ont pas changé).
+  const [hiddenResponseIds, setHiddenResponseIds] = useState(() => new Set())
 
   useEffect(() => {
     if (!user?.id) return
@@ -684,8 +688,11 @@ export default function SchedulingAssistantPage() {
     const coursReels = existingLessons
       .filter((l) => weekIsos.has(l.lessonDate))
       .map((l) => ({ ...l, nonMovable: true }))
-    return [...coursReels, ...proposalLessons, ...(showConflicts ? conflictLessons : [])]
-  }, [existingLessons, proposalLessons, conflictLessons, weekDays, showConflicts])
+    // Exclure les propositions masquées par l'utilisateur via le bouton Supprimer
+    const proposalsFiltres = proposalLessons.filter((l) => !hiddenResponseIds.has(l._responseId))
+    const conflitsFiltres  = conflictLessons.filter((l) => !hiddenResponseIds.has(l._responseId))
+    return [...coursReels, ...proposalsFiltres, ...(showConflicts ? conflitsFiltres : [])]
+  }, [existingLessons, proposalLessons, conflictLessons, weekDays, showConflicts, hiddenResponseIds])
 
   /**
    * Appelé par WeekGridPlanning quand une proposition est glissée vers un nouveau créneau.
@@ -868,6 +875,19 @@ export default function SchedulingAssistantPage() {
       existingLessons, schools, reservedSlots])
 
   /**
+   * Suppression d'une proposition depuis la grille (bouton Corbeille sur une tuile envisagé/conflit).
+   * Les cours réels (nonMovable) ne peuvent pas être supprimés ici — WeekGridPlanning cache
+   * leur bouton, mais on garde ce garde-fou au cas où.
+   * Effet local uniquement : rechargement de la page réaffiche la proposition.
+   */
+  const handleDeleteLesson = useCallback((lesson) => {
+    if (lesson.nonMovable) return
+    const responseId = lesson._responseId
+    if (!responseId) return
+    setHiddenResponseIds((prev) => new Set([...prev, responseId]))
+  }, [])
+
+  /**
    * Met à jour effective_duration_minutes d'une réponse après que l'utilisateur
    * a modifié la durée directement depuis la grille (DurationEditPanel).
    * La persistance Supabase a déjà eu lieu dans DurationEditPanel ;
@@ -1013,7 +1033,17 @@ export default function SchedulingAssistantPage() {
               <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Planning intelligent</h1>
               <HelpTooltip texte="Génère des propositions de créneaux en croisant vos disponibilités, celles des élèves et les contraintes de chaque école. Configurez les créneaux dans la page Créneaux écoles." position="bottom" />
             </div>
-            <p className="text-muted-foreground mt-0.5">Propositions de créneaux basées sur les disponibilités et le contexte</p>
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              <p className="text-muted-foreground">Propositions de créneaux basées sur les disponibilités et le contexte</p>
+              <button
+                type="button"
+                onClick={() => navigate('/professeur/reglages#planning-intelligent')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                Réglages
+              </button>
+            </div>
           </div>
         </div>
         <div className="mt-4 px-4 py-3 rounded-xl bg-surface-raised border border-border-subtle text-xs text-muted-foreground space-y-1">
@@ -1378,7 +1408,7 @@ export default function SchedulingAssistantPage() {
                 validDropZones={validDropZones}
                 onNewLesson={() => {}}
                 onSelectLesson={() => {}}
-                onDeleteLesson={() => {}}
+                onDeleteLesson={handleDeleteLesson}
                 onMoveLesson={handleMoveProposal}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
