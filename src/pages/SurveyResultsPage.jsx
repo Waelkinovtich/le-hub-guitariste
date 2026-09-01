@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home, Link2, Merge, Search, X, UserPlus } from 'lucide-react'
+import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home, Link2, Link, Merge, Search, X, UserPlus, CheckCircle2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import HelpTooltip from '../components/HelpTooltip'
 import PhoneActions from '../components/PhoneActions'
@@ -1113,7 +1113,126 @@ function FusionPanel({ source, onClose, onConfirmMatch, onFused, sourceLabel = '
   )
 }
 
-function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenPanelId, onSelect, onConfirmed, onReassign, onDelete, onFused, onCreated }) {
+// ─── Panneau de génération d'un lien de créneau personnalisé ─────────────────
+// Crée un token de type 'creneau' lié à une survey_response existante.
+// Le lien généré est copiable — aucun envoi automatique (même pattern que les liens génériques).
+// La colonne slots_proposes attend le format { "Lundi": ["09:00", "09:30"], ... }
+// ou NULL pour afficher les créneaux standard de l'école de l'élève.
+function CreneauLinkPanel({ responseId, onClose }) {
+  const [slotsTexte, setSlotsTexte] = useState('')
+  const [lienGenere, setLienGenere] = useState('')
+  const [erreur, setErreur]         = useState('')
+  const [loading, setLoading]       = useState(false)
+
+  // Convertit le texte libre "Lundi 09:00\nMercredi 14:30" en JSONB attendu.
+  // Retourne null si vide (= créneaux standard de l'école).
+  function parseSlots(texte) {
+    if (!texte.trim()) return null
+    const map = {}
+    for (const ligne of texte.split('\n')) {
+      const parts = ligne.trim().split(/\s+/)
+      if (parts.length < 2) continue
+      const jour = parts[0]
+      const heure = parts.slice(1).join(' ')
+      if (!map[jour]) map[jour] = []
+      map[jour].push(heure)
+    }
+    return Object.keys(map).length ? map : null
+  }
+
+  const genererLien = async () => {
+    setErreur('')
+    setLoading(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('Non authentifié')
+
+      const token = crypto.randomUUID()
+      const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+      const slots  = parseSlots(slotsTexte)
+
+      const { error } = await supabase.from('survey_tokens').insert({
+        id:                 crypto.randomUUID(),
+        token,
+        token_type:         'creneau',
+        teacher_id:         user.id,
+        linked_response_id: responseId,
+        slots_proposes:     slots,
+        expires_at:         expires,
+        used_at:            null,
+        label:              null,
+      })
+      if (error) throw new Error(error.message)
+
+      setLienGenere(`${window.location.origin}/creneau/${token}`)
+    } catch (e) {
+      setErreur(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="w-full mt-3 p-4 bg-surface border border-border-subtle rounded-xl space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium">Générer un lien de créneau</p>
+        <button type="button" onClick={onClose} className="text-xs text-muted-foreground hover:text-foreground">Fermer</button>
+      </div>
+
+      {!lienGenere ? (
+        <>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">
+              Créneaux proposés (optionnel) — un par ligne : <code className="font-mono">Lundi 09:00</code>
+            </label>
+            <textarea
+              value={slotsTexte}
+              onChange={(e) => setSlotsTexte(e.target.value)}
+              rows={4}
+              placeholder={'Lundi 09:00\nLundi 09:30\nMercredi 14:00'}
+              className="w-full text-sm bg-surface border border-border-subtle rounded-lg px-3 py-2 font-mono text-xs placeholder:text-muted-foreground focus:outline-none focus:border-guitar-500"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">Laisser vide pour utiliser les créneaux standard de l'école de l'élève.</p>
+          </div>
+          {erreur && <p className="text-xs text-red-400">{erreur}</p>}
+          <button
+            type="button"
+            onClick={genererLien}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-guitar-500 hover:bg-guitar-600 disabled:opacity-40 text-white text-xs font-medium transition-colors"
+          >
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link className="w-3.5 h-3.5" />}
+            Générer le lien
+          </button>
+        </>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-xs text-green-400 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Lien généré (expire dans 7 jours)</p>
+          <div className="flex items-center gap-2">
+            <input
+              readOnly
+              value={lienGenere}
+              className="flex-1 text-xs bg-surface border border-border-subtle rounded-lg px-3 py-2 font-mono focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => navigator.clipboard.writeText(lienGenere)}
+              className="px-3 py-2 rounded-lg border border-border-subtle text-xs text-muted-foreground hover:text-foreground transition-colors"
+              title="Copier le lien"
+            >
+              <Copy className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <button type="button" onClick={() => { setLienGenere(''); setSlotsTexte('') }} className="text-xs text-muted-foreground hover:text-foreground">
+            Générer un autre lien
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenPanelId, onSelect, onConfirmed, onReassign, onDesattribuer, onDelete, onFused, onCreated }) {
   // Indique si la réponse provient d'un lien partagé générique plutôt qu'un envoi individuel
   const genericMeta = genericTokens?.[r.token_id]
   return (
@@ -1192,13 +1311,23 @@ function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenP
         )}
 
         {r.status === 'confirme' && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onReassign(r) }}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-border-subtle text-muted-foreground hover:border-border hover:text-foreground transition-all"
-          >
-            <Pencil className="w-3.5 h-3.5" />
-            Modifier le créneau
-          </button>
+          <>
+            <button
+              onClick={(e) => { e.stopPropagation(); onReassign(r) }}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-border-subtle text-muted-foreground hover:border-border hover:text-foreground transition-all"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              Modifier le créneau
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onDesattribuer(r) }}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all"
+              title="Effacer l'attribution sans réassigner immédiatement"
+            >
+              <X className="w-3.5 h-3.5" />
+              Désattribuer
+            </button>
+          </>
         )}
 
         {/* Rapprochement manuel — jamais automatique */}
@@ -1230,6 +1359,25 @@ function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenP
           >
             <UserPlus className="w-3.5 h-3.5" />
             Créer la fiche élève
+          </button>
+        )}
+
+        {/* Lien de créneau personnalisé — uniquement pour les réponses sans créneau attribué */}
+        {r.status !== 'confirme' && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              setOpenPanelId(openPanelId === `creneau-${r.id}` ? null : `creneau-${r.id}`)
+            }}
+            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${
+              openPanelId === `creneau-${r.id}`
+                ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
+                : 'border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
+            }`}
+            title="Générer un lien de choix de créneau personnalisé pour cet élève"
+          >
+            <Link className="w-3.5 h-3.5" />
+            Lien créneau
           </button>
         )}
 
@@ -1269,6 +1417,15 @@ function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenP
                 if (error) throw new Error(error.message)
               }}
               onFused={(student) => { onFused(r.id, student) }}
+            />
+          </div>
+        )}
+
+        {openPanelId === `creneau-${r.id}` && (
+          <div className="w-full">
+            <CreneauLinkPanel
+              responseId={r.id}
+              onClose={() => setOpenPanelId(null)}
             />
           </div>
         )}
@@ -1314,16 +1471,48 @@ export default function SurveyResultsPage() {
   const [selected, setSelected] = useState(null)
   const [fetchError, setFetchError] = useState(null)
   const [openPanelId, setOpenPanelId] = useState(null)
-  const [recherche, setRecherche] = useState('')
+  const [recherche, setRecherche]           = useState('')
+  const [filtreInstrument, setFiltreInstrument] = useState('')
+  const [filtreEcole, setFiltreEcole]           = useState('')
+  const [filtreType, setFiltreType]             = useState('') // '' | 'nouveau' | 'reinscription'
 
-  // Filtrage réactif par prénom / nom — insensible à la casse et aux espaces superflus
+  // Valeurs uniques dérivées des réponses pour alimenter les <select>
+  const instrumentsDisponibles = useMemo(
+    () => [...new Set(responses.map((r) => r.instrument).filter(Boolean))].sort(),
+    [responses],
+  )
+  const ecolesDisponibles = useMemo(
+    () => [...new Set(responses.map((r) => r.school_name).filter(Boolean))].sort(),
+    [responses],
+  )
+
+  const hasFilters = recherche.trim() || filtreInstrument || filtreEcole || filtreType
+
+  const clearFilters = () => {
+    setRecherche('')
+    setFiltreInstrument('')
+    setFiltreEcole('')
+    setFiltreType('')
+  }
+
+  // Filtrage cumulable — tous les critères actifs doivent être satisfaits simultanément
   const responsesFiltrees = useMemo(() => {
-    if (!recherche.trim()) return responses
-    const q = recherche.trim().toLowerCase()
-    return responses.filter((r) =>
-      [r.first_name, r.last_name].filter(Boolean).some((v) => v.toLowerCase().includes(q))
-    )
-  }, [responses, recherche])
+    return responses.filter((r) => {
+      if (recherche.trim()) {
+        const q = recherche.trim().toLowerCase()
+        const match = [r.first_name, r.last_name].filter(Boolean).some((v) => v.toLowerCase().includes(q))
+        if (!match) return false
+      }
+      if (filtreInstrument && r.instrument !== filtreInstrument) return false
+      if (filtreEcole && r.school_name !== filtreEcole) return false
+      if (filtreType) {
+        const estReinscription = r.registration_type === 'reinscription'
+        if (filtreType === 'reinscription' && !estReinscription) return false
+        if (filtreType === 'nouveau' && estReinscription) return false
+      }
+      return true
+    })
+  }, [responses, recherche, filtreInstrument, filtreEcole, filtreType])
 
   useEffect(() => {
     async function load() {
@@ -1430,6 +1619,22 @@ export default function SurveyResultsPage() {
     ))
   }, [])
 
+  // Désattribue le créneau sans ouvrir le panel de réattribution — utile pour
+  // corriger une attribution incorrecte sans devoir immédiatement en choisir une nouvelle.
+  const handleDesattribuer = async (r) => {
+    const nom = [r.first_name, r.last_name].filter(Boolean).join(' ') || 'ce répondant'
+    if (!window.confirm(`Désattribuer le créneau de ${nom} ?\nLa réponse repassera en "En attente de créneau".`)) return
+    const { error } = await supabase
+      .from('survey_responses')
+      .update({ status: 'attente', assigned_day: null, assigned_time: null })
+      .eq('id', r.id)
+    if (!error) {
+      setResponses((prev) => prev.map((x) =>
+        x.id === r.id ? { ...x, status: 'attente', assigned_day: null, assigned_time: null } : x
+      ))
+    }
+  }
+
   const handleReassign = async (r) => {
     const today = new Date().toISOString().slice(0, 10)
     await supabase
@@ -1471,10 +1676,19 @@ export default function SurveyResultsPage() {
   const confirmes = responsesFiltrees.filter(r => r.status === 'confirme')
   const attente   = responsesFiltrees.filter(r => r.status !== 'confirme')
 
-  // Nombre d'élèves individuels par section (1 ligne survey_registrations = 1 élève)
-  const totalEleves       = registrations.length
-  const elevesConfirmes   = confirmes.reduce((s, r) => s + (regsByToken[r.token_id]?.length || 1), 0)
-  const elevesAttente     = attente.reduce((s, r)   => s + (regsByToken[r.token_id]?.length || 1), 0)
+  // Compte le nombre réel d'élèves pour une liste de réponses.
+  // IMPORTANT : utilise regsByResponse (lié par response_id), PAS regsByToken.
+  // regsByToken groupe par token_id — les tokens génériques partagés par toutes
+  // les familles produisent un groupe géant qui gonfle le compteur × N réponses.
+  // Fallback à 1 pour les très anciennes réponses sans inscriptions liées.
+  const countEleves = (list) => list.reduce((s, r) => {
+    const regs = regsByResponse[r.id]
+    return s + (regs ? regs.length : 1)
+  }, 0)
+
+  const totalEleves     = countEleves(responses)    // toutes réponses (non filtrées)
+  const elevesConfirmes = countEleves(confirmes)
+  const elevesAttente   = countEleves(attente)
 
   return (
     <div className="p-6 max-w-2xl">
@@ -1487,27 +1701,72 @@ export default function SurveyResultsPage() {
           {responses.length} répondant{responses.length !== 1 ? 's' : ''} · {totalEleves} élève{totalEleves !== 1 ? 's' : ''} au total
         </p>
 
-        {/* Barre de recherche — filtre par prénom ou nom, réactif */}
+        {/* Barre de recherche + filtres cumulables — même pattern que StudentsPage */}
         {responses.length > 0 && (
-          <div className="relative mt-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Rechercher par prénom ou nom…"
-              value={recherche}
-              onChange={(e) => setRecherche(e.target.value)}
-              className="w-full pl-10 pr-8 py-2 rounded-xl border border-border-subtle bg-surface text-sm placeholder:text-muted-foreground focus:outline-none focus:border-guitar-500 transition-colors"
-            />
-            {recherche && (
-              <button
-                type="button"
-                onClick={() => setRecherche('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                aria-label="Effacer la recherche"
+          <div className="mt-4 space-y-2">
+            {/* Recherche par prénom / nom */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Rechercher par prénom ou nom…"
+                value={recherche}
+                onChange={(e) => setRecherche(e.target.value)}
+                className="w-full pl-10 pr-8 py-2 rounded-xl border border-border-subtle bg-surface text-sm placeholder:text-muted-foreground focus:outline-none focus:border-guitar-500 transition-colors"
+              />
+              {recherche && (
+                <button
+                  type="button"
+                  onClick={() => setRecherche('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label="Effacer la recherche"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Filtres par instrument, école, type d'inscription */}
+            <div className="flex flex-wrap gap-2">
+              {instrumentsDisponibles.length > 0 && (
+                <select
+                  value={filtreInstrument}
+                  onChange={(e) => setFiltreInstrument(e.target.value)}
+                  className="px-3 py-2 rounded-xl bg-surface border border-border-subtle text-sm focus:outline-none focus:border-guitar-500"
+                >
+                  <option value="">Tous instruments</option>
+                  {instrumentsDisponibles.map((i) => <option key={i} value={i}>{i}</option>)}
+                </select>
+              )}
+              {ecolesDisponibles.length > 0 && (
+                <select
+                  value={filtreEcole}
+                  onChange={(e) => setFiltreEcole(e.target.value)}
+                  className="px-3 py-2 rounded-xl bg-surface border border-border-subtle text-sm focus:outline-none focus:border-guitar-500"
+                >
+                  <option value="">Toutes écoles</option>
+                  {ecolesDisponibles.map((e) => <option key={e} value={e}>{e}</option>)}
+                </select>
+              )}
+              <select
+                value={filtreType}
+                onChange={(e) => setFiltreType(e.target.value)}
+                className="px-3 py-2 rounded-xl bg-surface border border-border-subtle text-sm focus:outline-none focus:border-guitar-500"
               >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+                <option value="">Tous types</option>
+                <option value="nouveau">Nouvelle inscription</option>
+                <option value="reinscription">Réinscription</option>
+              </select>
+              {hasFilters && (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="flex items-center gap-1 px-3 py-2 rounded-xl border border-guitar-600/40 text-guitar-400 text-sm hover:bg-guitar-600/10 transition-colors"
+                >
+                  <X className="w-3 h-3" /> Effacer
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -1526,13 +1785,13 @@ export default function SurveyResultsPage() {
       ) : responsesFiltrees.length === 0 ? (
         <div className="glass-panel rounded-2xl p-10 text-center">
           <Search className="w-8 h-8 text-muted mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground">Aucun résultat pour « {recherche} ».</p>
+          <p className="text-sm text-muted-foreground">Aucun résultat pour les filtres sélectionnés.</p>
           <button
             type="button"
-            onClick={() => setRecherche('')}
+            onClick={clearFilters}
             className="mt-3 text-xs text-guitar-400 hover:underline"
           >
-            Effacer la recherche
+            Effacer tous les filtres
           </button>
         </div>
       ) : (
@@ -1553,6 +1812,7 @@ export default function SurveyResultsPage() {
                     onSelect={setSelected}
                     onConfirmed={handleConfirmed}
                     onReassign={handleReassign}
+                    onDesattribuer={handleDesattribuer}
                     onDelete={handleDelete}
                     onFused={handleFused}
                     onCreated={handleCreated}

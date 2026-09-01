@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers, SlidersHorizontal } from 'lucide-react'
+import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
 import ScoreBadge from '../components/ScoreBadge'
@@ -541,6 +541,18 @@ export default function SchedulingAssistantPage() {
     setSnapshots(data ?? [])
     setShowSnapshots(true)
   }, [teacherInfo])
+
+  // ── Suppression d'un snapshot (avec confirmation) ────────────────────────────
+  const handleDeleteSnapshot = useCallback(async (snapshotId, nom) => {
+    const label = nom || '(sans nom)'
+    if (!window.confirm(`Supprimer définitivement le planning provisoire « ${label} » ?\n\nCette action est irréversible.`)) return
+    const { error: err } = await supabase
+      .from('planning_provisoire_snapshots')
+      .delete()
+      .eq('id', snapshotId)
+    if (err) { alert('Erreur lors de la suppression : ' + err.message); return }
+    setSnapshots((prev) => prev.filter((s) => s.id !== snapshotId))
+  }, [])
 
   // ── Restauration d'un snapshot ───────────────────────────────────────────────
   const handleRestoreSnapshot = useCallback(async (snapshotId) => {
@@ -1361,14 +1373,25 @@ export default function SchedulingAssistantPage() {
                             {new Date(s.date_creation).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRestoreSnapshot(s.id)}
-                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground transition-all"
-                        >
-                          <BookmarkCheck className="w-3 h-3" />
-                          Charger
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleRestoreSnapshot(s.id)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground transition-all"
+                          >
+                            <BookmarkCheck className="w-3 h-3" />
+                            Charger
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSnapshot(s.id, s.nom)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-red-500/30 text-xs font-medium text-red-400 hover:bg-red-500/10 transition-all"
+                            title="Supprimer définitivement ce planning"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            Supprimer
+                          </button>
+                        </div>
                       </div>
                     ))
                   )}

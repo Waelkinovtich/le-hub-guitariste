@@ -38,6 +38,30 @@ function durationToSlots(minutes) {
   return Math.max(1, Math.round(minutes / 15))
 }
 
+// Calcule l'index de colonne et le nombre total de colonnes pour chaque cours
+// en conflit sur le même créneau. Permet l'affichage côte à côte (split en N colonnes)
+// plutôt que superposé. L'ordre dans le groupe est stabilisé par l'id du cours.
+function computeColumns(lessons) {
+  const result = new Map()
+  for (const lesson of lessons) {
+    const start = timeToSlot(lesson.lessonTime)
+    const end   = start + durationToSlots(lesson.durationMinutes ?? 45)
+    // Groupe = tous les cours qui chevauchent celui-ci (self inclus)
+    const group = lessons
+      .filter((other) => {
+        const oStart = timeToSlot(other.lessonTime)
+        const oEnd   = oStart + durationToSlots(other.durationMinutes ?? 45)
+        return oStart < end && oEnd > start
+      })
+      .sort((a, b) => (a.id < b.id ? -1 : 1)) // ordre stable par id
+    result.set(lesson.id, {
+      colIdx:   group.findIndex((o) => o.id === lesson.id),
+      colCount: group.length,
+    })
+  }
+  return result
+}
+
 function groupByDay(lessons) {
   const map = {}
   for (const l of lessons) {
@@ -766,8 +790,12 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   )
                 })()}
 
-                {/* Cours existants */}
-                {dayLessons.map((lesson) => {
+                {/* Cours existants — affichage côte à côte en cas de conflit */}
+                {(() => {
+                  // computeColumns détermine le colIdx et colCount de chaque cours
+                  // pour les afficher en colonnes plutôt que superposés.
+                  const columnMap = computeColumns(dayLessons)
+                  return dayLessons.map((lesson) => {
                   const startSlot    = timeToSlot(lesson.lessonTime)
                   const slotCount    = durationToSlots(lesson.durationMinutes ?? 45)
                   const color        = lessonColor(lesson)
@@ -776,6 +804,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   const isBeingMoved = movePreview?.lessonId === lesson.id
                   // Chevauchement temporaire autorisé (mode Planning intelligent) → signalé en orange
                   const isChevauchement = idsEnChevauchement.has(lesson.id)
+                  const { colIdx, colCount } = columnMap.get(lesson.id) ?? { colIdx: 0, colCount: 1 }
+                  const pct = 100 / colCount
 
                   if (startSlot < 0 || startSlot >= TOTAL_SLOTS) return null
 
@@ -785,7 +815,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                       style={{
                         top: startSlot * slotH,
                         height: Math.min(slotCount, TOTAL_SLOTS - startSlot) * slotH,
-                        left: 2, right: 2,
+                        left:  `calc(${colIdx * pct}% + 2px)`,
+                        right: `calc(${(colCount - colIdx - 1) * pct}% + 2px)`,
                         position: 'absolute', zIndex: 10,
                         opacity: isBeingMoved ? 0.25 : (isEnvisage || isConflit) ? 0.75 : 1,
                         cursor: 'grab',
@@ -899,7 +930,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                       )}
                     </div>
                   )
-                })}
+                  })
+                })()}
               </div>
             )
           })}

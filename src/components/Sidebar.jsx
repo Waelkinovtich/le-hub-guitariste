@@ -222,18 +222,21 @@ function useBadges(userId) {
 
     ;(async () => {
       try {
-        // Étape 1 : tokens des réponses en attente (statut 'attente' ou NULL)
+        // Étape 1 : IDs des réponses en attente (statut 'attente' ou NULL)
         const { data: pendingResps } = await supabase
           .from('survey_responses')
-          .select('token_id')
+          .select('id')
           .or('status.eq.attente,status.is.null')
         if (cancelled) return
 
-        const tokenIds = (pendingResps ?? []).map((r) => r.token_id).filter(Boolean)
+        const responseIds = (pendingResps ?? []).map((r) => r.id).filter(Boolean)
 
-        // Étape 2 : élèves individuels = 1 ligne survey_registrations = 1 élève
-        const studentsQ = tokenIds.length > 0
-          ? supabase.from('survey_registrations').select('id', { count: 'exact', head: true }).in('token_id', tokenIds)
+        // Étape 2 : inscriptions liées par response_id (seule clé fiable).
+        // L'ancienne approche utilisait token_id → les tokens génériques partagés
+        // par toutes les familles retournaient TOUTES les inscriptions en un seul
+        // groupe, produisant un badge erroné (44 au lieu de ~15).
+        const studentsQ = responseIds.length > 0
+          ? supabase.from('survey_registrations').select('id', { count: 'exact', head: true }).in('response_id', responseIds)
           : Promise.resolve({ count: 0 })
 
         // Rattrapage : cours annulés par le prof non encore replanifiés
