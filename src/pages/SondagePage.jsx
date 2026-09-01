@@ -831,7 +831,12 @@ export default function SondagePage() {
     try {
       const t1 = form.tuteurs[0] ?? {}
       const t2 = form.tuteurs[1] ?? {}
+      // UUID généré côté client pour éviter RETURNING après l'INSERT :
+      // les visiteurs anonymes n'ont pas de policy SELECT sur survey_responses,
+      // donc .select('id') déclencherait une erreur RLS via Prefer:return=representation.
+      const responseId = crypto.randomUUID()
       const payload = {
+        id: responseId,
         token_id: tokenRow.id,
         student_id: tokenRow.student_id,
         first_name: form.first_name || null,
@@ -865,14 +870,10 @@ export default function SondagePage() {
         desired_duration_minutes: form.desired_duration_minutes ?? null,
         expectations: form.expectations || null,
       }
-      // Récupérer l'id généré pour lier les inscriptions à cette réponse précise
-      const { data: responseData, error: insertError } = await supabase
+      const { error: insertError } = await supabase
         .from('survey_responses')
         .insert(payload)
-        .select('id')
-        .single()
       if (insertError) throw insertError
-      const responseId = responseData?.id ?? null
 
       // ── Inscriptions individuelles ────────────────────────────────────────
       // Répondant principal (is_respondent = true) + personnes supplémentaires
