@@ -978,12 +978,23 @@ export default function SurveyResultsPage() {
   }
 
   const handleDelete = async (r) => {
+    // Supprimer d'abord les inscriptions liées à cette réponse précise.
+    // Sans ça, elles restaient orphelines (response_id = NULL via ON DELETE SET NULL)
+    // et continuaient de gonfler le compteur "Y élèves" et le badge sidebar.
+    await supabase
+      .from('survey_registrations')
+      .delete()
+      .eq('response_id', r.id)
+
     const { error } = await supabase
       .from('survey_responses')
       .delete()
       .eq('id', r.id)
     if (!error) {
       setResponses(prev => prev.filter(x => x.id !== r.id))
+      // Mettre à jour le compteur local des inscriptions pour refléter immédiatement
+      // la suppression sans attendre un rechargement de la page.
+      setRegistrations(prev => prev.filter(reg => reg.response_id !== r.id))
     }
   }
 

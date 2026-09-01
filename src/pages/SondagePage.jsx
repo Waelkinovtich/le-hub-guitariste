@@ -846,7 +846,13 @@ export default function SondagePage() {
         phone: form.phone || null,
         school_name: form.school_name || null,
         registration_type: form.registration_type || 'nouvelle',
-        status: form.registration_type === 'reinscription' ? 'confirme' : 'attente',
+        // Toujours 'attente' : même une réinscription doit passer par le Planning
+        // intelligent pour se voir attribuer un créneau. 'confirme' ne doit être écrit
+        // que par l'action explicite de l'utilisateur (Planning intelligent → Acter,
+        // ou bouton Confirmer sur la fiche). Écrire 'confirme' ici excluait les
+        // réinscriptions du Planning intelligent et affichait un badge "Créneau attribué"
+        // trompeur sans qu'aucun créneau n'ait jamais été choisi.
+        status: 'attente',
         practice_years: form.practice_years ? parseInt(form.practice_years) : null,
         level: form.level || null,
         diplomas: form.diplomas || null,
