@@ -62,13 +62,15 @@ function Divider() {
 // Durées proposables dans le sondage (en minutes). Source : grilles standard.
 const DUREES_SONDAGE = [15, 30, 45, 60, 90, 120]
 
-function DetailView({ response, registrations, onBack }) {
+function DetailView({ response, registrations, onBack, onRegFused }) {
   const availabilities = fmtAvailabilities(response.availabilities)
   const supplementaires = (registrations ?? []).filter((r) => !r.is_respondent)
   const hasGuardian1 = response.guardian1_name || response.guardian1_phone || response.guardian1_email
   const hasGuardian2 = response.guardian2_name || response.guardian2_phone || response.guardian2_email
   const [desiredDuration, setDesiredDuration] = useState(response.desired_duration_minutes ?? null)
   const [savingDuration, setSavingDuration] = useState(false)
+  // openRegFusionId : id de l'inscription supplémentaire dont le panneau de fusion est ouvert
+  const [openRegFusionId, setOpenRegFusionId] = useState(null)
 
   const handleDurationChange = async (val) => {
     const parsed = val === '' ? null : Number(val)
@@ -228,20 +230,66 @@ function DetailView({ response, registrations, onBack }) {
             <Section title={`Personnes inscrites par ${response.first_name || 'ce répondant'} (${supplementaires.length})`}>
               <div className="space-y-3">
                 {supplementaires.map((reg) => (
-                  <div key={reg.id} className="rounded-xl bg-surface border border-border-subtle px-4 py-3 space-y-1.5">
-                    <p className="text-sm font-medium text-foreground">
-                      {reg.prenom || '—'} {reg.nom || ''}
-                      {reg.birth_year && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({reg.birth_year})</span>}
-                    </p>
-                    {reg.registration_type === 'reinscription' && (
-                      <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25">
-                        Réinscription
-                      </span>
-                    )}
-                    {reg.school_name && <p className="text-xs text-muted-foreground">{reg.school_name}</p>}
-                    {reg.email && <p className="text-xs text-muted-foreground">{reg.email}</p>}
-                    {reg.telephone && (
-                      <p className="text-xs text-muted-foreground"><PhoneActions number={reg.telephone} /></p>
+                  <div key={reg.id} className="rounded-xl bg-surface border border-border-subtle overflow-hidden">
+                    {/* Infos de la personne supplémentaire */}
+                    <div className="px-4 py-3 space-y-1.5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1.5 min-w-0">
+                          <p className="text-sm font-medium text-foreground">
+                            {reg.prenom || '—'} {reg.nom || ''}
+                            {reg.birth_year && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({reg.birth_year})</span>}
+                          </p>
+                          {reg.registration_type === 'reinscription' && (
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25">
+                              Réinscription
+                            </span>
+                          )}
+                          {reg.school_name && <p className="text-xs text-muted-foreground">{reg.school_name}</p>}
+                          {reg.email && <p className="text-xs text-muted-foreground">{reg.email}</p>}
+                          {reg.telephone && (
+                            <p className="text-xs text-muted-foreground"><PhoneActions number={reg.telephone} /></p>
+                          )}
+                        </div>
+                        {/* Bouton Fusionner — même logique que le répondant principal */}
+                        <button
+                          type="button"
+                          onClick={() => setOpenRegFusionId(openRegFusionId === reg.id ? null : reg.id)}
+                          className={`flex-shrink-0 flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${
+                            reg.matched_student_id
+                              ? 'border-green-600/40 bg-green-600/8 text-green-400'
+                              : openRegFusionId === reg.id
+                                ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
+                                : 'border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
+                          }`}
+                          title={reg.matched_student_id ? 'Déjà fusionné — cliquer pour modifier' : 'Fusionner avec une fiche élève existante'}
+                        >
+                          <Merge className="w-3.5 h-3.5" />
+                          {reg.matched_student_id ? 'Fusionné' : 'Fusionner la fiche'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Panneau de fusion pour cette personne supplémentaire */}
+                    {openRegFusionId === reg.id && (
+                      <div className="border-t border-border-subtle px-4 pb-4 pt-0">
+                        <FusionPanel
+                          source={normalizeReg(reg)}
+                          sourceLabel="Inscription supplémentaire"
+                          onClose={() => setOpenRegFusionId(null)}
+                          onConfirmMatch={async (studentId) => {
+                            const { error } = await supabase
+                              .from('survey_registrations')
+                              .update({ matched_student_id: studentId })
+                              .eq('id', reg.id)
+                            if (error) throw new Error(error.message)
+                          }}
+                          onFused={(student) => {
+                            // Mettre à jour le state parent + fermer le panneau
+                            onRegFused(reg.id, student)
+                            setOpenRegFusionId(null)
+                          }}
+                        />
+                      </div>
                     )}
                   </div>
                 ))}
@@ -490,16 +538,32 @@ function VoirAussiInscriptions({ prenom, supplementaires, onOpenDetail }) {
 
 // ─── Panneau de fusion manuelle ───────────────────────────────────────────────
 /**
- * Permet de rapprocher une réponse de sondage d'une fiche élève existante.
- * Aucune décision n'est automatique : l'utilisateur choisit explicitement
- * chaque champ à importer depuis le sondage vers la fiche existante.
+ * Permet de rapprocher une source (répondant principal OU personne supplémentaire)
+ * d'une fiche élève existante. Aucune décision n'est automatique.
  *
- * Colonne matched_student_id sur survey_responses (migration additive SQL) :
- * marque la réponse comme rapprochée pour éviter un double traitement.
+ * `source`           : objet normalisé avec les clés standard (first_name, last_name…)
+ * `onConfirmMatch`   : async (studentId) => void — écrit matched_student_id dans
+ *                      la bonne table (survey_responses ou survey_registrations)
+ * `onFused`          : (student) => void — callback de succès pour le parent
+ * `sourceLabel`      : libellé de la colonne "sondage" dans le tableau de comparaison
  */
 
-// Champs comparables entre survey_response et fiche student.
-// label : libellé affiché · surveyKey : clé dans survey_response · studentKey : clé dans student
+// Adapte les clés de survey_registrations vers les clés standard de CHAMPS_COMPARABLES.
+// Permet de réutiliser FusionPanel sans duplication pour les personnes supplémentaires.
+function normalizeReg(reg) {
+  return {
+    first_name:  reg.prenom   ?? null,
+    last_name:   reg.nom      ?? null,
+    email:       reg.email    ?? null,
+    phone:       reg.telephone ?? null,
+    birth_year:  reg.birth_year  ?? null,
+    school_name: reg.school_name ?? null,
+    level:       null, // champ absent des inscriptions supplémentaires
+  }
+}
+
+// Champs comparables entre source (sondage/inscription) et fiche student.
+// label : libellé affiché · surveyKey : clé dans source normalisée · studentKey : clé dans student
 const CHAMPS_COMPARABLES = [
   { label: 'Prénom',      surveyKey: 'first_name',   studentKey: 'first_name',  contactType: null        },
   { label: 'Nom',         surveyKey: 'last_name',    studentKey: 'last_name',   contactType: null        },
@@ -512,7 +576,7 @@ const CHAMPS_COMPARABLES = [
   { label: 'Niveau',      surveyKey: 'level',        studentKey: 'level',       contactType: null        },
 ]
 
-function FusionPanel({ response, onClose, onFused }) {
+function FusionPanel({ source, onClose, onConfirmMatch, onFused, sourceLabel = 'Sondage' }) {
   const [recherche, setRecherche]       = useState('')
   const [students, setStudents]         = useState([])
   const [loadingStudents, setLoadingStudents] = useState(true)
@@ -557,7 +621,7 @@ function FusionPanel({ response, onClose, onFused }) {
     const strategies  = new Map()
     const etiquettes  = new Map()
     for (const { surveyKey, studentKey, contactType } of CHAMPS_COMPARABLES) {
-      const valSondage = response[surveyKey]
+      const valSondage = source[surveyKey]
       const valFiche   = student[studentKey]
       if (contactType) {
         // Champ contact : pré-sélection 'garder' si conflit, 'remplacer' si fiche vide
@@ -575,7 +639,7 @@ function FusionPanel({ response, onClose, onFused }) {
     setContactStrategies(strategies)
     setContactEtiquettes(etiquettes)
     setError('')
-  }, [response])
+  }, [source])
 
   // Basculer la sélection d'un champ
   const toggleField = (surveyKey) => {
@@ -598,12 +662,12 @@ function FusionPanel({ response, onClose, onFused }) {
       const updates = {}
       for (const { surveyKey, studentKey, contactType } of CHAMPS_COMPARABLES) {
         if (contactType) {
-          if (contactStrategies.get(surveyKey) === 'remplacer' && response[surveyKey] != null) {
-            updates[studentKey] = response[surveyKey]
+          if (contactStrategies.get(surveyKey) === 'remplacer' && source[surveyKey] != null) {
+            updates[studentKey] = source[surveyKey]
           }
         } else {
-          if (fieldsToImport.has(surveyKey) && response[surveyKey] != null) {
-            updates[studentKey] = response[surveyKey]
+          if (fieldsToImport.has(surveyKey) && source[surveyKey] != null) {
+            updates[studentKey] = source[surveyKey]
           }
         }
       }
@@ -620,7 +684,7 @@ function FusionPanel({ response, onClose, onFused }) {
       for (const { surveyKey, contactType } of CHAMPS_COMPARABLES) {
         if (!contactType) continue
         if (contactStrategies.get(surveyKey) !== 'les_deux') continue
-        const valSondage = response[surveyKey]
+        const valSondage = source[surveyKey]
         if (!valSondage) continue
         const etiquette = contactEtiquettes.get(surveyKey) || 'Élève'
         const { error: cErr } = await supabase
@@ -637,14 +701,10 @@ function FusionPanel({ response, onClose, onFused }) {
         if (cErr) throw new Error(cErr.message)
       }
 
-      // 3. Marquer la réponse comme rapprochée (additive — jamais destructif)
-      const { error: matchErr } = await supabase
-        .from('survey_responses')
-        .update({ matched_student_id: selectedStudent.id })
-        .eq('id', response.id)
-      if (matchErr) throw new Error(matchErr.message)
+      // 3. Marquer comme fusionné — délégué à l'appelant (table variable : survey_responses ou survey_registrations)
+      await onConfirmMatch(selectedStudent.id)
 
-      onFused(response.id, selectedStudent)
+      onFused(selectedStudent)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -727,12 +787,12 @@ function FusionPanel({ response, onClose, onFused }) {
             <div className="grid grid-cols-[auto_1fr_1fr_auto] bg-surface-raised px-3 py-1.5 text-muted-foreground font-medium gap-3">
               <span />
               <span>Fiche existante</span>
-              <span>Réponse sondage</span>
+              <span>{sourceLabel}</span>
               <span>Importer ?</span>
             </div>
             {CHAMPS_COMPARABLES.map(({ label, surveyKey, studentKey, contactType }) => {
               const valFiche   = selectedStudent[studentKey]
-              const valSondage = response[surveyKey]
+              const valSondage = source[surveyKey]
               const identiques = String(valFiche ?? '') === String(valSondage ?? '')
               // Conflit contact : les deux côtés renseignés et différents → 3 choix radio
               const conflit    = contactType && valSondage && valFiche && !identiques
@@ -832,11 +892,11 @@ function FusionPanel({ response, onClose, onFused }) {
               for (const { surveyKey, studentKey, contactType } of CHAMPS_COMPARABLES) {
                 if (contactType) {
                   // Champ contact vide dans la fiche → passer à 'remplacer'
-                  if (response[surveyKey] && !selectedStudent[studentKey]) {
+                  if (source[surveyKey] && !selectedStudent[studentKey]) {
                     strategies.set(surveyKey, 'remplacer')
                   }
                 } else {
-                  if (response[surveyKey] && !selectedStudent[studentKey]) preCoches.add(surveyKey)
+                  if (source[surveyKey] && !selectedStudent[studentKey]) preCoches.add(surveyKey)
                 }
               }
               setFieldsToImport(preCoches)
@@ -1006,9 +1066,16 @@ function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenP
         {openPanelId === `fusion-${r.id}` && (
           <div className="w-full">
             <FusionPanel
-              response={r}
+              source={r}
               onClose={() => setOpenPanelId(null)}
-              onFused={onFused}
+              onConfirmMatch={async (studentId) => {
+                const { error } = await supabase
+                  .from('survey_responses')
+                  .update({ matched_student_id: studentId })
+                  .eq('id', r.id)
+                if (error) throw new Error(error.message)
+              }}
+              onFused={(student) => { onFused(r.id, student) }}
             />
           </div>
         )}
@@ -1122,12 +1189,19 @@ export default function SurveyResultsPage() {
     }
   }
 
-  // Appelé quand l'utilisateur confirme un rapprochement — met à jour la réponse en mémoire
+  // Appelé quand le répondant principal est fusionné — met à jour la réponse en mémoire
   const handleFused = useCallback((responseId, student) => {
     setResponses((prev) => prev.map((x) =>
       x.id === responseId ? { ...x, matched_student_id: student.id } : x
     ))
     setOpenPanelId(null)
+  }, [])
+
+  // Appelé quand une personne supplémentaire est fusionnée — met à jour l'inscription en mémoire
+  const handleRegFused = useCallback((regId, student) => {
+    setRegistrations((prev) => prev.map((reg) =>
+      reg.id === regId ? { ...reg, matched_student_id: student.id } : reg
+    ))
   }, [])
 
   const handleReassign = async (r) => {
@@ -1153,6 +1227,7 @@ export default function SurveyResultsPage() {
         response={selected}
         registrations={regsSelected}
         onBack={() => setSelected(null)}
+        onRegFused={handleRegFused}
       />
     )
   }
