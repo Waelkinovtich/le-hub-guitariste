@@ -216,6 +216,64 @@ export async function syncStudentContexts(teacherId, studentId, ecoleConfig, ces
   }
 }
 
+// ─── Contacts supplémentaires étiquetés ──────────────────────────────────────
+// (table student_contacts — voir migration-student-contacts.sql)
+
+/** Récupère tous les contacts d'un élève, triés par type puis par date de création. */
+export async function fetchStudentContacts(studentId) {
+  const { data, error } = await supabase
+    .from('student_contacts')
+    .select('id, type, valeur, etiquette, est_principal, created_at')
+    .eq('student_id', studentId)
+    .order('type')
+    .order('created_at')
+  if (error) throw new Error(error.message)
+  return data ?? []
+}
+
+/** Ajoute un contact supplémentaire à un élève. */
+export async function addStudentContact(teacherId, studentId, { type, valeur, etiquette, estPrincipal = false }) {
+  const { data, error } = await supabase
+    .from('student_contacts')
+    .insert({
+      teacher_id:    teacherId,
+      student_id:    studentId,
+      type,
+      valeur:        valeur.trim(),
+      etiquette:     (etiquette?.trim()) || 'Élève',
+      est_principal: estPrincipal,
+    })
+    .select('id, type, valeur, etiquette, est_principal, created_at')
+    .single()
+  if (error) throw new Error(error.message)
+  return data
+}
+
+/** Supprime un contact supplémentaire. */
+export async function removeStudentContact(contactId) {
+  const { error } = await supabase.from('student_contacts').delete().eq('id', contactId)
+  if (error) throw new Error(error.message)
+}
+
+/**
+ * Marque un contact comme principal pour son type, et décoche les autres.
+ * Convention : un seul principal par type par élève (non contraint en SQL).
+ */
+export async function setStudentContactPrincipal(teacherId, studentId, contactId, type) {
+  // Réinitialiser les autres contacts du même type d'abord
+  await supabase
+    .from('student_contacts')
+    .update({ est_principal: false })
+    .eq('teacher_id', teacherId)
+    .eq('student_id', studentId)
+    .eq('type', type)
+  const { error } = await supabase
+    .from('student_contacts')
+    .update({ est_principal: true })
+    .eq('id', contactId)
+  if (error) throw new Error(error.message)
+}
+
 export async function fetchSchoolNames(teacherId) {
   // Exclure les employeurs CESU (particulier_cesu) — ce ne sont pas des écoles de musique
   const { data: schoolsData } = await supabase

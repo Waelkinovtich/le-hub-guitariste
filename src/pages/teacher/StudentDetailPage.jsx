@@ -7,6 +7,7 @@ import {
   fetchTeacherStudents, deleteStudent, fetchSchoolNames,
   fetchStudentContexts, fetchStudentsPaidByStudent,
   updateStudentContextDuration,
+  fetchStudentContacts, addStudentContact, removeStudentContact, setStudentContactPrincipal,
 } from '../../services/students'
 import { supabase } from '../../lib/supabase'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
@@ -370,6 +371,221 @@ const payeurLabelReadOnly = (ctx, students) => {
   return 'Paiement direct'
 }
 
+// ─── Contacts supplémentaires étiquetés ──────────────────────────────────────
+//
+// Affiche et gère les contacts additionnels (table student_contacts).
+// Les champs email/phone de students restent le contact "principal de référence" ;
+// cette section permet d'en ajouter d'autres (ado + parent, parent 1 + parent 2…).
+
+// Étiquettes suggérées — l'utilisateur peut aussi saisir librement via <datalist>
+const ETIQUETTES_SUGGEREES = ['Élève', 'Mère', 'Père', 'Parent', 'Tuteur']
+
+function StudentContactsSection({ studentId, teacherId }) {
+  const [contacts, setContacts]   = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [showForm, setShowForm]   = useState(false)
+  const [form, setForm]           = useState({ type: 'email', valeur: '', etiquette: 'Élève' })
+  const [saving, setSaving]       = useState(false)
+  const [formError, setFormError] = useState('')
+
+  useEffect(() => {
+    fetchStudentContacts(studentId)
+      .then(setContacts)
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [studentId])
+
+  const handleAdd = async () => {
+    if (!form.valeur.trim()) { setFormError('La valeur est obligatoire.'); return }
+    if (!form.etiquette.trim()) { setFormError('L\'étiquette est obligatoire.'); return }
+    setSaving(true)
+    setFormError('')
+    try {
+      const nouveau = await addStudentContact(teacherId, studentId, {
+        type:      form.type,
+        valeur:    form.valeur,
+        etiquette: form.etiquette,
+      })
+      setContacts((prev) => [...prev, nouveau])
+      setForm({ type: 'email', valeur: '', etiquette: 'Élève' })
+      setShowForm(false)
+    } catch (e) {
+      setFormError(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRemove = async (contactId) => {
+    try {
+      await removeStudentContact(contactId)
+      setContacts((prev) => prev.filter((c) => c.id !== contactId))
+    } catch (e) {
+      alert('Erreur : ' + e.message)
+    }
+  }
+
+  const handleSetPrincipal = async (contact) => {
+    try {
+      await setStudentContactPrincipal(teacherId, studentId, contact.id, contact.type)
+      setContacts((prev) => prev.map((c) =>
+        c.type === contact.type
+          ? { ...c, est_principal: c.id === contact.id }
+          : c
+      ))
+    } catch (e) {
+      alert('Erreur : ' + e.message)
+    }
+  }
+
+  return (
+    <div className="glass-panel rounded-2xl p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider">
+          Contacts supplémentaires
+        </p>
+        {!showForm && (
+          <button
+            type="button"
+            onClick={() => { setShowForm(true); setFormError('') }}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-guitar-400 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Ajouter
+          </button>
+        )}
+      </div>
+
+      {/* Formulaire d'ajout */}
+      {showForm && (
+        <div className="rounded-xl border border-border-subtle bg-surface p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-muted-foreground">Nouveau contact</p>
+            <button type="button" onClick={() => setShowForm(false)} className="text-muted hover:text-foreground transition-colors">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Type */}
+          <div className="flex gap-2">
+            {[
+              { value: 'email',     label: 'Email',     Icon: Mail  },
+              { value: 'telephone', label: 'Téléphone', Icon: Phone },
+            ].map(({ value, label, Icon }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, type: value }))}
+                className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-all ${
+                  form.type === value
+                    ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
+                    : 'border-border-subtle text-muted-foreground hover:border-border'
+                }`}
+              >
+                <Icon className="w-3 h-3" />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Valeur */}
+          <input
+            type={form.type === 'email' ? 'email' : 'tel'}
+            placeholder={form.type === 'email' ? 'adresse@exemple.fr' : '06 xx xx xx xx'}
+            value={form.valeur}
+            onChange={(e) => setForm((f) => ({ ...f, valeur: e.target.value }))}
+            className="w-full bg-surface-raised border border-border-subtle rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60 transition-colors"
+          />
+
+          {/* Étiquette avec suggestions */}
+          <div>
+            <input
+              type="text"
+              list="etiquettes-contacts"
+              placeholder="À qui appartient ce contact ? (ex: Élève, Mère…)"
+              value={form.etiquette}
+              onChange={(e) => setForm((f) => ({ ...f, etiquette: e.target.value }))}
+              className="w-full bg-surface-raised border border-border-subtle rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60 transition-colors"
+            />
+            <datalist id="etiquettes-contacts">
+              {ETIQUETTES_SUGGEREES.map((e) => <option key={e} value={e} />)}
+            </datalist>
+          </div>
+
+          {formError && (
+            <p className="text-xs text-guitar-400 flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              {formError}
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={handleAdd}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl guitar-gradient text-white text-xs font-medium disabled:opacity-40"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+            Enregistrer
+          </button>
+        </div>
+      )}
+
+      {/* Liste des contacts */}
+      {loading ? (
+        <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Chargement…
+        </div>
+      ) : contacts.length === 0 && !showForm ? (
+        <p className="text-sm text-muted-foreground">
+          Aucun contact supplémentaire. Utilisez "Ajouter" pour enregistrer l'email ou le téléphone d'un parent, d'un ado, etc.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {contacts.map((c) => {
+            const Icon = c.type === 'email' ? Mail : Phone
+            return (
+              <div key={c.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-surface border border-border-subtle">
+                <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm truncate">{c.valeur}</p>
+                  <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    {c.etiquette}
+                    {c.est_principal && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded border border-guitar-600/30 bg-guitar-600/10 text-guitar-400 font-medium">principal</span>
+                    )}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {!c.est_principal && (
+                    <button
+                      type="button"
+                      onClick={() => handleSetPrincipal(c)}
+                      title="Définir comme contact principal"
+                      className="text-xs text-muted-foreground hover:text-guitar-400 transition-colors px-2 py-1 rounded-lg border border-border-subtle hover:border-guitar-600/30"
+                    >
+                      Principal
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleRemove(c.id)}
+                    title="Supprimer ce contact"
+                    className="text-muted-foreground hover:text-guitar-400 transition-colors p-1.5 rounded-lg hover:bg-guitar-600/8"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Page principale ──────────────────────────────────────────────────────────
 
 export default function StudentDetailPage() {
@@ -585,6 +801,8 @@ export default function StudentDetailPage() {
           )}
         </div>
       </Section>
+
+      <StudentContactsSection studentId={student.id} teacherId={user.id} />
 
       {hasParent1 && (
         <Section title={student.parent1Name || 'Parent / Tuteur 1'}>

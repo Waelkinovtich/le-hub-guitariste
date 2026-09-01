@@ -501,13 +501,15 @@ function VoirAussiInscriptions({ prenom, supplementaires, onOpenDetail }) {
 // Champs comparables entre survey_response et fiche student.
 // label : libellé affiché · surveyKey : clé dans survey_response · studentKey : clé dans student
 const CHAMPS_COMPARABLES = [
-  { label: 'Prénom',      surveyKey: 'first_name',   studentKey: 'first_name'  },
-  { label: 'Nom',         surveyKey: 'last_name',    studentKey: 'last_name'   },
-  { label: 'Email',       surveyKey: 'email',        studentKey: 'email'       },
-  { label: 'Téléphone',   surveyKey: 'phone',        studentKey: 'phone'       },
-  { label: 'Naissance',   surveyKey: 'birth_year',   studentKey: 'birth_year'  },
-  { label: 'École',       surveyKey: 'school_name',  studentKey: 'school_name' },
-  { label: 'Niveau',      surveyKey: 'level',        studentKey: 'level'       },
+  { label: 'Prénom',      surveyKey: 'first_name',   studentKey: 'first_name',  contactType: null        },
+  { label: 'Nom',         surveyKey: 'last_name',    studentKey: 'last_name',   contactType: null        },
+  // contactType : quand non-null, un conflit (les deux côtés renseignés et différents)
+  // propose 3 choix au lieu d'un simple checkbox — voir la section "Tableau de comparaison"
+  { label: 'Email',       surveyKey: 'email',        studentKey: 'email',       contactType: 'email'     },
+  { label: 'Téléphone',   surveyKey: 'phone',        studentKey: 'phone',       contactType: 'telephone' },
+  { label: 'Naissance',   surveyKey: 'birth_year',   studentKey: 'birth_year',  contactType: null        },
+  { label: 'École',       surveyKey: 'school_name',  studentKey: 'school_name', contactType: null        },
+  { label: 'Niveau',      surveyKey: 'level',        studentKey: 'level',       contactType: null        },
 ]
 
 function FusionPanel({ response, onClose, onFused }) {
@@ -515,8 +517,12 @@ function FusionPanel({ response, onClose, onFused }) {
   const [students, setStudents]         = useState([])
   const [loadingStudents, setLoadingStudents] = useState(true)
   const [selectedStudent, setSelectedStudent] = useState(null)
-  // fieldsToImport : Set des surveyKeys que l'utilisateur choisit d'importer
+  // fieldsToImport : Set des surveyKeys à importer (champs sans contactType, stratégie 'remplacer')
   const [fieldsToImport, setFieldsToImport] = useState(new Set())
+  // contactStrategies : Map surveyKey → 'garder'|'remplacer'|'les_deux' (champs avec contactType en conflit)
+  const [contactStrategies, setContactStrategies] = useState(new Map())
+  // contactEtiquettes : Map surveyKey → string (étiquette pour la stratégie 'les_deux')
+  const [contactEtiquettes, setContactEtiquettes] = useState(new Map())
   const [saving, setSaving]             = useState(false)
   const [error, setError]               = useState('')
 
@@ -547,13 +553,27 @@ function FusionPanel({ response, onClose, onFused }) {
     setSelectedStudent(student)
     // Pré-sélectionner uniquement les champs vides dans la fiche existante
     // (ne jamais écraser une valeur existante sans décision explicite)
-    const preCoches = new Set()
-    for (const { surveyKey, studentKey } of CHAMPS_COMPARABLES) {
+    const preCoches   = new Set()
+    const strategies  = new Map()
+    const etiquettes  = new Map()
+    for (const { surveyKey, studentKey, contactType } of CHAMPS_COMPARABLES) {
       const valSondage = response[surveyKey]
       const valFiche   = student[studentKey]
-      if (valSondage && !valFiche) preCoches.add(surveyKey)
+      if (contactType) {
+        // Champ contact : pré-sélection 'garder' si conflit, 'remplacer' si fiche vide
+        if (valSondage && !valFiche) {
+          strategies.set(surveyKey, 'remplacer')
+        } else if (valSondage && valFiche && String(valFiche) !== String(valSondage)) {
+          strategies.set(surveyKey, 'garder')
+          etiquettes.set(surveyKey, 'Élève')
+        }
+      } else {
+        if (valSondage && !valFiche) preCoches.add(surveyKey)
+      }
     }
     setFieldsToImport(preCoches)
+    setContactStrategies(strategies)
+    setContactEtiquettes(etiquettes)
     setError('')
   }, [response])
 
@@ -573,11 +593,18 @@ function FusionPanel({ response, onClose, onFused }) {
     setSaving(true)
     setError('')
     try {
-      // 1. Construire la mise à jour student à partir des champs cochés
+      // 1. Construire la mise à jour student à partir des champs cochés (sans contactType)
+      //    + champs contact avec stratégie 'remplacer'
       const updates = {}
-      for (const { surveyKey, studentKey } of CHAMPS_COMPARABLES) {
-        if (fieldsToImport.has(surveyKey) && response[surveyKey] != null) {
-          updates[studentKey] = response[surveyKey]
+      for (const { surveyKey, studentKey, contactType } of CHAMPS_COMPARABLES) {
+        if (contactType) {
+          if (contactStrategies.get(surveyKey) === 'remplacer' && response[surveyKey] != null) {
+            updates[studentKey] = response[surveyKey]
+          }
+        } else {
+          if (fieldsToImport.has(surveyKey) && response[surveyKey] != null) {
+            updates[studentKey] = response[surveyKey]
+          }
         }
       }
       if (Object.keys(updates).length > 0) {
@@ -588,7 +615,29 @@ function FusionPanel({ response, onClose, onFused }) {
         if (updErr) throw new Error(updErr.message)
       }
 
-      // 2. Marquer la réponse comme rapprochée (additive — jamais destructif)
+      // 2. Champs contact avec stratégie 'les_deux' : insérer dans student_contacts
+      const { data: { user: currentUser } } = await supabase.auth.getUser()
+      for (const { surveyKey, contactType } of CHAMPS_COMPARABLES) {
+        if (!contactType) continue
+        if (contactStrategies.get(surveyKey) !== 'les_deux') continue
+        const valSondage = response[surveyKey]
+        if (!valSondage) continue
+        const etiquette = contactEtiquettes.get(surveyKey) || 'Élève'
+        const { error: cErr } = await supabase
+          .from('student_contacts')
+          .insert({
+            id:         crypto.randomUUID(),
+            teacher_id: currentUser.id,
+            student_id: selectedStudent.id,
+            type:       contactType,
+            valeur:     valSondage,
+            etiquette,
+            est_principal: false,
+          })
+        if (cErr) throw new Error(cErr.message)
+      }
+
+      // 3. Marquer la réponse comme rapprochée (additive — jamais destructif)
       const { error: matchErr } = await supabase
         .from('survey_responses')
         .update({ matched_student_id: selectedStudent.id })
@@ -681,41 +730,94 @@ function FusionPanel({ response, onClose, onFused }) {
               <span>Réponse sondage</span>
               <span>Importer ?</span>
             </div>
-            {CHAMPS_COMPARABLES.map(({ label, surveyKey, studentKey }) => {
+            {CHAMPS_COMPARABLES.map(({ label, surveyKey, studentKey, contactType }) => {
               const valFiche   = selectedStudent[studentKey]
               const valSondage = response[surveyKey]
               const identiques = String(valFiche ?? '') === String(valSondage ?? '')
-              const cochable   = valSondage && !identiques
+              // Conflit contact : les deux côtés renseignés et différents → 3 choix radio
+              const conflit    = contactType && valSondage && valFiche && !identiques
+              const cochable   = !contactType && valSondage && !identiques
+              const strategie  = contactStrategies.get(surveyKey)
+              const etiquette  = contactEtiquettes.get(surveyKey) ?? 'Élève'
+
               return (
-                <div
-                  key={surveyKey}
-                  className="grid grid-cols-[auto_1fr_1fr_auto] items-center px-3 py-2 border-t border-border-subtle gap-3 hover:bg-surface-raised/50 transition-colors"
-                >
-                  <span className="text-muted-foreground min-w-[60px]">{label}</span>
-                  <span className={valFiche ? 'text-foreground' : 'text-muted italic'}>
-                    {valFiche ?? '—'}
-                  </span>
-                  <span className={valSondage && !identiques ? 'text-guitar-400' : valSondage ? 'text-muted-foreground' : 'text-muted italic'}>
-                    {valSondage ?? '—'}
-                    {identiques && valSondage && <span className="ml-1 text-green-400">✓</span>}
-                  </span>
-                  <div className="flex justify-end">
-                    {cochable ? (
-                      <button
-                        type="button"
-                        onClick={() => toggleField(surveyKey)}
-                        className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
-                          fieldsToImport.has(surveyKey)
-                            ? 'bg-guitar-500 border-guitar-500'
-                            : 'border-border'
-                        }`}
-                      >
-                        {fieldsToImport.has(surveyKey) && <Check className="w-2.5 h-2.5 text-white" />}
-                      </button>
-                    ) : (
-                      <span className="w-4" />
-                    )}
+                <div key={surveyKey}>
+                  <div
+                    className="grid grid-cols-[auto_1fr_1fr_auto] items-center px-3 py-2 border-t border-border-subtle gap-3 hover:bg-surface-raised/50 transition-colors"
+                  >
+                    <span className="text-muted-foreground min-w-[60px]">{label}</span>
+                    <span className={valFiche ? 'text-foreground' : 'text-muted italic'}>
+                      {valFiche ?? '—'}
+                    </span>
+                    <span className={conflit || (valSondage && !identiques) ? 'text-guitar-400' : valSondage ? 'text-muted-foreground' : 'text-muted italic'}>
+                      {valSondage ?? '—'}
+                      {identiques && valSondage && <span className="ml-1 text-green-400">✓</span>}
+                    </span>
+                    <div className="flex justify-end">
+                      {conflit ? (
+                        // Conflit contact : icône de conflit, les radios sont en-dessous
+                        <span className="text-amber-400 text-[10px] font-medium px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10">conflit</span>
+                      ) : cochable ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleField(surveyKey)}
+                          className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
+                            fieldsToImport.has(surveyKey)
+                              ? 'bg-guitar-500 border-guitar-500'
+                              : 'border-border'
+                          }`}
+                        >
+                          {fieldsToImport.has(surveyKey) && <Check className="w-2.5 h-2.5 text-white" />}
+                        </button>
+                      ) : (
+                        <span className="w-4" />
+                      )}
+                    </div>
                   </div>
+
+                  {/* 3 choix radio pour les conflits contact */}
+                  {conflit && (
+                    <div className="px-3 pb-3 pt-1 border-t-0 border-border-subtle bg-surface-raised/40 space-y-2">
+                      {[
+                        { value: 'garder',    label: 'Garder l\'ancien',  desc: `Conserver "${valFiche}"` },
+                        { value: 'remplacer', label: 'Remplacer',          desc: `Écraser par "${valSondage}"` },
+                        { value: 'les_deux',  label: 'Garder les deux',   desc: 'Ajouter dans les contacts supplémentaires' },
+                      ].map(({ value, label: optLabel, desc }) => (
+                        <label key={value} className="flex items-start gap-2.5 cursor-pointer group">
+                          <input
+                            type="radio"
+                            name={`contact-strategy-${surveyKey}`}
+                            value={value}
+                            checked={strategie === value}
+                            onChange={() => setContactStrategies((prev) => new Map([...prev, [surveyKey, value]]))}
+                            className="mt-0.5 accent-guitar-500"
+                          />
+                          <div>
+                            <span className="text-xs font-medium text-foreground group-hover:text-guitar-400 transition-colors">{optLabel}</span>
+                            <span className="text-[11px] text-muted-foreground ml-1.5">{desc}</span>
+                          </div>
+                        </label>
+                      ))}
+                      {/* Champ étiquette visible uniquement si 'les_deux' sélectionné */}
+                      {strategie === 'les_deux' && (
+                        <div className="pt-1">
+                          <input
+                            type="text"
+                            list={`etiquettes-fusion-${surveyKey}`}
+                            value={etiquette}
+                            onChange={(e) => setContactEtiquettes((prev) => new Map([...prev, [surveyKey, e.target.value]]))}
+                            placeholder="Étiquette du contact à ajouter (ex: Élève)"
+                            className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-1.5 text-xs text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60 transition-colors"
+                          />
+                          <datalist id={`etiquettes-fusion-${surveyKey}`}>
+                            {['Élève', 'Mère', 'Père', 'Parent', 'Tuteur'].map((e) => (
+                              <option key={e} value={e} />
+                            ))}
+                          </datalist>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -725,11 +827,20 @@ function FusionPanel({ response, onClose, onFused }) {
           <button
             type="button"
             onClick={() => {
-              const preCoches = new Set()
-              for (const { surveyKey, studentKey } of CHAMPS_COMPARABLES) {
-                if (response[surveyKey] && !selectedStudent[studentKey]) preCoches.add(surveyKey)
+              const preCoches  = new Set()
+              const strategies = new Map(contactStrategies)
+              for (const { surveyKey, studentKey, contactType } of CHAMPS_COMPARABLES) {
+                if (contactType) {
+                  // Champ contact vide dans la fiche → passer à 'remplacer'
+                  if (response[surveyKey] && !selectedStudent[studentKey]) {
+                    strategies.set(surveyKey, 'remplacer')
+                  }
+                } else {
+                  if (response[surveyKey] && !selectedStudent[studentKey]) preCoches.add(surveyKey)
+                }
               }
               setFieldsToImport(preCoches)
+              setContactStrategies(strategies)
             }}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors underline-offset-2 hover:underline"
           >
@@ -749,9 +860,14 @@ function FusionPanel({ response, onClose, onFused }) {
               Confirmer la fusion
             </button>
             <span className="text-xs text-muted-foreground">
-              {fieldsToImport.size > 0
-                ? `${fieldsToImport.size} champ${fieldsToImport.size > 1 ? 's' : ''} à importer`
-                : 'Fusion seule, sans import de champs'}
+              {(() => {
+                // Compter les champs effectivement modifiés (cochés ou stratégie 'remplacer'/'les_deux')
+                const contactCount = [...contactStrategies.values()].filter((v) => v === 'remplacer' || v === 'les_deux').length
+                const total = fieldsToImport.size + contactCount
+                return total > 0
+                  ? `${total} champ${total > 1 ? 's' : ''} à importer`
+                  : 'Fusion seule, sans import de champs'
+              })()}
             </span>
           </div>
         </div>
