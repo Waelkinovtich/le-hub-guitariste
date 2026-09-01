@@ -30,6 +30,7 @@ const StudentExercisesPage   = lazy(() => import('./pages/student/StudentExercis
 const StudentProgressPage    = lazy(() => import('./pages/student/StudentProgressPage'))
 const StudentLessonsPage     = lazy(() => import('./pages/student/StudentLessonsPage'))
 const SondagePage            = lazy(() => import('./pages/SondagePage'))
+const CreneauPage            = lazy(() => import('./pages/CreneauPage'))
 const SchoolSchedulePage     = lazy(() => import('./pages/SchoolSchedulePage'))
 const SurveyResultsPage      = lazy(() => import('./pages/SurveyResultsPage'))
 const SendSurveyPage         = lazy(() => import('./pages/SendSurveyPage'))
@@ -136,6 +137,7 @@ function AppShell() {
 
           <Route path="/sondage/:token" element={<SondagePage />} />
           <Route path="/sondage-rapide/:token" element={<QuickSurveyPage />} />
+          <Route path="/creneau/:token" element={<CreneauPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

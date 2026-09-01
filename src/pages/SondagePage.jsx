@@ -575,6 +575,14 @@ function StepInscriptions({ data, onChange, schools, suppSchedules, suppLoading,
                     ))}
                   </div>
                 </Field>
+                {/* Instrument — même liste que le répondant principal */}
+                <Field label="Instrument">
+                  <select className={selectCls} value={p.instrument}
+                    onChange={(e) => setField(i, 'instrument', e.target.value)}>
+                    <option value="">Choisir…</option>
+                    {INSTRUMENTS.map((inst) => <option key={inst} value={inst}>{inst}</option>)}
+                  </select>
+                </Field>
               </div>
             </div>
 
@@ -696,6 +704,9 @@ const defaultTuteur = () => ({ prenom: '', nom: '', role: '', role_precision: ''
 // (identité, école/CESU, créneaux disponibles). Nécessite la migration SQL bloc T1b.
 const defaultPersonSupp = () => ({
   prenom: '', nom: '', birth_year: '', email: '', phone: '',
+  // instrument : ajouté pour stocker le choix d'instrument de la personne supplémentaire
+  // (même liste que le répondant principal — nécessite la colonne sur survey_registrations)
+  instrument: '',
   school_name: '', registration_type: 'nouvelle', availabilities: {},
 })
 
@@ -892,6 +903,9 @@ export default function SondagePage() {
           nom: form.last_name || null,
           email: form.email || null,
           telephone: form.phone || null,
+          // instrument du répondant principal — copié depuis survey_responses pour
+          // permettre la fusion via survey_registrations sans re-requêter survey_responses
+          instrument: form.instrument || null,
           choix_structure: form.school_name === 'CESU' ? 'cesu' : (form.school_name ? 'ecole' : null),
           school_name: form.school_name && form.school_name !== 'CESU' ? form.school_name : null,
           school_id: null,
@@ -906,6 +920,9 @@ export default function SondagePage() {
           telephone: p.phone || null,
           birth_year: p.birth_year ? parseInt(p.birth_year, 10) : null,
           registration_type: p.registration_type || 'nouvelle',
+          // instrument de la personne supplémentaire — nécessite la colonne
+          // sur survey_registrations (migration bloc T1)
+          instrument: p.instrument || null,
           choix_structure: p.school_name === 'CESU' ? 'cesu' : (p.school_name ? 'ecole' : null),
           school_name: p.school_name && p.school_name !== 'CESU' ? p.school_name : null,
           school_id: null,

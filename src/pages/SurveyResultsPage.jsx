@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home, Link2, Merge, Search, X } from 'lucide-react'
+import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home, Link2, Merge, Search, X, UserPlus } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import HelpTooltip from '../components/HelpTooltip'
 import PhoneActions from '../components/PhoneActions'
@@ -62,15 +62,16 @@ function Divider() {
 // Durées proposables dans le sondage (en minutes). Source : grilles standard.
 const DUREES_SONDAGE = [15, 30, 45, 60, 90, 120]
 
-function DetailView({ response, registrations, onBack, onRegFused }) {
+function DetailView({ response, registrations, onBack, onRegFused, onRegCreated }) {
   const availabilities = fmtAvailabilities(response.availabilities)
   const supplementaires = (registrations ?? []).filter((r) => !r.is_respondent)
   const hasGuardian1 = response.guardian1_name || response.guardian1_phone || response.guardian1_email
   const hasGuardian2 = response.guardian2_name || response.guardian2_phone || response.guardian2_email
   const [desiredDuration, setDesiredDuration] = useState(response.desired_duration_minutes ?? null)
   const [savingDuration, setSavingDuration] = useState(false)
-  // openRegFusionId : id de l'inscription supplémentaire dont le panneau de fusion est ouvert
-  const [openRegFusionId, setOpenRegFusionId] = useState(null)
+  // openRegFusionId : id de l'inscription supplémentaire dont le panneau est ouvert
+  // valeur : reg.id pour fusion, `creation-${reg.id}` pour création
+  const [openRegPanelId, setOpenRegPanelId] = useState(null)
 
   const handleDurationChange = async (val) => {
     const parsed = val === '' ? null : Number(val)
@@ -244,38 +245,56 @@ function DetailView({ response, registrations, onBack, onRegFused }) {
                               Réinscription
                             </span>
                           )}
+                          {reg.instrument && <p className="text-xs text-muted-foreground flex items-center gap-1"><Guitar className="w-3 h-3 inline" /> {reg.instrument}</p>}
                           {reg.school_name && <p className="text-xs text-muted-foreground">{reg.school_name}</p>}
                           {reg.email && <p className="text-xs text-muted-foreground">{reg.email}</p>}
                           {reg.telephone && (
                             <p className="text-xs text-muted-foreground"><PhoneActions number={reg.telephone} /></p>
                           )}
                         </div>
-                        {/* Bouton Fusionner — même logique que le répondant principal */}
-                        <button
-                          type="button"
-                          onClick={() => setOpenRegFusionId(openRegFusionId === reg.id ? null : reg.id)}
-                          className={`flex-shrink-0 flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${
-                            reg.matched_student_id
-                              ? 'border-green-600/40 bg-green-600/8 text-green-400'
-                              : openRegFusionId === reg.id
-                                ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
-                                : 'border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
-                          }`}
-                          title={reg.matched_student_id ? 'Déjà fusionné — cliquer pour modifier' : 'Fusionner avec une fiche élève existante'}
-                        >
-                          <Merge className="w-3.5 h-3.5" />
-                          {reg.matched_student_id ? 'Fusionné' : 'Fusionner la fiche'}
-                        </button>
+                        {/* Boutons action — même logique que le répondant principal */}
+                        <div className="flex flex-col gap-1.5 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setOpenRegPanelId(openRegPanelId === reg.id ? null : reg.id)}
+                            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${
+                              reg.matched_student_id
+                                ? 'border-green-600/40 bg-green-600/8 text-green-400'
+                                : openRegPanelId === reg.id
+                                  ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
+                                  : 'border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
+                            }`}
+                            title={reg.matched_student_id ? 'Déjà fusionné — cliquer pour modifier' : 'Fusionner avec une fiche élève existante'}
+                          >
+                            <Merge className="w-3.5 h-3.5" />
+                            {reg.matched_student_id ? 'Fusionné' : 'Fusionner'}
+                          </button>
+                          {!reg.matched_student_id && (
+                            <button
+                              type="button"
+                              onClick={() => setOpenRegPanelId(openRegPanelId === `creation-${reg.id}` ? null : `creation-${reg.id}`)}
+                              className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${
+                                openRegPanelId === `creation-${reg.id}`
+                                  ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
+                                  : 'border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
+                              }`}
+                              title="Créer une nouvelle fiche élève"
+                            >
+                              <UserPlus className="w-3.5 h-3.5" />
+                              Créer la fiche
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
 
-                    {/* Panneau de fusion pour cette personne supplémentaire */}
-                    {openRegFusionId === reg.id && (
+                    {/* Panneau de fusion */}
+                    {openRegPanelId === reg.id && (
                       <div className="border-t border-border-subtle px-4 pb-4 pt-0">
                         <FusionPanel
                           source={normalizeReg(reg)}
                           sourceLabel="Inscription supplémentaire"
-                          onClose={() => setOpenRegFusionId(null)}
+                          onClose={() => setOpenRegPanelId(null)}
                           onConfirmMatch={async (studentId) => {
                             const { error } = await supabase
                               .from('survey_registrations')
@@ -284,9 +303,29 @@ function DetailView({ response, registrations, onBack, onRegFused }) {
                             if (error) throw new Error(error.message)
                           }}
                           onFused={(student) => {
-                            // Mettre à jour le state parent + fermer le panneau
                             onRegFused(reg.id, student)
-                            setOpenRegFusionId(null)
+                            setOpenRegPanelId(null)
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    {/* Panneau de création d'une nouvelle fiche */}
+                    {openRegPanelId === `creation-${reg.id}` && (
+                      <div className="border-t border-border-subtle px-4 pb-4 pt-0">
+                        <CreationPanel
+                          source={normalizeReg(reg)}
+                          onClose={() => setOpenRegPanelId(null)}
+                          onConfirmCreate={async (studentId) => {
+                            const { error } = await supabase
+                              .from('survey_registrations')
+                              .update({ matched_student_id: studentId })
+                              .eq('id', reg.id)
+                            if (error) throw new Error(error.message)
+                          }}
+                          onCreated={(student) => {
+                            onRegCreated(reg.id, student)
+                            setOpenRegPanelId(null)
                           }}
                         />
                       </div>
@@ -536,6 +575,142 @@ function VoirAussiInscriptions({ prenom, supplementaires, onOpenDetail }) {
   )
 }
 
+// ─── Panneau de création d'une fiche élève depuis le sondage ─────────────────
+/**
+ * Crée une fiche élève dans la table students à partir d'une source normalisée
+ * (répondant principal ou personne supplémentaire). Pré-remplit les champs
+ * disponibles et laisse l'utilisateur confirmer avant insertion.
+ *
+ * `source`          : objet normalisé (clés standard : first_name, last_name…)
+ * `onConfirmCreate` : async (studentId) => void — marque la source comme fusionnée
+ * `onCreated`       : (student) => void — callback de succès
+ */
+function CreationPanel({ source, onClose, onConfirmCreate, onCreated }) {
+  // Pré-remplissage depuis la source sondage — l'utilisateur peut corriger avant création
+  const [form, setForm] = useState({
+    first_name:  source.first_name  ?? '',
+    last_name:   source.last_name   ?? '',
+    email:       source.email       ?? '',
+    phone:       source.phone       ?? '',
+    birth_year:  source.birth_year  ? String(source.birth_year) : '',
+    instrument:  source.instrument  ?? '',
+    school_name: source.school_name ?? '',
+    level:       source.level       ?? '',
+  })
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState('')
+
+  const handleCreer = async () => {
+    if (!form.first_name.trim() || !form.last_name.trim()) {
+      setError('Le prénom et le nom sont obligatoires.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('Session expirée — veuillez vous reconnecter.')
+
+      // Insertion directe : on reproduit la structure de createStudent
+      // sans passer par le service (pas besoin de la couche de transformation)
+      const { data: student, error: insErr } = await supabase
+        .from('students')
+        .insert({
+          teacher_id:  user.id,
+          first_name:  form.first_name.trim(),
+          last_name:   form.last_name.trim(),
+          email:       form.email.trim()       || null,
+          phone:       form.phone.trim()       || null,
+          birth_year:  form.birth_year ? Number(form.birth_year) : null,
+          instrument:  form.instrument.trim()  || null,
+          school_name: form.school_name.trim() || null,
+          level:       form.level.trim()       || null,
+          progress:    0,
+          lesson_type: 'particulier',
+        })
+        .select('id, first_name, last_name, email, phone, birth_year, school_name, level, instrument')
+        .single()
+      if (insErr) throw new Error(insErr.message)
+
+      // Marquer la réponse/inscription comme liée à cette nouvelle fiche
+      await onConfirmCreate(student.id)
+      onCreated(student)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const inputCls = 'w-full px-3 py-2 rounded-lg border border-border-subtle bg-surface-raised text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60 transition-colors'
+
+  return (
+    <div className="w-full mt-3 rounded-xl border border-border bg-surface p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium flex items-center gap-2">
+          <UserPlus className="w-4 h-4 text-muted" />
+          Créer une nouvelle fiche élève
+        </p>
+        <button type="button" onClick={onClose} className="text-xs text-muted hover:text-foreground transition-colors">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      <p className="text-xs text-muted-foreground bg-surface-raised rounded-lg px-3 py-2">
+        Les champs sont pré-remplis depuis le sondage. Vérifiez et corrigez si nécessaire avant de créer la fiche.
+      </p>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">Prénom <span className="text-guitar-400">*</span></p>
+          <input className={inputCls} value={form.first_name} onChange={set('first_name')} placeholder="Prénom" />
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">Nom <span className="text-guitar-400">*</span></p>
+          <input className={inputCls} value={form.last_name} onChange={set('last_name')} placeholder="Nom" />
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">Email</p>
+          <input className={inputCls} type="email" value={form.email} onChange={set('email')} placeholder="email@exemple.fr" />
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">Téléphone</p>
+          <input className={inputCls} type="tel" value={form.phone} onChange={set('phone')} placeholder="06 00 00 00 00" />
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">Année de naissance</p>
+          <input className={inputCls} type="number" value={form.birth_year} onChange={set('birth_year')} placeholder="2005" />
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">Instrument</p>
+          <input className={inputCls} value={form.instrument} onChange={set('instrument')} placeholder="Guitare acoustique…" />
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">École</p>
+          <input className={inputCls} value={form.school_name} onChange={set('school_name')} placeholder="École de musique…" />
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">Niveau</p>
+          <input className={inputCls} value={form.level} onChange={set('level')} placeholder="Cycle 1 — 1re année…" />
+        </div>
+      </div>
+
+      {error && <p className="text-xs text-guitar-400">{error}</p>}
+
+      <button
+        type="button"
+        onClick={handleCreer}
+        disabled={saving}
+        className="flex items-center gap-1.5 px-4 py-2 rounded-xl guitar-gradient text-white text-xs font-medium disabled:opacity-40"
+      >
+        {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
+        Créer la fiche élève
+      </button>
+    </div>
+  )
+}
+
 // ─── Panneau de fusion manuelle ───────────────────────────────────────────────
 /**
  * Permet de rapprocher une source (répondant principal OU personne supplémentaire)
@@ -557,6 +732,7 @@ function normalizeReg(reg) {
     email:       reg.email    ?? null,
     phone:       reg.telephone ?? null,
     birth_year:  reg.birth_year  ?? null,
+    instrument:  reg.instrument  ?? null,
     school_name: reg.school_name ?? null,
     level:       null, // champ absent des inscriptions supplémentaires
   }
@@ -572,6 +748,7 @@ const CHAMPS_COMPARABLES = [
   { label: 'Email',       surveyKey: 'email',        studentKey: 'email',       contactType: 'email'     },
   { label: 'Téléphone',   surveyKey: 'phone',        studentKey: 'phone',       contactType: 'telephone' },
   { label: 'Naissance',   surveyKey: 'birth_year',   studentKey: 'birth_year',  contactType: null        },
+  { label: 'Instrument',  surveyKey: 'instrument',   studentKey: 'instrument',  contactType: null        },
   { label: 'École',       surveyKey: 'school_name',  studentKey: 'school_name', contactType: null        },
   { label: 'Niveau',      surveyKey: 'level',        studentKey: 'level',       contactType: null        },
 ]
@@ -936,7 +1113,7 @@ function FusionPanel({ source, onClose, onConfirmMatch, onFused, sourceLabel = '
   )
 }
 
-function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenPanelId, onSelect, onConfirmed, onReassign, onDelete, onFused }) {
+function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenPanelId, onSelect, onConfirmed, onReassign, onDelete, onFused, onCreated }) {
   // Indique si la réponse provient d'un lien partagé générique plutôt qu'un envoi individuel
   const genericMeta = genericTokens?.[r.token_id]
   return (
@@ -1040,6 +1217,22 @@ function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenP
           {r.matched_student_id ? 'Fusionné' : 'Fusionner la fiche'}
         </button>
 
+        {/* Création d'une nouvelle fiche — pour les élèves inconnus du système */}
+        {!r.matched_student_id && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setOpenPanelId(openPanelId === `creation-${r.id}` ? null : `creation-${r.id}`) }}
+            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${
+              openPanelId === `creation-${r.id}`
+                ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
+                : 'border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
+            }`}
+            title="Créer une nouvelle fiche élève depuis cette réponse"
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            Créer la fiche élève
+          </button>
+        )}
+
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -1076,6 +1269,24 @@ function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenP
                 if (error) throw new Error(error.message)
               }}
               onFused={(student) => { onFused(r.id, student) }}
+            />
+          </div>
+        )}
+
+        {openPanelId === `creation-${r.id}` && (
+          <div className="w-full">
+            <CreationPanel
+              source={r}
+              onClose={() => setOpenPanelId(null)}
+              onConfirmCreate={async (studentId) => {
+                // Marquer la réponse comme liée à la nouvelle fiche (même comportement que la fusion)
+                const { error } = await supabase
+                  .from('survey_responses')
+                  .update({ matched_student_id: studentId })
+                  .eq('id', r.id)
+                if (error) throw new Error(error.message)
+              }}
+              onCreated={(student) => { onCreated(r.id, student); setOpenPanelId(null) }}
             />
           </div>
         )}
@@ -1204,6 +1415,21 @@ export default function SurveyResultsPage() {
     ))
   }, [])
 
+  // Appelé quand une nouvelle fiche est créée pour le répondant principal
+  const handleCreated = useCallback((responseId, student) => {
+    setResponses((prev) => prev.map((x) =>
+      x.id === responseId ? { ...x, matched_student_id: student.id } : x
+    ))
+    setOpenPanelId(null)
+  }, [])
+
+  // Appelé quand une nouvelle fiche est créée pour une personne supplémentaire
+  const handleRegCreated = useCallback((regId, student) => {
+    setRegistrations((prev) => prev.map((reg) =>
+      reg.id === regId ? { ...reg, matched_student_id: student.id } : reg
+    ))
+  }, [])
+
   const handleReassign = async (r) => {
     const today = new Date().toISOString().slice(0, 10)
     await supabase
@@ -1228,6 +1454,7 @@ export default function SurveyResultsPage() {
         registrations={regsSelected}
         onBack={() => setSelected(null)}
         onRegFused={handleRegFused}
+        onRegCreated={handleRegCreated}
       />
     )
   }
@@ -1328,6 +1555,7 @@ export default function SurveyResultsPage() {
                     onReassign={handleReassign}
                     onDelete={handleDelete}
                     onFused={handleFused}
+                    onCreated={handleCreated}
                   />
                 ))}
               </div>
@@ -1350,6 +1578,7 @@ export default function SurveyResultsPage() {
                     onConfirmed={handleConfirmed}
                     onDelete={handleDelete}
                     onFused={handleFused}
+                    onCreated={handleCreated}
                   />
                 ))}
               </div>
