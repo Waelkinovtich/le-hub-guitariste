@@ -608,7 +608,7 @@ function FusionPanel({ response, onClose, onFused }) {
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium flex items-center gap-2">
           <Merge className="w-4 h-4 text-muted" />
-          Rapprocher d'un élève existant
+          Fusionner la fiche avec un élève existant
         </p>
         <button type="button" onClick={onClose} className="text-xs text-muted hover:text-foreground transition-colors">
           <X className="w-4 h-4" />
@@ -617,7 +617,7 @@ function FusionPanel({ response, onClose, onFused }) {
 
       {/* Avertissement : décision manuelle uniquement */}
       <p className="text-xs text-muted-foreground bg-surface-raised rounded-lg px-3 py-2">
-        Rapprochement <strong>manuel uniquement</strong> — vous choisissez explicitement quels champs importer vers la fiche existante. Aucune donnée ne sera écrasée sans votre accord.
+        Fusion <strong>manuelle uniquement</strong> — vous choisissez explicitement quels champs importer vers la fiche existante. Aucune donnée ne sera écrasée sans votre accord.
       </p>
 
       {/* Recherche d'un élève */}
@@ -746,12 +746,12 @@ function FusionPanel({ response, onClose, onFused }) {
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl guitar-gradient text-white text-xs font-medium disabled:opacity-40"
             >
               {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-              Confirmer le rapprochement
+              Confirmer la fusion
             </button>
             <span className="text-xs text-muted-foreground">
               {fieldsToImport.size > 0
                 ? `${fieldsToImport.size} champ${fieldsToImport.size > 1 ? 's' : ''} à importer`
-                : 'Rapprochement seul, sans import de champs'}
+                : 'Fusion seule, sans import de champs'}
             </span>
           </div>
         </div>
@@ -781,6 +781,14 @@ function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenP
               <p className="text-xs text-muted-foreground truncate">
                 {r.school_name || 'École non précisée'}
               </p>
+              {/* Badge inscription / réinscription — donnée fiable car toujours renseignée */}
+              <span className={`inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+                r.registration_type === 'reinscription'
+                  ? 'border-sky-500/30 bg-sky-500/10 text-sky-400'
+                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+              }`}>
+                {r.registration_type === 'reinscription' ? 'Réinscription' : 'Nouvelle inscription'}
+              </span>
               {genericMeta && (
                 <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded border border-violet-500/30 bg-violet-500/10 text-violet-400 font-medium">
                   <Link2 className="w-2.5 h-2.5 flex-shrink-0" />
@@ -850,10 +858,10 @@ function ResponseCard({ r, supplementaires, genericTokens, openPanelId, setOpenP
                 ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
                 : 'border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
           }`}
-          title={r.matched_student_id ? 'Déjà rapproché — cliquer pour modifier' : 'Rapprocher avec une fiche élève existante'}
+          title={r.matched_student_id ? 'Déjà fusionné — cliquer pour modifier' : 'Fusionner avec une fiche élève existante'}
         >
           <Merge className="w-3.5 h-3.5" />
-          {r.matched_student_id ? 'Rapproché' : 'Rapprocher'}
+          {r.matched_student_id ? 'Fusionné' : 'Fusionner la fiche'}
         </button>
 
         <button
