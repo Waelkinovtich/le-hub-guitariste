@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { useCallback, useState, useEffect } from 'react'
+import { useCallback, useState, useEffect, useRef } from 'react'
 import { ArrowLeft, Pencil, Trash2, Phone, Mail, NotebookPen, Send, Plus, X, ChevronDown, ChevronUp, Loader2, AlertCircle, Check } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
@@ -52,6 +52,36 @@ function LessonNotesSection({ studentId, studentEmail, studentFirstName }) {
   const [sendResult, setSendResult]     = useState(null)
   // Expansion d'une note dans l'historique
   const [expanded, setExpanded]         = useState(null)
+  // Refs pour restaurer le curseur après injection d'un segment de transcription vocale.
+  const travailleRef = useRef(null)
+  const aFaireRef    = useRef(null)
+
+  // Même logique que SchoolNotesPage.handleTranscription — voir commentaires là-bas.
+  const handleTravailleTranscription = useCallback((text) => {
+    const el = travailleRef.current
+    if (!el) { setTravaille(prev => prev ? `${prev} ${text}` : text); return }
+    const savedStart = el.selectionStart
+    const savedEnd   = el.selectionEnd
+    setTravaille(el.value ? `${el.value} ${text}` : text)
+    requestAnimationFrame(() => {
+      if (!travailleRef.current) return
+      travailleRef.current.selectionStart = savedStart
+      travailleRef.current.selectionEnd   = savedEnd
+    })
+  }, [])
+
+  const handleAFaireTranscription = useCallback((text) => {
+    const el = aFaireRef.current
+    if (!el) { setAFaire(prev => prev ? `${prev} ${text}` : text); return }
+    const savedStart = el.selectionStart
+    const savedEnd   = el.selectionEnd
+    setAFaire(el.value ? `${el.value} ${text}` : text)
+    requestAnimationFrame(() => {
+      if (!aFaireRef.current) return
+      aFaireRef.current.selectionStart = savedStart
+      aFaireRef.current.selectionEnd   = savedEnd
+    })
+  }, [])
 
   useEffect(() => {
     async function load() {
@@ -167,6 +197,7 @@ function LessonNotesSection({ studentId, studentEmail, studentFirstName }) {
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-1.5">Ce qui a été travaillé</p>
             <textarea
+              ref={travailleRef}
               value={travaille}
               onChange={e => setTravaille(e.target.value)}
               placeholder="Gammes pentatoniques, accord de Ré majeur, rythme en triolets…"
@@ -174,7 +205,7 @@ function LessonNotesSection({ studentId, studentEmail, studentFirstName }) {
               className="w-full bg-surface-raised border border-border-subtle rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60 transition-colors resize-none"
             />
             <div className="mt-2">
-              <DicteeAudio onTranscription={(t) => setTravaille(prev => prev ? `${prev} ${t}` : t)} />
+              <DicteeAudio onTranscription={handleTravailleTranscription} />
             </div>
           </div>
 
@@ -182,6 +213,7 @@ function LessonNotesSection({ studentId, studentEmail, studentFirstName }) {
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-1.5">Pour la semaine prochaine</p>
             <textarea
+              ref={aFaireRef}
               value={aFaire}
               onChange={e => setAFaire(e.target.value)}
               placeholder="Retravailler les transitions, apprendre le couplet par cœur…"
@@ -189,7 +221,7 @@ function LessonNotesSection({ studentId, studentEmail, studentFirstName }) {
               className="w-full bg-surface-raised border border-border-subtle rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60 transition-colors resize-none"
             />
             <div className="mt-2">
-              <DicteeAudio onTranscription={(t) => setAFaire(prev => prev ? `${prev} ${t}` : t)} />
+              <DicteeAudio onTranscription={handleAFaireTranscription} />
             </div>
           </div>
 

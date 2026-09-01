@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { StickyNote, CalendarDays, Plus, Trash2, Pencil, Check, Loader2, AlertCircle, X, ChevronDown, ChevronUp, Mic, MicOff, Square, Users, FileDown, Download, Music2, ListMusic, Settings2, ArrowUp, ArrowDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import HelpTooltip from '../components/HelpTooltip'
@@ -69,6 +69,32 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
   // dicteeActive remonte l'état "micro ouvert" depuis DicteeAudio : permet de
   // désactiver le toggle note/événement pendant un enregistrement en cours.
   const [dicteeActive, setDicteeActive] = useState(false)
+  // Ref sur le textarea Contenu : permet de lire la valeur DOM en temps réel et de
+  // restaurer la position du curseur après l'injection d'un segment de transcription.
+  const contentRef = useRef(null)
+
+  // Insère le texte dicté à la FIN du contenu, sans perturber le curseur de l'utilisateur.
+  // Choix retenu : fin du texte (pas à la position du curseur) — insérer au milieu
+  // d'une correction manuelle en cours produirait un résultat désorganisateur.
+  // Lit el.value depuis le DOM (toujours à jour même si le state React est en vol)
+  // pour éviter la race condition entre frappe manuelle et transcription simultanées.
+  const handleTranscription = useCallback((text) => {
+    const el = contentRef.current
+    if (!el) {
+      setContent(prev => prev ? prev + ' ' + text : text)
+      return
+    }
+    const savedStart = el.selectionStart
+    const savedEnd   = el.selectionEnd
+    const newVal = el.value ? el.value + ' ' + text : text
+    setContent(newVal)
+    // Restaure le curseur après que React a commité le re-render du textarea contrôlé.
+    requestAnimationFrame(() => {
+      if (!contentRef.current) return
+      contentRef.current.selectionStart = savedStart
+      contentRef.current.selectionEnd   = savedEnd
+    })
+  }, [])
 
   const save = async () => {
     setError('')
@@ -176,6 +202,7 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
 
         {/* Contenu */}
         <textarea
+          ref={contentRef}
           value={content}
           onChange={e => setContent(e.target.value)}
           placeholder="Contenu, remarques, détails… (facultatif)"
@@ -185,7 +212,7 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
 
         {/* Dictée vocale — disponible sur notes ET événements, audio strictement local */}
         <DicteeAudio
-          onTranscription={(text) => setContent((prev) => prev ? prev + ' ' + text : text)}
+          onTranscription={handleTranscription}
           onActiveChange={setDicteeActive}
         />
 
