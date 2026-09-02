@@ -20,7 +20,7 @@ const NIVEAUX = [
 ]
 const TRANSPORTS = ['À pied', 'Vélo', 'Voiture', 'Transport en commun']
 const FREQUENCES = ['1x/semaine', '2x/semaine', 'Toutes les 2 semaines']
-const INSTRUMENTS = ['Guitare acoustique', 'Guitare électrique', 'Guitare classique', 'Basse', 'Autre']
+const INSTRUMENTS = ['Guitare folk', 'Guitare électrique', 'Guitare classique', 'Basse', 'Autre']
 const USAGES_TUTEUR = ['Organisation', 'Documents pédagogiques', 'Les deux']
 // Rôle du tuteur vis-à-vis de l'élève — "Autre" déclenche un champ texte libre
 const ROLES_TUTEUR = ['Père', 'Mère', 'Autre']

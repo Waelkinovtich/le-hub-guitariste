@@ -588,14 +588,20 @@ function VoirAussiInscriptions({ prenom, supplementaires, onOpenDetail }) {
 function CreationPanel({ source, onClose, onConfirmCreate, onCreated }) {
   // Pré-remplissage depuis la source sondage — l'utilisateur peut corriger avant création
   const [form, setForm] = useState({
-    first_name:  source.first_name  ?? '',
-    last_name:   source.last_name   ?? '',
-    email:       source.email       ?? '',
-    phone:       source.phone       ?? '',
-    birth_year:  source.birth_year  ? String(source.birth_year) : '',
-    instrument:  source.instrument  ?? '',
-    school_name: source.school_name ?? '',
-    level:       source.level       ?? '',
+    first_name:   source.first_name   ?? '',
+    last_name:    source.last_name    ?? '',
+    email:        source.email        ?? '',
+    phone:        source.phone        ?? '',
+    birth_year:   source.birth_year   ? String(source.birth_year) : '',
+    instrument:   source.instrument   ?? '',
+    school_name:  source.school_name  ?? '',
+    level:        source.level        ?? '',
+    parent1_name:  source.guardian1_name  ?? '',
+    parent1_phone: source.guardian1_phone ?? '',
+    parent1_email: source.guardian1_email ?? '',
+    parent2_name:  source.guardian2_name  ?? '',
+    parent2_phone: source.guardian2_phone ?? '',
+    parent2_email: source.guardian2_email ?? '',
   })
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
   const [saving, setSaving] = useState(false)
@@ -623,13 +629,19 @@ function CreationPanel({ source, onClose, onConfirmCreate, onCreated }) {
           email:       form.email.trim()       || null,
           phone:       form.phone.trim()       || null,
           birth_year:  form.birth_year ? Number(form.birth_year) : null,
-          instrument:  form.instrument.trim()  || null,
-          school_name: form.school_name.trim() || null,
-          level:       form.level.trim()       || null,
-          progress:    0,
-          lesson_type: 'particulier',
+          instrument:   form.instrument.trim()   || null,
+          school_name:  form.school_name.trim()  || null,
+          level:        form.level.trim()        || null,
+          progress:     0,
+          lesson_type:  'particulier',
+          parent1_name:  form.parent1_name.trim()  || null,
+          parent1_phone: form.parent1_phone.trim() || null,
+          parent1_email: form.parent1_email.trim() || null,
+          parent2_name:  form.parent2_name.trim()  || null,
+          parent2_phone: form.parent2_phone.trim() || null,
+          parent2_email: form.parent2_email.trim() || null,
         })
-        .select('id, first_name, last_name, email, phone, birth_year, school_name, level, instrument')
+        .select('id, first_name, last_name, email, phone, birth_year, school_name, level, instrument, parent1_name, parent1_phone, parent1_email, parent2_name, parent2_phone, parent2_email')
         .single()
       if (insErr) throw new Error(insErr.message)
 
@@ -696,6 +708,38 @@ function CreationPanel({ source, onClose, onConfirmCreate, onCreated }) {
         </div>
       </div>
 
+      {(form.parent1_name || form.parent1_phone || form.parent1_email || form.parent2_name || form.parent2_phone || form.parent2_email) && (
+        <>
+          <p className="text-xs font-medium text-muted-foreground pt-1">Tuteurs (depuis le sondage)</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Tuteur 1 — Nom</p>
+              <input className={inputCls} value={form.parent1_name} onChange={set('parent1_name')} placeholder="Nom complet" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Tuteur 1 — Téléphone</p>
+              <input className={inputCls} type="tel" value={form.parent1_phone} onChange={set('parent1_phone')} placeholder="06 00 00 00 00" />
+            </div>
+            <div className="col-span-2">
+              <p className="text-xs text-muted-foreground mb-1">Tuteur 1 — Email</p>
+              <input className={inputCls} type="email" value={form.parent1_email} onChange={set('parent1_email')} placeholder="email@exemple.fr" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Tuteur 2 — Nom</p>
+              <input className={inputCls} value={form.parent2_name} onChange={set('parent2_name')} placeholder="Nom complet" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Tuteur 2 — Téléphone</p>
+              <input className={inputCls} type="tel" value={form.parent2_phone} onChange={set('parent2_phone')} placeholder="06 00 00 00 00" />
+            </div>
+            <div className="col-span-2">
+              <p className="text-xs text-muted-foreground mb-1">Tuteur 2 — Email</p>
+              <input className={inputCls} type="email" value={form.parent2_email} onChange={set('parent2_email')} placeholder="email@exemple.fr" />
+            </div>
+          </div>
+        </>
+      )}
+
       {error && <p className="text-xs text-guitar-400">{error}</p>}
 
       <button
@@ -751,6 +795,13 @@ const CHAMPS_COMPARABLES = [
   { label: 'Instrument',  surveyKey: 'instrument',   studentKey: 'instrument',  contactType: null        },
   { label: 'École',       surveyKey: 'school_name',  studentKey: 'school_name', contactType: null        },
   { label: 'Niveau',      surveyKey: 'level',        studentKey: 'level',       contactType: null        },
+  // Tuteurs : guardian1/2_* du sondage → parent1/2_* sur la fiche élève
+  { label: 'Tuteur 1 — Nom',        surveyKey: 'guardian1_name',  studentKey: 'parent1_name',  contactType: null          },
+  { label: 'Tuteur 1 — Téléphone',  surveyKey: 'guardian1_phone', studentKey: 'parent1_phone', contactType: 'telephone'   },
+  { label: 'Tuteur 1 — Email',      surveyKey: 'guardian1_email', studentKey: 'parent1_email', contactType: 'email'       },
+  { label: 'Tuteur 2 — Nom',        surveyKey: 'guardian2_name',  studentKey: 'parent2_name',  contactType: null          },
+  { label: 'Tuteur 2 — Téléphone',  surveyKey: 'guardian2_phone', studentKey: 'parent2_phone', contactType: 'telephone'   },
+  { label: 'Tuteur 2 — Email',      surveyKey: 'guardian2_email', studentKey: 'parent2_email', contactType: 'email'       },
 ]
 
 function FusionPanel({ source, onClose, onConfirmMatch, onFused, sourceLabel = 'Sondage' }) {
@@ -771,7 +822,7 @@ function FusionPanel({ source, onClose, onConfirmMatch, onFused, sourceLabel = '
   useEffect(() => {
     supabase
       .from('students')
-      .select('id, first_name, last_name, email, phone, birth_year, school_name, level')
+      .select('id, first_name, last_name, email, phone, birth_year, school_name, level, parent1_name, parent1_phone, parent1_email, parent2_name, parent2_phone, parent2_email')
       .order('last_name')
       .then(({ data }) => {
         setStudents(data ?? [])
