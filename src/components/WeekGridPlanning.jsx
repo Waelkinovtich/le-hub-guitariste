@@ -38,22 +38,25 @@ function durationToSlots(minutes) {
   return Math.max(1, Math.round(minutes / 15))
 }
 
-// Calcule l'index de colonne et le nombre total de colonnes pour chaque cours
-// en conflit sur le même créneau. Permet l'affichage côte à côte (split en N colonnes)
-// plutôt que superposé. L'ordre dans le groupe est stabilisé par l'id du cours.
-function computeColumns(lessons) {
+// Calcule l'index de colonne et le nombre total de colonnes UNIQUEMENT pour les
+// leçons en conflit qui se chevauchent entre elles. Seules les leçons conflit
+// participent à ce calcul — les cours réels et propositions conservent leur
+// pleine largeur (colIdx:0, colCount:1) indépendamment des conflits.
+// L'ordre dans chaque groupe est stabilisé par l'id pour un rendu déterministe.
+function computeConflictColumns(conflitLessons) {
   const result = new Map()
-  for (const lesson of lessons) {
+  for (const lesson of conflitLessons) {
     const start = timeToSlot(lesson.lessonTime)
     const end   = start + durationToSlots(lesson.durationMinutes ?? 45)
-    // Groupe = tous les cours qui chevauchent celui-ci (self inclus)
-    const group = lessons
+    // Groupe = toutes les leçons conflit qui chevauchent temporellement celle-ci
+    const group = conflitLessons
       .filter((other) => {
         const oStart = timeToSlot(other.lessonTime)
         const oEnd   = oStart + durationToSlots(other.durationMinutes ?? 45)
         return oStart < end && oEnd > start
       })
-      .sort((a, b) => (a.id < b.id ? -1 : 1)) // ordre stable par id
+      // Comparateur strict : retourne 0 pour ids égaux (sort stable garanti)
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     result.set(lesson.id, {
       colIdx:   group.findIndex((o) => o.id === lesson.id),
       colCount: group.length,
@@ -812,11 +815,13 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   )
                 })()}
 
-                {/* Cours existants — affichage côte à côte en cas de conflit */}
+                {/* Cours existants — affichage côte à côte pour les conflits superposés */}
                 {(() => {
-                  // computeColumns détermine le colIdx et colCount de chaque cours
-                  // pour les afficher en colonnes plutôt que superposés.
-                  const columnMap = computeColumns(dayLessons)
+                  // Seules les leçons conflit participent au calcul de colonnes.
+                  // Les cours réels et propositions restent toujours en pleine largeur.
+                  const conflitDuJour    = dayLessons.filter((l) => l.planningStatus === 'conflit')
+                  const conflictColumnMap = computeConflictColumns(conflitDuJour)
+
                   return dayLessons.map((lesson) => {
                   const startSlot    = timeToSlot(lesson.lessonTime)
                   const slotCount    = durationToSlots(lesson.durationMinutes ?? 45)
@@ -829,7 +834,10 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   const isChevauchement = idsEnChevauchement.has(lesson.id)
                   // Leçon en conflit sélectionnée pour regroupement → bordure violette
                   const isConflitSelected = isConflit && conflictSelectedIds?.has(lesson._responseId)
-                  const { colIdx, colCount } = columnMap.get(lesson.id) ?? { colIdx: 0, colCount: 1 }
+                  // Cours réels et propositions : pleine largeur. Conflits : colonnes calculées.
+                  const { colIdx, colCount } = isConflit
+                    ? (conflictColumnMap.get(lesson.id) ?? { colIdx: 0, colCount: 1 })
+                    : { colIdx: 0, colCount: 1 }
                   const pct = 100 / colCount
 
                   if (startSlot < 0 || startSlot >= TOTAL_SLOTS) return null
