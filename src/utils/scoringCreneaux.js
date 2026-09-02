@@ -260,11 +260,10 @@ export function scoreCandidate({
   if (hasLessonConflict) return null
 
   // ── Conflits stricts : créneaux réservés (même traitement que les cours) ──────
-  // Un créneau réservé est hebdomadaire — on compare par jour de semaine
-  // (JOURS_FR.indexOf(day) = même convention que JS Date.getDay()).
-  const jourSemaineCandidат = JOURS_FR.indexOf(day)
+  // Un créneau réservé est hebdomadaire — on compare par jour de semaine.
+  // Réutilise jourSemaineCandidat (défini plus haut, même valeur).
   const hasReservedConflict = reservedSlots.some((rs) => {
-    if (rs.jourSemaine !== jourSemaineCandidат) return false
+    if (rs.jourSemaine !== jourSemaineCandidat) return false
     const rs_s = timeToMinutes(rs.heureDebut)
     const rs_e = rs_s + rs.dureeMinutes
     return startMin < rs_e && endMin > rs_s

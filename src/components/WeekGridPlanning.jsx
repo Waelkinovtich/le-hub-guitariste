@@ -81,6 +81,17 @@ function hasOverlap(lessonsByDay, excludeId, targetDay, targetStart, slotCount) 
   })
 }
 
+/** Retourne le premier cours chevauchant (excluant excludeId), ou null. Utilisé pour la cascade DnD. */
+function findOverlappingLesson(lessonsByDay, excludeId, targetDay, targetStart, slotCount) {
+  const dayLessons = (lessonsByDay[targetDay] ?? []).filter((l) => l.id !== excludeId)
+  const targetEnd  = targetStart + slotCount - 1
+  return dayLessons.find((l) => {
+    const lStart = timeToSlot(l.lessonTime)
+    const lEnd   = lStart + durationToSlots(l.durationMinutes ?? 45) - 1
+    return targetStart <= lEnd && targetEnd >= lStart
+  }) ?? null
+}
+
 /**
  * Construit un index des créneaux réservés par date ISO, pour la semaine affichée.
  * Chaque créneau réservé est hebdomadaire (jourSemaine = 0..6 JS convention).
@@ -238,15 +249,6 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
  * Props :
  *   weekDays      — [{ label, dayNum, iso, isToday }]
  *   lessons       — cours de la semaine (lessonDate, lessonTime, durationMinutes, …)
- *   onNewLesson({ lessonDate, lessonTime, durationMinutes })
- *   onSelectLesson(lesson)
- */
-/**
- * Grille hebdomadaire interactive (08:00–22:00, créneaux 15 min).
- *
- * Props :
- *   weekDays      — [{ label, dayNum, iso, isToday }]
- *   lessons       — cours de la semaine (lessonDate, lessonTime, durationMinutes, …)
  *   reservedSlots — créneaux réservés par école ({ jourSemaine, heureDebut, dureeMinutes, libelle, schoolName })
  *   onNewLesson({ lessonDate, lessonTime, durationMinutes })
  *   onSelectLesson(lesson)
@@ -269,7 +271,12 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
 // allowOverlap : quand true, un dépôt sur un emplacement occupé n'est pas bloqué.
 // Réservé au mode édition provisoire (SchedulingAssistantPage) — PlanningPage laisse false.
 // L'appelant doit signaler les chevauchements résiduels avant toute validation finale.
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, allowOverlap = false }) {
+// conflictSelectedIds : Set<responseId> des leçons en conflit sélectionnées pour regroupement.
+// onToggleConflictSelect(responseId) : appelé au clic sur une leçon planningStatus:'conflit'.
+// cascadeEnabled : quand true, un dépôt sur une proposition déplaçable déclenche onCascadeRequest.
+// onCascadeRequest(displacedLesson, newDay, newTime, durationMinutes) : intercepte le DnD
+//   pour que le parent recalcule un créneau alternatif pour la leçon déplacée.
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, allowOverlap = false, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -463,9 +470,14 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
 
     if (!m.pending && !m.active) return
 
-    // Clic simple (< seuil) → ouvre la modale d'édition
+    // Clic simple (< seuil) : leçon en conflit → toggle sélection pour regroupement ;
+    // sinon ouvre la modale d'édition standard.
     if (!m.active) {
-      onSelectLesson(m.lesson)
+      if (m.lesson.planningStatus === 'conflit' && onToggleConflictSelect) {
+        onToggleConflictSelect(m.lesson._responseId)
+      } else {
+        onSelectLesson(m.lesson)
+      }
       return
     }
 
@@ -480,7 +492,17 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
         showMoveError('Ce créneau est déjà occupé par un autre cours.')
         return
       }
-      // Mode provisoire : avertissement temporaire visible 2 s
+      // Mode cascade : délègue au parent qui recalcule un créneau alternatif pour la leçon déplacée.
+      if (cascadeEnabled && onCascadeRequest) {
+        const displaced = findOverlappingLesson(lessonsByDay, m.lesson.id, m.currentDay, m.currentStartSlot, m.slotCount)
+        if (displaced?._responseId) {
+          // Passe aussi la leçon en cours de drag pour que le parent mette à jour les deux overrides.
+          onCascadeRequest(m.lesson, displaced, m.currentDay, slotToTimeStr(m.currentStartSlot), m.lesson.durationMinutes)
+          // Le parent gère les deux overrides — pas d'optimiste local ni d'appel onMoveLesson.
+          return
+        }
+      }
+      // Mode provisoire sans cascade : avertissement temporaire visible 2 s
       showMoveError('Chevauchement temporaire — résolvez-le avant d\'acter le planning.')
     }
     // Les créneaux réservés (écoles) restent bloquants en toutes circonstances.
@@ -801,9 +823,12 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   const color        = lessonColor(lesson)
                   const isEnvisage   = lesson.planningStatus === 'envisage'
                   const isConflit    = lesson.planningStatus === 'conflit'
+                  const isGroupe     = lesson.planningStatus === 'groupe'
                   const isBeingMoved = movePreview?.lessonId === lesson.id
                   // Chevauchement temporaire autorisé (mode Planning intelligent) → signalé en orange
                   const isChevauchement = idsEnChevauchement.has(lesson.id)
+                  // Leçon en conflit sélectionnée pour regroupement → bordure violette
+                  const isConflitSelected = isConflit && conflictSelectedIds?.has(lesson._responseId)
                   const { colIdx, colCount } = columnMap.get(lesson.id) ?? { colIdx: 0, colCount: 1 }
                   const pct = 100 / colCount
 
@@ -818,7 +843,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         left:  `calc(${colIdx * pct}% + 2px)`,
                         right: `calc(${(colCount - colIdx - 1) * pct}% + 2px)`,
                         position: 'absolute', zIndex: 10,
-                        opacity: isBeingMoved ? 0.25 : (isEnvisage || isConflit) ? 0.75 : 1,
+                        opacity: isBeingMoved ? 0.25 : (isEnvisage || isConflit) ? 0.75 : isGroupe ? 0.9 : 1,
                         cursor: 'grab',
                       }}
                       className="rounded overflow-hidden group"
@@ -844,18 +869,24 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           background: isChevauchement
                             // Orange ambre hachuré : signale visuellement un chevauchement temporaire à résoudre
                             ? 'repeating-linear-gradient(135deg, #f9731620 0px, #f9731620 4px, transparent 4px, transparent 10px)'
+                            : isConflitSelected
+                            // Violet hachuré : leçon sélectionnée pour regroupement en cours de groupe
+                            ? 'repeating-linear-gradient(135deg, #a855f720 0px, #a855f720 4px, transparent 4px, transparent 10px)'
                             : isConflit
                             ? 'repeating-linear-gradient(135deg, #ef444420 0px, #ef444420 4px, transparent 4px, transparent 10px)'
+                            : isGroupe
+                            // Vert émeraude plein : cours de groupe confirmé, remplace les conflits
+                            ? '#10b98130'
                             : color + '30',
-                          borderLeft: `3px ${(isEnvisage || isConflit || isChevauchement) ? 'dashed' : 'solid'} ${isChevauchement ? '#f97316' : isConflit ? '#ef4444' : color}`,
-                          outline: isChevauchement ? '1px solid #f9731660' : undefined,
+                          borderLeft: `3px ${(isEnvisage || isConflit || isChevauchement) ? 'dashed' : 'solid'} ${isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : color}`,
+                          outline: isChevauchement ? '1px solid #f9731660' : isConflitSelected ? '2px solid #a855f7' : isGroupe ? '1px solid #10b98160' : undefined,
                         }}
                       >
-                        <p className="text-[10px] font-semibold leading-tight truncate" style={{ color: isChevauchement ? '#f97316' : isConflit ? '#ef4444' : color }}>
+                        <p className="text-[10px] font-semibold leading-tight truncate" style={{ color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : color }}>
                           {lesson.studentName || 'Élève'}
                         </p>
                         {slotCount >= 3 && (
-                          <p className="text-[9px] leading-tight opacity-70" style={{ color: isChevauchement ? '#f97316' : isConflit ? '#ef4444' : color }}>
+                          <p className="text-[9px] leading-tight opacity-70" style={{ color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : color }}>
                             {lesson.timeLabel} · {lesson.durationMinutes} min
                           </p>
                         )}

@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
 import ScoreBadge from '../components/ScoreBadge'
 import WeekGridPlanning from '../components/WeekGridPlanning'
-import { computeAllProposals, scoreCandidate, parseStartTime, JOURS_FR, timeToMinutes } from '../utils/scoringCreneaux'
+import { computeAllProposals, computeProposals, scoreCandidate, parseStartTime, JOURS_FR, timeToMinutes } from '../utils/scoringCreneaux'
 import { currentSchoolYear } from '../services/schools'
 import { fetchReservedSlots } from '../services/reservedSlots'
 
@@ -87,6 +87,35 @@ function computeWeekDays(offset) {
     const iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
     return { iso, label: LABELS[d.getDay()], dayNum: d.getDate(), isToday: iso === todayIso }
   })
+}
+
+// ─── Helper partagé : génération des lignes de cours récurrents ──────────────
+
+/**
+ * Génère les lignes à insérer dans `lessons` pour un élève, de candidateDate
+ * jusqu'à endDate, chaque semaine. Pur (pas d'effet de bord).
+ */
+function buildLessonRows(teacherId, response, proposal, endDate) {
+  const pad = (n) => String(n).padStart(2, '0')
+  const groupId = crypto.randomUUID()
+  const rows = []
+  let current = new Date(proposal.candidateDate + 'T00:00:00')
+  const end   = new Date(endDate + 'T00:00:00')
+  while (current <= end) {
+    const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
+    rows.push({
+      teacher_id:       teacherId,
+      student_id:       response.student_id,
+      lesson_date:      iso,
+      lesson_time:      proposal.startTime,
+      duration_minutes: proposal.durationMinutes,
+      status:           'planifie',
+      topic:            'Cours de guitare',
+      recurrence_group: groupId,
+    })
+    current.setDate(current.getDate() + 7)
+  }
+  return rows
 }
 
 // ─── Composants ───────────────────────────────────────────────────────────────
@@ -268,6 +297,91 @@ function ProposalCard({ response, proposals, onConfirm, confirming, schools = []
   )
 }
 
+// ─── Panneau de regroupement en cours de groupe (T1) ─────────────────────────
+// Affiché quand l'utilisateur a sélectionné ≥ 2 leçons en conflit.
+// Permet de choisir un nom et une heure de départ avant de créer le groupe.
+
+function GroupingPanel({ selectedCount, conflictLessons, conflictSelectedIds, nonPlaces, onCancel, onConfirm, loading, error }) {
+  // Pré-remplissage : on prend la date/heure de la première leçon en conflit sélectionnée
+  const firstSelected = conflictLessons.find((l) => conflictSelectedIds.has(l._responseId))
+  const [nom,  setNom]  = useState('')
+  const [day,  setDay]  = useState(firstSelected?.lessonDate  ?? '')
+  const [time, setTime] = useState(firstSelected?.lessonTime  ?? '')
+  const [duree, setDuree] = useState(() => {
+    const resp = nonPlaces.find((r) => conflictSelectedIds.has(r.id))
+    return resp?.effective_duration_minutes ?? 30
+  })
+
+  const selectedNames = nonPlaces
+    .filter((r) => conflictSelectedIds.has(r.id))
+    .map((r) => [r.first_name, r.last_name].filter(Boolean).join(' ') || 'Élève')
+
+  return (
+    <div className="glass-panel rounded-xl p-4 space-y-3 border border-purple-500/30 bg-purple-500/5">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium text-purple-400">Regrouper {selectedCount} élèves en cours de groupe</p>
+        <button type="button" onClick={onCancel} className="text-xs text-muted-foreground hover:text-foreground">
+          Annuler
+        </button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {selectedNames.join(', ')}
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2">
+          <label className="text-xs text-muted mb-1 block">Nom du cours de groupe *</label>
+          <input
+            value={nom}
+            onChange={(e) => setNom(e.target.value)}
+            placeholder="Ex : Atelier débutants mercredi…"
+            className="w-full px-3 py-2 rounded-xl bg-surface-overlay border border-border-subtle text-sm focus:outline-none focus:border-guitar-600"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted mb-1 block">Date de la première séance</label>
+          <input
+            type="date"
+            value={day}
+            onChange={(e) => setDay(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl bg-surface-overlay border border-border-subtle text-sm focus:outline-none focus:border-guitar-600"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted mb-1 block">Heure</label>
+          <input
+            type="time"
+            value={time}
+            onChange={(e) => setTime(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl bg-surface-overlay border border-border-subtle text-sm focus:outline-none focus:border-guitar-600"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted mb-1 block">Durée (min)</label>
+          <select
+            value={duree}
+            onChange={(e) => setDuree(Number(e.target.value))}
+            className="w-full px-3 py-2 rounded-xl bg-surface-overlay border border-border-subtle text-sm focus:outline-none focus:border-guitar-600"
+          >
+            {[15,30,45,60,90,120].map((d) => (
+              <option key={d} value={d}>{d} min</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      <button
+        type="button"
+        onClick={() => onConfirm(nom.trim(), day || null, time || null, duree)}
+        disabled={loading || !nom.trim()}
+        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 text-white text-xs font-medium hover:bg-purple-700 disabled:opacity-40 transition-all"
+      >
+        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+        Créer le cours de groupe
+      </button>
+    </div>
+  )
+}
+
 // ─── Page principale ──────────────────────────────────────────────────────────
 
 export default function SchedulingAssistantPage() {
@@ -315,6 +429,13 @@ export default function SchedulingAssistantPage() {
   // Stocké en mémoire uniquement : réapparaît après rechargement (comportement intentionnel —
   // la proposition redeviendra pertinente si les données n'ont pas changé).
   const [hiddenResponseIds, setHiddenResponseIds] = useState(() => new Set())
+  // Sélection des leçons en conflit pour regroupement en cours de groupe (T1)
+  const [conflictSelectedIds, setConflictSelectedIds] = useState(() => new Set())
+  const [groupingConflicts, setGroupingConflicts]     = useState(false)
+  const [groupError, setGroupError]                   = useState('')
+  // Mode cascade DnD : quand actif, un dépôt sur une proposition existante
+  // déclenche la recherche automatique d'un créneau alternatif pour l'élève déplacé (T2)
+  const [cascadeEnabled, setCascadeEnabled]           = useState(false)
 
   useEffect(() => {
     if (!user?.id) return
@@ -838,6 +959,171 @@ export default function SchedulingAssistantPage() {
     })
   }, [])
 
+  // ── T1 : Sélection / regroupement des élèves en conflit ─────────────────────
+
+  const handleToggleConflictSelect = useCallback((responseId) => {
+    if (!responseId) return
+    setConflictSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(responseId)) next.delete(responseId)
+      else next.add(responseId)
+      return next
+    })
+  }, [])
+
+  /**
+   * Crée un cours de groupe pour les élèves en conflit sélectionnés.
+   * Insère : music_groups, group_members (un par élève), group_session (la première occurrence).
+   * Met à jour survey_responses.status → 'planifie' pour chaque réponse groupée.
+   * Retire ensuite ces réponses de l'état local pour mettre à jour la grille sans rechargement.
+   */
+  const handleGrouperConflits = useCallback(async (nomGroupe, sessionDay, sessionTime, durationMinutes) => {
+    if (conflictSelectedIds.size < 2 || !teacherInfo?.id) return
+    setGroupingConflicts(true)
+    setGroupError('')
+    try {
+      const selectedResponses = (statsPlacement.nonPlaces ?? []).filter((r) => conflictSelectedIds.has(r.id))
+      if (selectedResponses.length < 2) return
+
+      const schoolName = selectedResponses[0]?.school_name ?? null
+      const groupId    = crypto.randomUUID()
+
+      // Jour de la semaine ISO (0=dim, 1=lun…) pour recurrence_day
+      const recurrenceDay = sessionDay
+        ? new Date(sessionDay + 'T12:00:00').getDay()
+        : null
+
+      await supabase.from('music_groups').insert({
+        id:               groupId,
+        teacher_id:       teacherInfo.id,
+        name:             nomGroupe,
+        type:             'cours_collectif',
+        school_name:      schoolName,
+        duration_minutes: durationMinutes,
+        recurrence_day:   recurrenceDay,
+        recurrence_time:  sessionTime ?? null,
+        start_date:       sessionDay ?? null,
+      })
+
+      // Membres : un insert par élève (student_id)
+      const members = selectedResponses
+        .filter((r) => r.student_id)
+        .map((r) => ({ group_id: groupId, student_id: r.student_id, is_external: false }))
+      if (members.length > 0) await supabase.from('group_members').insert(members)
+
+      // Première séance
+      if (sessionDay && sessionTime) {
+        await supabase.from('group_sessions').insert({
+          group_id:         groupId,
+          session_date:     sessionDay,
+          session_time:     sessionTime,
+          duration_minutes: durationMinutes,
+        })
+      }
+
+      // Marquer les réponses comme traitées
+      const responseIds = selectedResponses.map((r) => r.id)
+      const jourNom     = sessionDay ? JOURS_FR[new Date(sessionDay + 'T12:00:00').getDay()] : null
+      await supabase.from('survey_responses')
+        .update({ status: 'planifie', assigned_day: jourNom, assigned_time: sessionTime ?? null })
+        .in('id', responseIds)
+
+      // Retirer les réponses groupées de l'état local
+      setResponses((prev) => prev.filter((r) => !conflictSelectedIds.has(r.id)))
+
+      // Ajouter un bloc "Cours de groupe" dans existingLessons pour l'afficher
+      // dans la grille à la place des leçons en conflit supprimées.
+      // Le bloc est en lecture seule (nonMovable) et stylisé différemment.
+      if (sessionDay && sessionTime) {
+        setExistingLessons((prev) => [...prev, {
+          id:              `groupe-${groupId}`,
+          lessonDate:      sessionDay,
+          lessonTime:      sessionTime,
+          timeLabel:       sessionTime,
+          durationMinutes,
+          studentName:     `🎸 ${nomGroupe}`,
+          schoolName:      schoolName,
+          planningStatus:  'groupe',
+          nonMovable:      true,
+        }])
+      }
+
+      setConflictSelectedIds(new Set())
+    } catch (e) {
+      setGroupError(e.message ?? 'Erreur lors du regroupement.')
+    } finally {
+      setGroupingConflicts(false)
+    }
+  }, [conflictSelectedIds, statsPlacement, teacherInfo])
+
+  // ── T2 : Cascade DnD — recalcul de l'élève déplacé ──────────────────────────
+
+  /**
+   * Appelé par WeekGridPlanning quand un drop atterrit sur une proposition existante
+   * en mode cascade. Cherche un créneau alternatif pour `displacedLesson` (l'élève
+   * occupant déjà le slot) et applique les deux overrides atomiquement si trouvé.
+   * Fallback silencieux si aucune alternative n'existe pour l'élève déplacé.
+   *
+   * @param draggingLesson — la leçon qu'on est en train de déplacer
+   * @param displacedLesson — la leçon qui occupait déjà le slot cible
+   * @param newDay — date ISO du slot cible
+   * @param newTime — heure "HH:MM" du slot cible
+   * @param durationMinutes — durée de la leçon déplacée
+   */
+  const handleCascadeRequest = useCallback((draggingLesson, displacedLesson, newDay, newTime, durationMinutes) => {
+    if (!draggingLesson?._responseId || !displacedLesson?._responseId || !teacherInfo) return
+    const draggeurId  = draggingLesson._responseId
+    const deplacedId  = displacedLesson._responseId
+    const deplacedResponse = responses.find((r) => r.id === deplacedId)
+    if (!deplacedResponse) return
+
+    // Bloquer le slot que le draggeur va occuper pour que le moteur ne le réattribue pas au déplacé
+    const slotBloqueParDraggeur = { lessonDate: newDay, lessonTime: newTime, durationMinutes }
+    const lessonsAvecBlocage    = [...existingLessons, slotBloqueParDraggeur]
+
+    const alternatives = computeProposals({
+      response:               deplacedResponse,
+      existingLessons:        lessonsAvecBlocage,
+      schools,
+      zone:                   teacherInfo.zone               ?? 'B',
+      reservedSlots,
+      preferredDaysOff:       teacherInfo.preferredDaysOff   ?? [],
+      preferredProximityDays: teacherInfo.preferredProximityDays ?? [],
+      teacherHomeLat:         teacherInfo.homeLat            ?? null,
+      teacherHomeLng:         teacherInfo.homeLng            ?? null,
+      scoringWeights:         teacherInfo.scoringWeights     ?? null,
+      maxResults:             1,
+    })
+    if (alternatives.length === 0) return  // pas d'alternative → annulation silencieuse, pas d'erreur
+
+    const alt     = alternatives[0]
+    const nomJour = JOURS_FR[new Date(newDay + 'T12:00:00').getDay()]
+
+    setProposalOverrides((prev) => {
+      const next = { ...prev }
+      // Draggeur → occupe le slot cible
+      next[draggeurId] = {
+        candidateDate:   newDay,
+        startTime:       newTime,
+        durationMinutes,
+        day:             nomJour,
+        score:           prev[draggeurId]?.score ?? 0,
+        reasons:         ['Déplacement manuel'],
+      }
+      // Déplacé → occupe le meilleur créneau alternatif trouvé
+      next[deplacedId] = {
+        candidateDate:   alt.candidateDate,
+        startTime:       alt.startTime,
+        durationMinutes: alt.durationMinutes,
+        day:             alt.day,
+        score:           alt.score   ?? 0,
+        reasons:         alt.reasons ?? [],
+      }
+      ecrireSession(next, lockedIds)
+      return next
+    })
+  }, [responses, existingLessons, schools, teacherInfo, reservedSlots, lockedIds])
+
   // ── Recalcul ciblé par jour ──────────────────────────────────────────────────
   /**
    * Recalcule les propositions non verrouillées dont le jour courant est dans `jours`.
@@ -958,27 +1244,8 @@ export default function SchedulingAssistantPage() {
   const handleConfirm = async (response, proposal) => {
     setConfirming(true)
     try {
-      const groupId = crypto.randomUUID()
       const [, endYear] = currentSchoolYear().split('-').map(Number)
-      const endDate = `${endYear}-06-30`
-      const rows = []
-      let current = new Date(proposal.candidateDate + 'T00:00:00')
-      const end   = new Date(endDate + 'T00:00:00')
-      while (current <= end) {
-        const pad = (n) => String(n).padStart(2, '0')
-        const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
-        rows.push({
-          teacher_id:       teacherInfo.id,
-          student_id:       response.student_id,
-          lesson_date:      iso,
-          lesson_time:      proposal.startTime,
-          duration_minutes: proposal.durationMinutes,
-          status:           'planifie',
-          topic:            'Cours de guitare',
-          recurrence_group: groupId,
-        })
-        current.setDate(current.getDate() + 7)
-      }
+      const rows = buildLessonRows(teacherInfo.id, response, proposal, `${endYear}-06-30`)
       const { error: insErr } = await supabase.from('lessons').insert(rows)
       if (insErr) throw new Error(insErr.message)
 
@@ -1006,9 +1273,8 @@ export default function SchedulingAssistantPage() {
     if (selectedIds.size === 0) return
     setActingPlan(true)
     setActError('')
-    const pad = (n) => String(n).padStart(2, '0')
     const [, endYear] = currentSchoolYear().split('-').map(Number)
-    const endDate = `${endYear}-06-30`
+    const endDate     = `${endYear}-06-30`
     const erreurs = []
 
     for (const responseId of selectedIds) {
@@ -1018,24 +1284,7 @@ export default function SchedulingAssistantPage() {
       if (!proposal) continue
 
       try {
-        const groupId = crypto.randomUUID()
-        const rows = []
-        let current = new Date(proposal.candidateDate + 'T00:00:00')
-        const end   = new Date(endDate + 'T00:00:00')
-        while (current <= end) {
-          const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
-          rows.push({
-            teacher_id:       teacherInfo.id,
-            student_id:       response.student_id,
-            lesson_date:      iso,
-            lesson_time:      proposal.startTime,
-            duration_minutes: proposal.durationMinutes,
-            status:           'planifie',
-            topic:            'Cours de guitare',
-            recurrence_group: groupId,
-          })
-          current.setDate(current.getDate() + 7)
-        }
+        const rows = buildLessonRows(teacherInfo.id, response, proposal, endDate)
         const { error: insErr } = await supabase.from('lessons').insert(rows)
         if (insErr) throw new Error(insErr.message)
 
@@ -1279,7 +1528,13 @@ export default function SchedulingAssistantPage() {
                   {showConflicts && (
                     <span className="flex items-center gap-1.5 text-red-400">
                       <span className="inline-block w-3 h-3 rounded-sm border-2 border-dashed border-red-400 opacity-80" />
-                      En conflit (déplaçable)
+                      En conflit (cliquer pour sélectionner)
+                    </span>
+                  )}
+                  {showConflicts && (
+                    <span className="flex items-center gap-1.5 text-emerald-400">
+                      <span className="inline-block w-3 h-3 rounded-sm border-2 border-solid border-emerald-400 opacity-80" />
+                      Cours de groupe créé
                     </span>
                   )}
                   <span className="text-muted italic">Glissez une proposition pour ajuster son créneau.</span>
@@ -1329,7 +1584,7 @@ export default function SchedulingAssistantPage() {
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => setShowConflicts((v) => !v)}
+                        onClick={() => { setShowConflicts((v) => !v); setConflictSelectedIds(new Set()) }}
                         title={showConflicts ? 'Masquer les créneaux en conflit' : 'Afficher les créneaux en conflit'}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
                           showConflicts
@@ -1341,11 +1596,26 @@ export default function SchedulingAssistantPage() {
                         {showConflicts ? 'Masquer conflits' : 'Voir conflits'}
                       </button>
                       <HelpTooltip
-                        texte="Mode normal : seuls les créneaux sans chevauchement sont affichés. Mode conflits : les élèves sans créneau disponible apparaissent en rouge sur leur première disponibilité déclarée — même si elle chevauche un autre cours. Glissez-les vers un créneau libre pour résoudre le conflit manuellement."
+                        texte="Mode normal : seuls les créneaux sans chevauchement sont affichés. Mode conflits : les élèves sans créneau disponible apparaissent en rouge sur leur première disponibilité déclarée — même si elle chevauche un autre cours. Glissez-les vers un créneau libre pour résoudre le conflit manuellement. Cliquez sur deux élèves en conflit pour les regrouper en cours de groupe."
                         position="bottom"
                       />
                     </div>
                   )}
+
+                  {/* Toggle cascade DnD (T2) */}
+                  <button
+                    type="button"
+                    onClick={() => setCascadeEnabled((v) => !v)}
+                    title={cascadeEnabled ? 'Désactiver le réarrangement en cascade' : 'Activer le réarrangement en cascade : déposer sur une proposition trouvera automatiquement un créneau alternatif pour l\'élève déplacé'}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                      cascadeEnabled
+                        ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
+                        : 'border-border-subtle text-muted-foreground hover:text-foreground hover:border-border'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    {cascadeEnabled ? 'Cascade ON' : 'Cascade'}
+                  </button>
                 </div>
               </div>
 
@@ -1457,6 +1727,20 @@ export default function SchedulingAssistantPage() {
                 </div>
               )}
 
+              {/* ── Panneau regroupement en cours de groupe (T1) ───────────────── */}
+              {showConflicts && conflictSelectedIds.size >= 2 && (
+                <GroupingPanel
+                  selectedCount={conflictSelectedIds.size}
+                  conflictLessons={conflictLessons}
+                  conflictSelectedIds={conflictSelectedIds}
+                  nonPlaces={statsPlacement.nonPlaces}
+                  onCancel={() => setConflictSelectedIds(new Set())}
+                  onConfirm={handleGrouperConflits}
+                  loading={groupingConflicts}
+                  error={groupError}
+                />
+              )}
+
               {/* Grille — les propositions y sont affichées en style "envisagé" (bordure pointillée) */}
               {/* allowOverlap : autorise le chevauchement temporaire lors de la réorganisation
                   manuelle — signalé en orange dans la grille, bloqué à la validation finale. */}
@@ -1474,6 +1758,10 @@ export default function SchedulingAssistantPage() {
                 onViewStudent={(lesson) => lesson._studentId && navigate(`/eleves/${lesson._studentId}`)}
                 onDurationChange={handleDurationChange}
                 allowOverlap
+                conflictSelectedIds={conflictSelectedIds}
+                onToggleConflictSelect={showConflicts ? handleToggleConflictSelect : null}
+                cascadeEnabled={cascadeEnabled}
+                onCascadeRequest={handleCascadeRequest}
               />
 
               {/* ── Panneau "Acter ce planning" ──────────────────────────────── */}
