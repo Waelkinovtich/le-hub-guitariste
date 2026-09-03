@@ -436,6 +436,8 @@ export default function SchedulingAssistantPage() {
   // Mode cascade DnD : quand actif, un dépôt sur une proposition existante
   // déclenche la recherche automatique d'un créneau alternatif pour l'élève déplacé (T2)
   const [cascadeEnabled, setCascadeEnabled]           = useState(false)
+  // Message de succès éphémère affiché quand une cascade a effectivement relogé un élève
+  const [cascadeNotif, setCascadeNotif]               = useState('')
 
   useEffect(() => {
     if (!user?.id) return
@@ -1122,6 +1124,10 @@ export default function SchedulingAssistantPage() {
       ecrireSession(next, lockedIds)
       return next
     })
+    // Retour visuel : l'utilisateur sait que le relogement automatique a eu lieu
+    const nomDeplace = deplacedResponse.first_name ?? 'l\'élève déplacé'
+    setCascadeNotif(`↩ ${nomDeplace} relogé automatiquement → ${alt.day} ${alt.startTime}`)
+    setTimeout(() => setCascadeNotif(''), 5000)
   }, [responses, existingLessons, schools, teacherInfo, reservedSlots, lockedIds])
 
   // ── Recalcul ciblé par jour ──────────────────────────────────────────────────
@@ -1603,19 +1609,24 @@ export default function SchedulingAssistantPage() {
                   )}
 
                   {/* Toggle cascade DnD (T2) */}
-                  <button
-                    type="button"
-                    onClick={() => setCascadeEnabled((v) => !v)}
-                    title={cascadeEnabled ? 'Désactiver le réarrangement en cascade' : 'Activer le réarrangement en cascade : déposer sur une proposition trouvera automatiquement un créneau alternatif pour l\'élève déplacé'}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
-                      cascadeEnabled
-                        ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
-                        : 'border-border-subtle text-muted-foreground hover:text-foreground hover:border-border'
-                    }`}
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    {cascadeEnabled ? 'Cascade ON' : 'Cascade'}
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setCascadeEnabled((v) => !v)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                        cascadeEnabled
+                          ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
+                          : 'border-border-subtle text-muted-foreground hover:text-foreground hover:border-border'
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      {cascadeEnabled ? 'Cascade ON' : 'Cascade'}
+                    </button>
+                    <HelpTooltip
+                      texte="Quand activé, déplacer une proposition vers un créneau déjà occupé relogera automatiquement l'autre élève sur le meilleur créneau libre compatible. Si aucun créneau alternatif n'est trouvé, le déplacement est annulé silencieusement."
+                      position="bottom"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1739,6 +1750,13 @@ export default function SchedulingAssistantPage() {
                   loading={groupingConflicts}
                   error={groupError}
                 />
+              )}
+
+              {/* Notification éphémère cascade — confirme que l'élève déplacé a été relogé */}
+              {cascadeNotif && (
+                <div className="px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-400 font-medium">
+                  {cascadeNotif}
+                </div>
               )}
 
               {/* Grille — les propositions y sont affichées en style "envisagé" (bordure pointillée) */}

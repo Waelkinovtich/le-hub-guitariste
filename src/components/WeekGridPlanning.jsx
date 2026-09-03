@@ -547,7 +547,11 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
       ))
       showMoveError(err.message ?? 'Impossible de déplacer le cours — annulation.')
     }
-  }, [lessonsByDay, onSelectLesson, showMoveError, onMoveLesson])
+  // onToggleConflictSelect / cascadeEnabled / onCascadeRequest / allowOverlap / reservedByDay
+  // DOIVENT être en deps : endMove les utilise et la prop peut changer (ex. showConflicts toggle
+  // fait passer onToggleConflictSelect de null à une vraie fonction — sans cette dep, endMove
+  // garderait null indéfiniment et le toggle de sélection ne fonctionnerait jamais).
+  }, [lessonsByDay, onSelectLesson, showMoveError, onMoveLesson, onToggleConflictSelect, cascadeEnabled, onCascadeRequest, allowOverlap, reservedByDay])
 
   // ── Handlers pointer du conteneur de grille ───────────────────────────────
 
