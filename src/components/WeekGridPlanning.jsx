@@ -842,6 +842,9 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   const isChevauchement = idsEnChevauchement.has(lesson.id)
                   // Leçon sélectionnée pour regroupement → bordure violette (conflit auto OU chevauchement manuel)
                   const isConflitSelected = (isConflit || isChevauchement) && conflictSelectedIds?.has(lesson._responseId)
+                  // Éligible au regroupement : masquer TOUS les boutons d'action pour éviter toute
+                  // superposition avec la zone de clic de sélection (cause de l'icône bonhomme qui naviguait).
+                  const estSelectablePourGroupe = (isChevauchement || isConflit) && !!onToggleConflictSelect && !!lesson._responseId
                   // Cours réels et propositions non chevauchantes : pleine largeur.
                   // Conflits auto (rouge) et chevauchements manuels (orange) : colonnes côte à côte.
                   const { colIdx, colCount } = (isConflit || isChevauchement)
@@ -909,12 +912,29 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         )}
                       </div>
 
-                      {/* Actions rapides (survol/focus) — propagation stoppée pour ne pas
-                          déclencher le drag ni l'ouverture de l'édition */}
+                      {/* Actions rapides — masquées sur les tuiles éligibles au regroupement pour
+                          éviter toute superposition avec la zone de clic de sélection.
+                          (Cause du bug : UserRound en bottom-0 left-0 interceptait le clic
+                          et naviguait vers la fiche élève au lieu de déclencher onToggleConflictSelect.) */}
+
+                      {/* Badge de sélection — visible uniquement sur les tuiles éligibles au regroupement.
+                          Remplace tous les boutons d'action pour que le clic soit sans ambiguïté. */}
+                      {estSelectablePourGroupe && (
+                        <div
+                          aria-hidden
+                          style={{
+                            position: 'absolute', top: 2, right: 2, zIndex: 20,
+                            width: 10, height: 10, borderRadius: '50%',
+                            border: `1.5px solid ${isConflitSelected ? '#a855f7' : isChevauchement ? '#f97316' : '#ef4444'}`,
+                            background: isConflitSelected ? '#a855f7' : 'transparent',
+                            pointerEvents: 'none',
+                          }}
+                        />
+                      )}
 
                       {/* Suppression — masqué sur les cours en lecture seule (nonMovable = cours réels
-                          dans le Planning intelligent, créneaux d'école, etc.) */}
-                      {!lesson.nonMovable && (
+                          dans le Planning intelligent, créneaux d'école, etc.) et sur tuiles groupables */}
+                      {!lesson.nonMovable && !estSelectablePourGroupe && (
                         <button
                           type="button"
                           aria-label="Supprimer ce cours"
@@ -930,7 +950,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                       )}
 
                       {/* Duplication — pré-remplit élève/durée/sujet, date à préciser */}
-                      {onDuplicate && (
+                      {onDuplicate && !estSelectablePourGroupe && (
                         <button
                           type="button"
                           aria-label="Dupliquer ce cours"
@@ -945,8 +965,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         </button>
                       )}
 
-                      {/* Fiche élève — visible sur les propositions (envisagé/conflit) ayant un _studentId */}
-                      {onViewStudent && (isEnvisage || isConflit) && lesson._studentId && (
+                      {/* Fiche élève — masquée sur tuiles groupables pour éviter la superposition */}
+                      {onViewStudent && (isEnvisage || isConflit) && lesson._studentId && !estSelectablePourGroupe && (
                         <button
                           type="button"
                           aria-label="Voir la fiche élève"
@@ -961,8 +981,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         </button>
                       )}
 
-                      {/* Modifier la durée — visible sur les propositions (envisagé/conflit) */}
-                      {(isEnvisage || isConflit) && lesson._responseId && (
+                      {/* Modifier la durée — masquée sur tuiles groupables */}
+                      {(isEnvisage || isConflit) && lesson._responseId && !estSelectablePourGroupe && (
                         <button
                           type="button"
                           aria-label="Modifier la durée du cours"

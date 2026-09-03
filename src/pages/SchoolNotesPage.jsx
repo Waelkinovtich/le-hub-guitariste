@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { StickyNote, CalendarDays, Plus, Trash2, Pencil, Check, Loader2, AlertCircle, X, ChevronDown, ChevronUp, Mic, MicOff, Square, Users, FileDown, Download, Music2, ListMusic, Settings2, ArrowUp, ArrowDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import HelpTooltip from '../components/HelpTooltip'
@@ -54,6 +54,16 @@ function fmtTimestampForFilename(date) {
 const JOURS_SEMAINE = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi']
 
 // DicteeAudio est importé depuis src/components/DicteeAudio.jsx (composant partagé).
+
+// Types d'événements disponibles. NULL en base → traité comme 'autre' côté front
+// (compatibilité ascendante avec les événements créés avant cette migration).
+const TYPES_EVENEMENT = [
+  { val: 'concert_professeur', label: 'Concert du professeur' },
+  { val: 'audition_classe',    label: 'Audition de classe (guitare individuelle)' },
+  { val: 'concert_ensemble',   label: 'Concert / musique actuelle (élèves)' },
+  { val: 'autre',              label: 'Autre événement' },
+]
+
 // ─── Formulaire d'ajout / d'édition ──────────────────────────────────────────
 
 function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
@@ -63,38 +73,14 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
   const [title, setTitle] = useState(initial?.title ?? '')
   const [content, setContent] = useState(initial?.content ?? '')
   const [eventDate, setEventDate] = useState(initial?.event_date ?? '')
+  // Valeur par défaut : 'autre' si l'événement existe mais n'a pas encore de type (avant migration)
+  const [typeEvenement, setTypeEvenement] = useState(initial?.type_evenement ?? 'autre')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   // dicteeActive remonte l'état "micro ouvert" depuis DicteeAudio : permet de
   // désactiver le toggle note/événement pendant un enregistrement en cours.
   const [dicteeActive, setDicteeActive] = useState(false)
-  // Ref sur le textarea Contenu : permet de lire la valeur DOM en temps réel et de
-  // restaurer la position du curseur après l'injection d'un segment de transcription.
-  const contentRef = useRef(null)
-
-  // Insère le texte dicté à la FIN du contenu, sans perturber le curseur de l'utilisateur.
-  // Choix retenu : fin du texte (pas à la position du curseur) — insérer au milieu
-  // d'une correction manuelle en cours produirait un résultat désorganisateur.
-  // Lit el.value depuis le DOM (toujours à jour même si le state React est en vol)
-  // pour éviter la race condition entre frappe manuelle et transcription simultanées.
-  const handleTranscription = useCallback((text) => {
-    const el = contentRef.current
-    if (!el) {
-      setContent(prev => prev ? prev + ' ' + text : text)
-      return
-    }
-    const savedStart = el.selectionStart
-    const savedEnd   = el.selectionEnd
-    const newVal = el.value ? el.value + ' ' + text : text
-    setContent(newVal)
-    // Restaure le curseur après que React a commité le re-render du textarea contrôlé.
-    requestAnimationFrame(() => {
-      if (!contentRef.current) return
-      contentRef.current.selectionStart = savedStart
-      contentRef.current.selectionEnd   = savedEnd
-    })
-  }, [])
 
   const save = async () => {
     setError('')
@@ -110,6 +96,8 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
       title: title.trim(),
       content: content.trim() || null,
       event_date: type === 'evenement' ? eventDate : null,
+      // type_evenement : nullifié pour les notes (seuls les événements ont un sous-type)
+      type_evenement: type === 'evenement' ? typeEvenement : null,
     }
 
     let result
@@ -171,6 +159,19 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
       </div>
 
       <div className="space-y-3">
+        {/* Type d'événement — affiché en premier pour orienter les champs suivants */}
+        {type === 'evenement' && (
+          <select
+            value={typeEvenement}
+            onChange={e => setTypeEvenement(e.target.value)}
+            className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-guitar-600/60 transition-colors"
+          >
+            {TYPES_EVENEMENT.map(({ val, label }) => (
+              <option key={val} value={val}>{label}</option>
+            ))}
+          </select>
+        )}
+
         {/* École */}
         {schools.length > 1 && (
           <select
@@ -202,7 +203,6 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
 
         {/* Contenu */}
         <textarea
-          ref={contentRef}
           value={content}
           onChange={e => setContent(e.target.value)}
           placeholder="Contenu, remarques, détails… (facultatif)"
@@ -210,9 +210,9 @@ function NoteForm({ schools, selectedSchool, onSaved, onCancel, initial }) {
           className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-guitar-600/60 transition-colors resize-none"
         />
 
-        {/* Dictée vocale — disponible sur notes ET événements, audio strictement local */}
+        {/* Dictée vocale — zone transcription séparée, jamais injectée automatiquement */}
         <DicteeAudio
-          onTranscription={handleTranscription}
+          onInsert={(text) => setContent(prev => prev ? `${prev}\n${text}` : text)}
           onActiveChange={setDicteeActive}
         />
 
@@ -532,7 +532,7 @@ function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
       {/* ── Contenu principal ── */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className={`text-xs px-2 py-0.5 rounded-md border font-medium ${
               isPast
                 ? 'border-border-subtle bg-surface text-muted-foreground'
@@ -540,6 +540,12 @@ function EventCard({ item, isPast, onEdit, onDelete, allStudents, teacherId }) {
             }`}>
               {fmtDate(item.event_date)}
             </span>
+            {/* Sous-type d'événement — NULL sur les anciens événements, masqué dans ce cas */}
+            {item.type_evenement && (
+              <span className="text-xs px-2 py-0.5 rounded-md border border-border-subtle bg-surface text-muted-foreground">
+                {TYPES_EVENEMENT.find((t) => t.val === item.type_evenement)?.label ?? item.type_evenement}
+              </span>
+            )}
           </div>
           <p className="text-sm font-semibold text-foreground">{item.title}</p>
           {item.content && (
