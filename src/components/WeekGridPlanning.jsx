@@ -1,5 +1,5 @@
 import { useRef, useState, useMemo, useCallback, useEffect } from 'react'
-import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X } from 'lucide-react'
+import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X, Scissors } from 'lucide-react'
 import { updateLesson } from '../services/lessons'
 import { getSchoolColor, SCHOOL_COLOR_DEFAULT } from '../utils/schoolColors'
 import DeleteLessonModal from './DeleteLessonModal'
@@ -163,6 +163,19 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
             .insert({ student_id: lesson._studentId, school_name: lesson.schoolName || null, duree_cours_minutes: selected })
           if (insErr) throw new Error(insErr.message)
         }
+      } else if (lesson._groupSessionId) {
+        // Cours de groupe : met à jour la séance ET le groupe parent pour cohérence
+        const { error: sessErr } = await supabase
+          .from('group_sessions')
+          .update({ duration_minutes: selected })
+          .eq('id', lesson._groupSessionId)
+        if (sessErr) throw new Error(sessErr.message)
+        if (lesson._groupId) {
+          await supabase
+            .from('music_groups')
+            .update({ duration_minutes: selected })
+            .eq('id', lesson._groupId)
+        }
       } else if (lesson._responseId) {
         const { error: updErr } = await supabase
           .from('survey_responses')
@@ -195,6 +208,8 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
           {lesson.studentName} —{' '}
           {lesson._studentId
             ? 'modifie la durée dans la fiche élève (priorité haute)'
+            : lesson._groupSessionId
+            ? 'modifie la durée de la séance de groupe'
             : 'modifie la durée dans la réponse au sondage'}
         </p>
 
@@ -279,7 +294,7 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
 // cascadeEnabled : quand true, un dépôt sur une proposition déplaçable déclenche onCascadeRequest.
 // onCascadeRequest(displacedLesson, newDay, newTime, durationMinutes) : intercepte le DnD
 //   pour que le parent recalcule un créneau alternatif pour la leçon déplacée.
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, allowOverlap = false, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null }) {
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, onDegrouper = null, allowOverlap = false, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -981,8 +996,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         </button>
                       )}
 
-                      {/* Modifier la durée — masquée sur tuiles groupables */}
-                      {(isEnvisage || isConflit) && lesson._responseId && !estSelectablePourGroupe && (
+                      {/* Modifier la durée — cours individuels et cours de groupe */}
+                      {((isEnvisage || isConflit) && lesson._responseId || isGroupe && lesson._groupSessionId) && !estSelectablePourGroupe && (
                         <button
                           type="button"
                           aria-label="Modifier la durée du cours"
@@ -994,6 +1009,22 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                                      focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
                         >
                           <Clock className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      {/* Dégrouper — uniquement sur les cours de groupe */}
+                      {isGroupe && onDegrouper && (
+                        <button
+                          type="button"
+                          aria-label="Dégrouper ce cours"
+                          title="Dégrouper — restaure les cours individuels"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); onDegrouper(lesson) }}
+                          className="absolute bottom-0 right-0 z-20 p-0.5 rounded-tl-md bg-void/50 text-white/80
+                                     opacity-0 group-hover:opacity-100 hover:text-emerald-400 transition-opacity
+                                     focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                        >
+                          <Scissors className="w-3 h-3" />
                         </button>
                       )}
                     </div>
