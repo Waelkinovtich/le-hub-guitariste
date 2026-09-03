@@ -473,10 +473,11 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
 
     if (!m.pending && !m.active) return
 
-    // Clic simple (< seuil) : leçon en conflit → toggle sélection pour regroupement ;
-    // sinon ouvre la modale d'édition standard.
+    // Clic simple (< seuil) : conflit auto (rouge) OU chevauchement manuel (orange) →
+    // même toggle de sélection pour regroupement en cours de groupe.
     if (!m.active) {
-      if (m.lesson.planningStatus === 'conflit' && onToggleConflictSelect) {
+      const estChevauche = idsEnChevauchement.has(m.lesson.id)
+      if ((m.lesson.planningStatus === 'conflit' || estChevauche) && onToggleConflictSelect && m.lesson._responseId) {
         onToggleConflictSelect(m.lesson._responseId)
       } else {
         onSelectLesson(m.lesson)
@@ -551,7 +552,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
   // DOIVENT être en deps : endMove les utilise et la prop peut changer (ex. showConflicts toggle
   // fait passer onToggleConflictSelect de null à une vraie fonction — sans cette dep, endMove
   // garderait null indéfiniment et le toggle de sélection ne fonctionnerait jamais).
-  }, [lessonsByDay, onSelectLesson, showMoveError, onMoveLesson, onToggleConflictSelect, cascadeEnabled, onCascadeRequest, allowOverlap, reservedByDay])
+  // idsEnChevauchement : requis pour le clic simple sur les leçons orange (chevauchement manuel)
+  }, [lessonsByDay, onSelectLesson, showMoveError, onMoveLesson, onToggleConflictSelect, cascadeEnabled, onCascadeRequest, allowOverlap, reservedByDay, idsEnChevauchement])
 
   // ── Handlers pointer du conteneur de grille ───────────────────────────────
 
@@ -819,12 +821,14 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   )
                 })()}
 
-                {/* Cours existants — affichage côte à côte pour les conflits superposés */}
+                {/* Cours existants — affichage côte à côte pour les conflits et chevauchements */}
                 {(() => {
-                  // Seules les leçons conflit participent au calcul de colonnes.
-                  // Les cours réels et propositions restent toujours en pleine largeur.
-                  const conflitDuJour    = dayLessons.filter((l) => l.planningStatus === 'conflit')
-                  const conflictColumnMap = computeConflictColumns(conflitDuJour)
+                  // Unification : conflits auto (rouge) + chevauchements manuels (orange) participent
+                  // au même calcul de colonnes — les autres cours restent toujours en pleine largeur.
+                  const leconsPourColonnes = dayLessons.filter(
+                    (l) => l.planningStatus === 'conflit' || idsEnChevauchement.has(l.id)
+                  )
+                  const conflictColumnMap = computeConflictColumns(leconsPourColonnes)
 
                   return dayLessons.map((lesson) => {
                   const startSlot    = timeToSlot(lesson.lessonTime)
@@ -836,10 +840,11 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   const isBeingMoved = movePreview?.lessonId === lesson.id
                   // Chevauchement temporaire autorisé (mode Planning intelligent) → signalé en orange
                   const isChevauchement = idsEnChevauchement.has(lesson.id)
-                  // Leçon en conflit sélectionnée pour regroupement → bordure violette
-                  const isConflitSelected = isConflit && conflictSelectedIds?.has(lesson._responseId)
-                  // Cours réels et propositions : pleine largeur. Conflits : colonnes calculées.
-                  const { colIdx, colCount } = isConflit
+                  // Leçon sélectionnée pour regroupement → bordure violette (conflit auto OU chevauchement manuel)
+                  const isConflitSelected = (isConflit || isChevauchement) && conflictSelectedIds?.has(lesson._responseId)
+                  // Cours réels et propositions non chevauchantes : pleine largeur.
+                  // Conflits auto (rouge) et chevauchements manuels (orange) : colonnes côte à côte.
+                  const { colIdx, colCount } = (isConflit || isChevauchement)
                     ? (conflictColumnMap.get(lesson.id) ?? { colIdx: 0, colCount: 1 })
                     : { colIdx: 0, colCount: 1 }
                   const pct = 100 / colCount

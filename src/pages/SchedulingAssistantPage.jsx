@@ -984,7 +984,9 @@ export default function SchedulingAssistantPage() {
     setGroupingConflicts(true)
     setGroupError('')
     try {
-      const selectedResponses = (statsPlacement.nonPlaces ?? []).filter((r) => conflictSelectedIds.has(r.id))
+      // Cherche dans toutes les réponses : les leçons en chevauchement orange sont des
+      // propositions placées (non dans nonPlaces) — responses couvre les deux cas.
+      const selectedResponses = responses.filter((r) => conflictSelectedIds.has(r.id))
       if (selectedResponses.length < 2) return
 
       const schoolName = selectedResponses[0]?.school_name ?? null
@@ -1738,13 +1740,15 @@ export default function SchedulingAssistantPage() {
                 </div>
               )}
 
-              {/* ── Panneau regroupement en cours de groupe (T1) ───────────────── */}
-              {showConflicts && conflictSelectedIds.size >= 2 && (
+              {/* ── Panneau regroupement en cours de groupe ───────────────────── */}
+              {/* Visible dès que 2+ leçons sont sélectionnées, que ce soit des conflits auto
+                  (rouge, mode showConflicts) ou des chevauchements manuels (orange). */}
+              {conflictSelectedIds.size >= 2 && (
                 <GroupingPanel
                   selectedCount={conflictSelectedIds.size}
-                  conflictLessons={conflictLessons}
+                  conflictLessons={lessonsForGrid}
                   conflictSelectedIds={conflictSelectedIds}
-                  nonPlaces={statsPlacement.nonPlaces}
+                  nonPlaces={responses}
                   onCancel={() => setConflictSelectedIds(new Set())}
                   onConfirm={handleGrouperConflits}
                   loading={groupingConflicts}
