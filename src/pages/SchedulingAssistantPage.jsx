@@ -1654,9 +1654,17 @@ export default function SchedulingAssistantPage() {
     const deplacedResponse = responses.find((r) => r.id === deplacedId)
     if (!deplacedResponse) return
 
-    // Bloquer le slot que le draggeur va occuper pour que le moteur ne le réattribue pas au déplacé
+    // Bloquer : (1) le slot que le draggeur va occuper, (2) les positions actuelles de tous
+    // les autres élèves — sinon le moteur pourrait proposer un créneau déjà attribué à un tiers.
     const slotBloqueParDraggeur = { lessonDate: newDay, lessonTime: newTime, durationMinutes }
-    const lessonsAvecBlocage    = [...existingLessons, slotBloqueParDraggeur]
+    const autresPropositions    = responses
+      .filter((r) => r.id !== draggeurId && r.id !== deplacedId)
+      .flatMap((r) => {
+        const prop = proposalOverrides[r.id] ?? proposalsMap[r.id]?.[0]
+        if (!prop) return []
+        return [{ lessonDate: prop.candidateDate, lessonTime: prop.startTime, durationMinutes: prop.durationMinutes }]
+      })
+    const lessonsAvecBlocage    = [...existingLessons, slotBloqueParDraggeur, ...autresPropositions]
 
     const alternatives = computeProposals({
       response:               deplacedResponse,
@@ -1703,7 +1711,7 @@ export default function SchedulingAssistantPage() {
     const nomDeplace = deplacedResponse.first_name ?? 'l\'élève déplacé'
     setCascadeNotif(`↩ ${nomDeplace} relogé automatiquement → ${alt.day} ${alt.startTime}`)
     setTimeout(() => setCascadeNotif(''), 5000)
-  }, [responses, existingLessons, schools, teacherInfo, reservedSlots, lockedIds])
+  }, [responses, existingLessons, schools, teacherInfo, reservedSlots, lockedIds, proposalsMap, proposalOverrides])
 
   // ── Recalcul ciblé par jour ──────────────────────────────────────────────────
   /**

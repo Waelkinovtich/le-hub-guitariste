@@ -5,7 +5,7 @@ import {
   ClipboardList, TrendingUp, ClipboardCheck, Settings, RotateCcw,
   Music2, Send, FileText, School, BarChart2, ChevronDown, ChevronUp,
   StickyNote, TableProperties, Euro, MessageSquare, GripVertical, RotateCcw as Reset,
-  CalendarDays, X, Brain, Target, Car,
+  CalendarDays, X, Brain, Target, Car, Timer,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
@@ -32,6 +32,7 @@ const ecolesLinks = [
   { to: '/admin/ecoles/notes',      icon: StickyNote,      label: 'Notes & Événements' },
   { to: '/admin/revenus',           icon: Euro,            label: 'Suivi des revenus' },
   { to: '/admin/deplacements',      icon: Car,             label: 'Déplacements' },
+  { to: '/admin/temps-travail',     icon: Timer,           label: 'Temps de travail' },
 ]
 
 const studentLinks = [

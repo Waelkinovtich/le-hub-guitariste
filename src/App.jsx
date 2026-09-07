@@ -45,6 +45,7 @@ const MessageTemplatesPage   = lazy(() => import('./pages/MessageTemplatesPage')
 const SchedulingAssistantPage = lazy(() => import('./pages/SchedulingAssistantPage'))
 const ObjectivesPage         = lazy(() => import('./pages/ObjectivesPage'))
 const TravelPage             = lazy(() => import('./pages/TravelPage'))
+const WorkTimePage           = lazy(() => import('./pages/WorkTimePage'))
 
 // ─── Écran de chargement (fallback Suspense) ──────────────────────────────────
 // Spinner minimaliste inline — identique au spinner d'AppShell —, importé ici
@@ -126,6 +127,7 @@ function AppShell() {
             <Route path="objectifs" element={<ObjectivesPage />} />
             <Route path="simulation" element={<Navigate to="/admin/objectifs" replace />} />
             <Route path="deplacements" element={<TravelPage />} />
+            <Route path="temps-travail" element={<WorkTimePage />} />
           </Route>
 
           <Route path="/eleve" element={<ProtectedRoute requiredRole="student"><Layout /></ProtectedRoute>}>
