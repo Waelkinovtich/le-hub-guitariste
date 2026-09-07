@@ -13,11 +13,19 @@ import { usePeriod } from '../context/PeriodContext'
 
 // ─── Définition des items de navigation réordonnables ────────────────────────
 
-const sondageLinks = [
-  { to: '/admin/envoyer-sondage',  icon: Send,          label: 'Inscription' },
+// Sous-liens du dropdown "Messages & Sondages" — séparés en deux groupes distincts
+// pour éviter toute confusion entre le sondage cours individuels et l'ensemble.
+const sondageLinksIndividuels = [
+  { to: '/admin/envoyer-sondage',  icon: Send,          label: 'Envoyer un lien' },
   { to: '/admin/sondages/gerer',   icon: BarChart2,     label: 'Sondages rapides' },
   { to: '/admin/sondages',         icon: FileText,      label: 'Réponses' },
-  { to: '/admin/messages',         icon: MessageSquare, label: 'Modèles de messages' },
+]
+const sondageLinksEnsemble = [
+  { to: '/admin/ensemble/liens',    icon: Send,          label: 'Liens d\'inscription' },
+  { to: '/admin/ensemble/reponses', icon: Users,         label: 'Réponses & Groupes' },
+]
+const sondageLinksDivers = [
+  { to: '/admin/messages',          icon: MessageSquare, label: 'Modèles de messages' },
 ]
 
 const planningLinks = [
@@ -120,11 +128,33 @@ function EcolesDropdown() {
   )
 }
 
+// Sous-section générique pour un groupe de liens dans un dropdown
+function SubSectionLinks({ links, badgeFn }) {
+  return (
+    <>
+      {links.map((link) => (
+        <NavLink key={link.to} to={link.to} end
+          className={({ isActive: a }) =>
+            'flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition-all ' +
+            (a ? 'bg-guitar-600/15 text-guitar-400 border border-guitar-600/25'
+               : 'text-muted-foreground hover:text-foreground hover:bg-surface-overlay')
+          }
+        >
+          <link.icon className="w-3.5 h-3.5 shrink-0" />
+          {link.label}
+          {badgeFn?.(link)}
+        </NavLink>
+      ))}
+    </>
+  )
+}
+
 function SondagesDropdown({ badges = {} }) {
   const location = useLocation()
   const isActive = location.pathname.startsWith('/admin/sondages')
     || location.pathname.startsWith('/admin/envoyer')
     || location.pathname.startsWith('/admin/messages')
+    || location.pathname.startsWith('/admin/ensemble')
   const [open, setOpen] = useState(isActive)
 
   return (
@@ -139,27 +169,32 @@ function SondagesDropdown({ badges = {} }) {
           <FileText className="w-4 h-4 shrink-0" />Messages &amp; Sondages
         </div>
         <div className="flex items-center gap-1.5">
-          {/* Badge global visible même dropdown fermé */}
           {!open && badges.sondages > 0 && <NavBadge count={badges.sondages} />}
           {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
         </div>
       </button>
       {open && (
         <div className="mt-1 ml-4 pl-3 border-l border-border-subtle space-y-0.5">
-          {sondageLinks.map((link) => (
-            <NavLink key={link.to} to={link.to} end
-              className={({ isActive: a }) =>
-                'flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition-all ' +
-                (a ? 'bg-guitar-600/15 text-guitar-400 border border-guitar-600/25'
-                   : 'text-muted-foreground hover:text-foreground hover:bg-surface-overlay')
-              }
-            >
-              <link.icon className="w-3.5 h-3.5 shrink-0" />
-              {link.label}
-              {/* Badge sur "Réponses" uniquement (lien vers SurveyResultsPage) */}
-              {link.to === '/admin/sondages' && <NavBadge count={badges.sondages} />}
-            </NavLink>
-          ))}
+          {/* ── Cours de guitare individuels (système existant, inchangé) ── */}
+          <p className="px-2.5 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+            Cours individuels
+          </p>
+          <SubSectionLinks
+            links={sondageLinksIndividuels}
+            badgeFn={(link) => link.to === '/admin/sondages' ? <NavBadge count={badges.sondages} /> : null}
+          />
+
+          {/* ── Répétitions d'ensemble (nouveau, indépendant) ────────────── */}
+          <p className="px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+            Répétitions d'ensemble
+          </p>
+          <SubSectionLinks links={sondageLinksEnsemble} />
+
+          {/* ── Divers ───────────────────────────────────────────────────── */}
+          <p className="px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+            Messages
+          </p>
+          <SubSectionLinks links={sondageLinksDivers} />
         </div>
       )}
     </div>
