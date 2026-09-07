@@ -478,6 +478,10 @@ export function scoreCandidate({
 // Source : spec T2 — "garde-fou strict".
 const MAX_TENTATIVES_ECHANGE = 2
 
+// Nombre maximal d'itérations de la passe de compaction (passe 3).
+// Au-delà, le gain marginal devient négligeable et le coût quadratique.
+const MAX_ITERATIONS_COMPACTION = 3
+
 /**
  * Vérifie que l'élève `response` peut occuper le créneau décrit par `proposal`
  * en consultant uniquement ses disponibilités déclarées.
@@ -633,6 +637,150 @@ export function computeAllProposals({
       virtualParId[studentP.id] = vlPnouveau
 
       echangeEffectue = true
+    }
+  }
+
+  // ── Passe 3 : compaction post-traitement ─────────────────────────────────────
+  // Problème que cette passe résout : la passe greedy choisit le meilleur créneau
+  // pour chaque élève AU MOMENT où il est traité, mais le "premier ancre" d'un jour
+  // n'a aucun voisin visible → score compacité=0 → peut être placé n'importe où
+  // dans ses disponibilités, créant un trou que les suivants ne peuvent pas combler.
+  // La passe 2 (échanges) ne corrige jamais ça car elle ne s'active que sur les
+  // non-placés (map[id].length === 0).
+  //
+  // Cette passe tente, pour chaque élève placé, de le déplacer vers un créneau
+  // plus tôt dans ses disponibilités SI ce déplacement réduit le gap total du jour
+  // (sans créer de conflit). Itère MAX_ITERATIONS_COMPACTION fois.
+  //
+  // Invariants : ne viole jamais une disponibilité déclarée, ne crée jamais de
+  // conflit, n'applique un déplacement que s'il améliore strictement le gap total.
+  if ((scoringWeights?.poids_compacite ?? 100) > 0) {
+    // Calcul du gap total (minutes de vide) entre cours d'un même jour.
+    // Utilisé pour mesurer l'amélioration stricte avant d'appliquer un déplacement.
+    function gapTotalDuJour(lessonsList, jourIdx) {
+      const coursJour = lessonsList
+        .filter((l) => {
+          const ds = l.lessonDate ?? l.lesson_date
+          return ds ? new Date(ds + 'T12:00:00').getDay() === jourIdx : false
+        })
+        .map((l) => ({ t: timeToMinutes(l.lessonTime ?? l.lesson_time ?? '00:00'), d: l.durationMinutes ?? l.duration_minutes ?? 45 }))
+        .sort((a, b) => a.t - b.t)
+      let gap = 0
+      for (let i = 0; i < coursJour.length - 1; i++) {
+        const fin = coursJour[i].t + coursJour[i].d
+        const deb = coursJour[i + 1].t
+        if (deb > fin) gap += deb - fin
+      }
+      return gap
+    }
+
+    for (let iter = 0; iter < MAX_ITERATIONS_COMPACTION; iter++) {
+      let amelioration = false
+
+      for (const response of responsesTriees) {
+        if (!map[response.id]?.[0]) continue  // non placé — ignoré
+
+        const proposalActuel = map[response.id][0]
+        const vlActuel = virtualParId[response.id]
+        if (!vlActuel) continue
+
+        const jourIdx = JOURS_FR.indexOf(proposalActuel.day)
+        if (jourIdx === -1) continue
+
+        // Toutes les alternatives de cet élève pour ce même jour (triées par heure)
+        const slotsJour = (response.availabilities ?? {})[proposalActuel.day] ?? []
+        const targetSlots = Math.max(1, Math.round(proposalActuel.durationMinutes / 15))
+
+        // Gap actuel avant tentative de déplacement
+        const gapAvant = gapTotalDuJour(virtualLessons, jourIdx)
+
+        // virtualLessons sans le cours actuel de cet élève
+        const virtualSansCet = virtualLessons.filter((vl) => vl !== vlActuel)
+
+        let meilleurSlot = null
+        let meilleurGap = gapAvant  // n'accepter que les améliorations strictes
+
+        for (let i = 0; i <= slotsJour.length - targetSlots; i++) {
+          // Vérifier la continuité des créneaux
+          let consecutive = true
+          for (let j = 1; j < targetSlots; j++) {
+            const prevEnd   = timeToMinutes(parseStartTime(slotsJour[i + j - 1])) + 15
+            const nextStart = timeToMinutes(parseStartTime(slotsJour[i + j]))
+            if (nextStart !== prevEnd) { consecutive = false; break }
+          }
+          if (!consecutive) continue
+
+          const newStartTime = parseStartTime(slotsJour[i])
+          // Ne pas retester le créneau déjà en place
+          if (newStartTime === proposalActuel.startTime) continue
+
+          // Vérifier l'absence de conflit avec les autres cours (sans cet élève)
+          const newStartMin = timeToMinutes(newStartTime)
+          const newEndMin   = newStartMin + proposalActuel.durationMinutes
+          const conflit = virtualSansCet.some((vl) => {
+            const ds = vl.lessonDate ?? vl.lesson_date
+            if (!ds || new Date(ds + 'T12:00:00').getDay() !== jourIdx) return false
+            const vs = timeToMinutes(vl.lessonTime ?? vl.lesson_time ?? '00:00')
+            const ve = vs + (vl.durationMinutes ?? vl.duration_minutes ?? 45)
+            return newStartMin < ve && newEndMin > vs
+          })
+          if (conflit) continue
+
+          // Vérifier aussi les créneaux réservés (hebdomadaires, comparés par jourSemaine)
+          const conflitReserve = reservedSlots.some((rs) => {
+            if (rs.jourSemaine !== jourIdx) return false
+            const rs_s = timeToMinutes(rs.heureDebut)
+            const rs_e = rs_s + rs.dureeMinutes
+            return newStartMin < rs_e && newEndMin > rs_s
+          })
+          if (conflitReserve) continue
+
+          // Simuler le déplacement et mesurer le nouveau gap
+          const candidateDate = vlActuel.lessonDate ?? vlActuel.lesson_date
+          const vlSimule = { lessonDate: candidateDate, lessonTime: newStartTime, durationMinutes: proposalActuel.durationMinutes }
+          const virtualSimule = [...virtualSansCet, vlSimule]
+          const gapSimule = gapTotalDuJour(virtualSimule, jourIdx)
+
+          if (gapSimule < meilleurGap) {
+            meilleurGap = gapSimule
+            meilleurSlot = { startTime: newStartTime, candidateDate }
+          }
+        }
+
+        // Appliquer le meilleur déplacement trouvé
+        if (meilleurSlot) {
+          // Mettre à jour la proposition dans map
+          const scoreNouv = scoreCandidate({
+            day:        proposalActuel.day,
+            slot:       rebuilderSlot(meilleurSlot.startTime, proposalActuel.durationMinutes),
+            slotsCount: targetSlots,
+            response,
+            existingLessons: virtualSansCet,
+            ...sharedArgs,
+          })
+          if (!scoreNouv) continue  // rejet par règle dure (date_fin_cours…) — ne pas appliquer
+
+          map[response.id] = [{
+            ...proposalActuel,
+            startTime:      meilleurSlot.startTime,
+            candidateDate:  meilleurSlot.candidateDate,
+            score:          scoreNouv.score,
+            reasons:        scoreNouv.reasons,
+          }]
+
+          // Mettre à jour virtualLessons
+          const idxVl = virtualLessons.indexOf(vlActuel)
+          if (idxVl !== -1) virtualLessons.splice(idxVl, 1)
+          const vlNouveau = { lessonDate: meilleurSlot.candidateDate, lessonTime: meilleurSlot.startTime, durationMinutes: proposalActuel.durationMinutes }
+          virtualLessons.push(vlNouveau)
+          virtualParId[response.id] = vlNouveau
+
+          amelioration = true
+        }
+      }
+
+      // Arrêt anticipé si aucune amélioration lors de cette itération
+      if (!amelioration) break
     }
   }
 
