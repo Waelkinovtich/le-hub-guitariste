@@ -876,10 +876,18 @@ export default function SchedulingAssistantPage() {
     const sansDispos       = nonPlacesAvecMotif.filter((x) => x.motif === 'sans-disponibilites')
     const dureeIncomp      = nonPlacesAvecMotif.filter((x) => x.motif === 'duree-incompatible')
 
+    // Garde structurelle : vérifie qu'aucun élève n'a disparu silencieusement de toutes les catégories.
+    // En conditions normales ce tableau est toujours vide — places + nonPlacesAvecMotif = responses.
+    const idsDansMotifs    = new Set(nonPlacesAvecMotif.map((x) => x.r.id))
+    const elevesNonClasses = nonPlaces.filter((r) => !idsDansMotifs.has(r.id))
+    if (elevesNonClasses.length > 0) {
+      console.warn('[Planning] ANOMALIE — élèves non classifiés :', elevesNonClasses.map((r) => r.id))
+    }
+
     return {
       total: responses.length, places: places.length,
       nonPlaces, nonPlacesCount: nonPlaces.length,
-      nonPlacesAvecMotif, conflits, sansDispos, dureeIncomp, sansSlotCompat,
+      nonPlacesAvecMotif, conflits, sansDispos, dureeIncomp, sansSlotCompat, elevesNonClasses,
     }
   }, [responses, proposalsMap, proposalOverrides])
 
@@ -1064,12 +1072,13 @@ export default function SchedulingAssistantPage() {
    * Déplaçables : un drag-and-drop vers un créneau libre crée un proposalOverride.
    */
   const conflictLessons = useMemo(() => {
-    // Vrais conflits : affichés seulement si showConflicts est actif.
-    // Sans-slot-compatible : le créneau est libre (compaction a bougé l'occupant)
-    //   → restent toujours visibles pour que "Masquer les conflits" ne les cache pas.
-    const conflitsR      = showConflicts ? (statsPlacement.conflits ?? []).map((x) => x.r) : []
-    const sansSlotR      = (statsPlacement.sansSlotCompat ?? []).map((x) => x.r)
-    const nonPlacesAffiches = [...conflitsR, ...sansSlotR]
+    // sans-slot-compatible → toujours visible (créneau libéré par compaction, non re-tenté).
+    // Tous les autres non-placés (conflit, duree-incompatible, sans-disponibilites) →
+    //   visibles seulement si showConflicts.
+    // NB : sans-disponibilites est filtré naturellement par !bestDay || !bestSlot plus bas.
+    const nonPlacesAffiches = (statsPlacement.nonPlacesAvecMotif ?? [])
+      .filter(({ motif }) => motif === 'sans-slot-compatible' || showConflicts)
+      .map(({ r }) => r)
     if (nonPlacesAffiches.length === 0) return []
 
     const isoParJour = {}
@@ -1130,7 +1139,7 @@ export default function SchedulingAssistantPage() {
       })
     }
     return result
-  }, [showConflicts, statsPlacement.nonPlaces, weekDays])
+  }, [showConflicts, statsPlacement.nonPlacesAvecMotif, weekDays])
 
   /**
    * Cours affichés dans la grille = cours réels de la semaine (en lecture seule, fond)
@@ -1943,6 +1952,20 @@ export default function SchedulingAssistantPage() {
           {/* ── Bandeau de placement — toujours visible ──────────────────────── */}
           {/* Distingue les CONFLITS (créneaux pris par d'autres, résolubles par échange)
               des cas sans disponibilité ou durée incompatible (passe d'échanges inutile) */}
+
+          {/* Garde structurelle — visible uniquement si un bug de classification fait disparaître
+              un élève de toutes les catégories. En conditions normales, ce bloc est absent. */}
+          {(statsPlacement.elevesNonClasses?.length ?? 0) > 0 && (
+            <div className="rounded-xl text-xs mb-3 px-4 py-3 bg-red-500/10 border border-red-500/40 text-red-400">
+              <span className="font-semibold">⚠ Anomalie de classification :</span>
+              {' '}{statsPlacement.elevesNonClasses.length} élève(s) n'ont pas pu être classifiés et n'apparaissent dans aucune catégorie.
+              Veuillez recharger la page. Si le problème persiste, contactez le support.
+              <span className="text-red-400/60 ml-2">
+                ({statsPlacement.elevesNonClasses.map((r) => [r.first_name, r.last_name].filter(Boolean).join(' ') || r.id).join(', ')})
+              </span>
+            </div>
+          )}
+
           <div className={`rounded-xl text-xs mb-4 overflow-hidden border
             ${statsPlacement.nonPlacesCount > 0
               ? 'bg-amber-500/8 border-amber-500/20'
