@@ -40,6 +40,42 @@ export function nextDateForDayAfter(dayName, minDateISO) {
   return d.toISOString().slice(0, 10)
 }
 
+/**
+ * Calcule l'intersection des disponibilités de plusieurs membres d'un groupe.
+ * Les membres sans aucune disponibilité connue sont exclus du calcul (ne bloquent
+ * pas l'intersection, mais l'appelant peut les signaler séparément).
+ *
+ * Utilisé pour :
+ *   - Synthétiser la disponibilité collective d'un groupe-candidat (input moteur)
+ *   - Calculer les validDropZones pendant le drag d'un cours de groupe
+ *
+ * @param {Array<{availabilities: object}>} members — membres avec { availabilities: { Lundi: [...], ... } }
+ * @returns {object} { Lundi: ["HH:MM–HH:MM", ...], ... } — slots communs à tous les membres connus
+ */
+export function intersectionDisponibilitesCollectives(members) {
+  const membresConnus = members.filter((m) => {
+    const avail = m.availabilities ?? {}
+    return Object.values(avail).some((s) => Array.isArray(s) && s.length > 0)
+  })
+  if (membresConnus.length === 0) return {}
+
+  const tousJours = new Set()
+  for (const m of membresConnus) {
+    for (const jour of Object.keys(m.availabilities ?? {})) tousJours.add(jour)
+  }
+
+  const result = {}
+  for (const jour of tousJours) {
+    const sets = membresConnus.map((m) => new Set(m.availabilities?.[jour] ?? []))
+    let inter = sets[0]
+    for (let i = 1; i < sets.length; i++) {
+      inter = new Set([...inter].filter((s) => sets[i].has(s)))
+    }
+    if (inter.size > 0) result[jour] = [...inter].sort()
+  }
+  return result
+}
+
 /** Extrait l'heure de début d'un créneau formaté "HH:MM–HH:MM". */
 export function parseStartTime(slot) {
   return slot.split('–')[0].trim()

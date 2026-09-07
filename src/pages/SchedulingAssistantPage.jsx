@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers, SlidersHorizontal, Trash2, Users, CheckCircle2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
 import ScoreBadge from '../components/ScoreBadge'
 import WeekGridPlanning from '../components/WeekGridPlanning'
-import { computeAllProposals, computeProposals, scoreCandidate, parseStartTime, JOURS_FR, timeToMinutes } from '../utils/scoringCreneaux'
+import { computeAllProposals, computeProposals, scoreCandidate, parseStartTime, JOURS_FR, timeToMinutes, intersectionDisponibilitesCollectives } from '../utils/scoringCreneaux'
 import { currentSchoolYear } from '../services/schools'
 import { fetchReservedSlots } from '../services/reservedSlots'
 
@@ -297,6 +297,90 @@ function ProposalCard({ response, proposals, onConfirm, confirming, schools = []
   )
 }
 
+// ─── Sélecteur de groupes à intégrer dans le calcul du Planning intelligent ───
+
+/**
+ * Affiché dans la vue grille, permet de choisir un ou plusieurs groupes existants
+ * (module Groupes & Répétitions) pour les intégrer comme candidats dans le calcul.
+ * Chaque groupe sélectionné est traité par le moteur exactement comme un élève individuel,
+ * avec l'intersection des disponibilités de ses membres comme contrainte de placement.
+ */
+function GroupCandidatSelector({ availableGroups, selectedGroupIds, onToggle, onConfirmerGroupe, groupProposalLessons }) {
+  if (availableGroups.length === 0) return null
+
+  // Groupes déjà placés par le moteur (ont une proposition visible dans la grille)
+  const groupsPlaces = new Set(groupProposalLessons.map((l) => l._groupId))
+
+  return (
+    <div className="glass-panel rounded-xl p-4 space-y-3 border border-emerald-500/20 bg-emerald-500/3">
+      <div className="flex items-center gap-2">
+        <Users className="w-4 h-4 text-emerald-400" />
+        <p className="text-sm font-medium text-emerald-400">Intégrer un groupe dans le calcul</p>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Les groupes sélectionnés participent au calcul automatique sur la base de la disponibilité collective de leurs membres.
+      </p>
+      <div className="space-y-1.5">
+        {availableGroups.map((g) => {
+          const selected = selectedGroupIds.has(g.id)
+          const placed   = groupsPlaces.has(g.id)
+          const nbMembres = g.memberAvailabilities.length
+          const nbConnus  = g.memberAvailabilities.filter(
+            (m) => Object.values(m.availabilities ?? {}).some((s) => Array.isArray(s) && s.length > 0)
+          ).length
+
+          return (
+            <div
+              key={g.id}
+              className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-all cursor-pointer ${
+                selected
+                  ? 'border-emerald-500/40 bg-emerald-500/8'
+                  : 'border-border-subtle hover:border-border bg-surface-overlay/40'
+              }`}
+              onClick={() => onToggle(g.id)}
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium truncate">{g.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {nbMembres} membre{nbMembres > 1 ? 's' : ''}{nbConnus < nbMembres ? ` · ${nbMembres - nbConnus} sans disponibilités` : ''} · {g.duration_minutes || 30} min
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {placed && (
+                  <button
+                    type="button"
+                    title="Valider ce cours de groupe — crée la séance en base"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const lesson = groupProposalLessons.find((l) => l._groupId === g.id)
+                      if (lesson) onConfirmerGroupe(lesson)
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600/15 border border-emerald-600/30 text-emerald-400 text-xs font-medium hover:bg-emerald-600/25 transition-colors"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Planifier
+                  </button>
+                )}
+                <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-all ${
+                  selected ? 'border-emerald-400 bg-emerald-400' : 'border-muted-foreground'
+                }`}>
+                  {selected && <Check className="w-2.5 h-2.5 text-void" />}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {selectedGroupIds.size > 0 && groupsPlaces.size === 0 && (
+        <p className="text-xs text-amber-400/80 italic">
+          Aucun créneau commun trouvé pour les groupes sélectionnés. Vérifiez que les membres ont renseigné leurs disponibilités dans le sondage.
+        </p>
+      )}
+    </div>
+  )
+}
+
 // ─── Panneau de regroupement en cours de groupe (T1) ─────────────────────────
 // Affiché quand l'utilisateur a sélectionné ≥ 2 leçons en conflit.
 // Permet de choisir un nom et une heure de départ avant de créer le groupe.
@@ -440,6 +524,12 @@ export default function SchedulingAssistantPage() {
   const [cascadeEnabled, setCascadeEnabled]           = useState(false)
   // Message de succès éphémère affiché quand une cascade a effectivement relogé un élève
   const [cascadeNotif, setCascadeNotif]               = useState('')
+  // Groupes existants (module Groupes & Répétitions) intégrables comme candidats au calcul
+  const [availableGroups, setAvailableGroups]         = useState([])
+  // IDs des groupes sélectionnés par l'utilisateur pour les inclure dans le calcul
+  const [selectedGroupIds, setSelectedGroupIds]       = useState(() => new Set())
+  // Positions modifiées manuellement pour les cours de groupe proposés (non encore confirmés en DB)
+  const [groupProposalOverrides, setGroupProposalOverrides] = useState({})  // groupId → { candidateDate, startTime, durationMinutes, day }
 
   useEffect(() => {
     if (!user?.id) return
@@ -453,7 +543,7 @@ export default function SchedulingAssistantPage() {
         const today = new Date().toISOString().slice(0, 10)
         const inFourWeeks = new Date(Date.now() + 28 * 86400000).toISOString().slice(0, 10)
 
-        const [respRes, lessonsRes, schoolsRes, reservedSlotsData] = await Promise.all([
+        const [respRes, lessonsRes, schoolsRes, reservedSlotsData, groupsRes] = await Promise.all([
           // neq('confirme') exclut silencieusement les NULL en Postgres (NULL != 'confirme' → NULL).
           // On inclut explicitement les lignes dont status est NULL (réponses sans initialisation).
           supabase.from('survey_responses').select('*')
@@ -463,9 +553,55 @@ export default function SchedulingAssistantPage() {
           // latitude + longitude pour le bonus de proximité domicile + durées de créneaux disponibles
           supabase.from('schools').select('id, name, current_weekly_hours, desired_weekly_hours, latitude, longitude, available_slot_durations').eq('teacher_id', tInfo.id),
           fetchReservedSlots(tInfo.id),
+          // Groupes existants — intégrables comme candidats dans le calcul du planning
+          supabase.from('music_groups').select('id, name, type, school_name, duration_minutes').eq('teacher_id', tInfo.id).order('name'),
         ])
 
         if (respRes.error) throw new Error(respRes.error.message)
+
+        // ── Chargement des membres et de leurs disponibilités pour les groupes ──
+        // Deux requêtes séquentielles courtes (dépendance : group_ids → member_ids → availabilities).
+        const groupsData  = groupsRes.data ?? []
+        const groupIds    = groupsData.map((g) => g.id)
+        let groupsAvecMembres = groupsData.map((g) => ({ ...g, memberAvailabilities: [] }))
+
+        if (groupIds.length > 0) {
+          const { data: membersData } = await supabase
+            .from('group_members')
+            .select('group_id, student_id')
+            .in('group_id', groupIds)
+
+          const memberStudentIds = [...new Set((membersData ?? []).map((m) => m.student_id).filter(Boolean))]
+          let memberAvailMap = {}  // student_id → { firstName, availabilities }
+
+          if (memberStudentIds.length > 0) {
+            const { data: memberResps } = await supabase
+              .from('survey_responses')
+              .select('student_id, first_name, availabilities')
+              .in('student_id', memberStudentIds)
+              .order('submitted_at', { ascending: false })
+            // Garder la réponse la plus récente par student_id
+            ;(memberResps ?? []).forEach((r) => {
+              if (!memberAvailMap[r.student_id]) {
+                memberAvailMap[r.student_id] = { firstName: r.first_name ?? null, availabilities: r.availabilities ?? {} }
+              }
+            })
+          }
+
+          // Assembler les groupes avec les disponibilités de leurs membres
+          groupsAvecMembres = groupsData.map((g) => ({
+            ...g,
+            memberAvailabilities: (membersData ?? [])
+              .filter((m) => m.group_id === g.id && m.student_id)
+              .map((m) => ({
+                studentId:      m.student_id,
+                firstName:      memberAvailMap[m.student_id]?.firstName ?? null,
+                availabilities: memberAvailMap[m.student_id]?.availabilities ?? {},
+              })),
+          }))
+        }
+
+        setAvailableGroups(groupsAvecMembres)
 
         const rawResponses = respRes.data ?? []
 
@@ -517,10 +653,30 @@ export default function SchedulingAssistantPage() {
     load()
   }, [user?.id])
 
-  // Calcul des propositions — séquentiel via computeAllProposals pour garantir
-  // qu'aucun créneau n'est proposé à deux élèves en même temps (Bug 1 corrigé).
-  const proposalsMap = useMemo(() => computeAllProposals({
-    responses,
+  // Groupes sélectionnés → candidats synthétiques pour le moteur de placement.
+  // La disponibilité collective (intersection de tous les membres connus) devient
+  // le champ `availabilities` du candidat, exactement comme une réponse individuelle.
+  const groupCandidates = useMemo(() => {
+    return availableGroups
+      .filter((g) => selectedGroupIds.has(g.id))
+      .map((g) => {
+        const intersection = intersectionDisponibilitesCollectives(g.memberAvailabilities)
+        return {
+          // Préfixe distinct pour identifier les candidats groupe dans la map de résultats
+          id:                         `grp-cand-${g.id}`,
+          school_name:                g.school_name ?? null,
+          effective_duration_minutes: g.duration_minutes || 30,
+          availabilities:             intersection,
+          // Métadonnées non consommées par le moteur, mais nécessaires pour le rendu et les actions
+          _isGroupCandidate:          true,
+          _groupId:                   g.id,
+          _groupName:                 g.name,
+          _memberAvailabilities:      g.memberAvailabilities,
+        }
+      })
+  }, [availableGroups, selectedGroupIds])
+
+  const _scoringArgs = {
     existingLessons,
     schools,
     zone:                   teacherInfo?.zone               ?? 'B',
@@ -531,7 +687,31 @@ export default function SchedulingAssistantPage() {
     teacherHomeLat:         teacherInfo?.homeLat               ?? null,
     teacherHomeLng:         teacherInfo?.homeLng               ?? null,
     scoringWeights:         teacherInfo?.scoringWeights        ?? null,
-  }), [responses, existingLessons, schools, teacherInfo, reservedSlots])
+  }
+
+  // Calcul des propositions — séquentiel via computeAllProposals pour garantir
+  // qu'aucun créneau n'est proposé à deux candidats en même temps (Bug 1 corrigé).
+  // Les groupes sélectionnés participent au même calcul que les élèves individuels.
+  const combinedProposalsMap = useMemo(() => computeAllProposals({
+    responses: [...responses, ...groupCandidates],
+    ..._scoringArgs,
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [responses, groupCandidates, existingLessons, schools, teacherInfo, reservedSlots])
+
+  // Map individuelle (responseId → proposals) — identique à l'ancien proposalsMap,
+  // n'inclut pas les candidats groupe. Utilisée par toute la logique élève existante.
+  const proposalsMap = useMemo(() => {
+    const m = {}
+    for (const r of responses) m[r.id] = combinedProposalsMap[r.id] ?? []
+    return m
+  }, [combinedProposalsMap, responses])
+
+  // Map groupes (synthéticId → proposals) — résultats du moteur pour les candidats groupe.
+  const groupProposalsMap = useMemo(() => {
+    const m = {}
+    for (const gc of groupCandidates) m[gc._groupId] = combinedProposalsMap[gc.id] ?? []
+    return m
+  }, [combinedProposalsMap, groupCandidates])
 
   // ── Vue grille : jours de la semaine affichée ──────────────────────────────
   const weekDays = useMemo(() => computeWeekDays(weekOffset), [weekOffset])
@@ -803,6 +983,50 @@ export default function SchedulingAssistantPage() {
   }, [responses, proposalsMap, proposalOverrides, weekDays])
 
   /**
+   * Cours de groupe proposés par le moteur (non encore persistés en DB).
+   * Projetés sur la semaine affichée, déplaçables via groupProposalOverrides.
+   * planningStatus 'groupe' → même rendu que les cours de groupe confirmés (vert émeraude),
+   * mais sans _groupSessionId → distincts dans handleMoveProposal et handleDegrouper.
+   */
+  const groupProposalLessons = useMemo(() => {
+    const isoParJour = {}
+    for (const d of weekDays) {
+      const nomJour = JOURS_FR[new Date(d.iso + 'T12:00:00').getDay()]
+      isoParJour[nomJour] = d.iso
+    }
+
+    return groupCandidates
+      .map((gc) => {
+        const override = groupProposalOverrides[gc._groupId]
+        const base     = groupProposalsMap[gc._groupId]?.[0]
+        const proposal = override ?? base
+        if (!proposal) return null  // aucun créneau trouvé pour ce groupe → pas affiché
+
+        const overrideEnSemaine = override && weekDays.some((d) => d.iso === override.candidateDate)
+        const lessonDate = overrideEnSemaine
+          ? override.candidateDate
+          : (isoParJour[(override ?? proposal).day] ?? (override ?? proposal).candidateDate)
+        if (!lessonDate) return null
+
+        return {
+          id:                    `grp-prop-${gc._groupId}`,
+          lessonDate,
+          lessonTime:            proposal.startTime,
+          timeLabel:             proposal.startTime,
+          durationMinutes:       proposal.durationMinutes,
+          studentName:           `🎸 ${gc._groupName}`,
+          schoolName:            gc.school_name ?? null,
+          planningStatus:        'groupe',
+          // Pas de _groupSessionId : signale qu'il s'agit d'une proposition (non encore en DB)
+          _groupId:              gc._groupId,
+          _groupName:            gc._groupName,
+          _memberAvailabilities: gc._memberAvailabilities,
+        }
+      })
+      .filter(Boolean)
+  }, [groupCandidates, groupProposalsMap, groupProposalOverrides, weekDays])
+
+  /**
    * En mode "avec chevauchements", créneaux fantômes pour les élèves sans proposition.
    * Chaque carte est positionnée sur la première fenêtre disponible déclarée par l'élève
    * (consécutive si la durée cible le permet, sinon créneau de 15 min).
@@ -887,8 +1111,9 @@ export default function SchedulingAssistantPage() {
     // Exclure les propositions masquées par l'utilisateur via le bouton Supprimer
     const proposalsFiltres = proposalLessons.filter((l) => !hiddenResponseIds.has(l._responseId))
     const conflitsFiltres  = conflictLessons.filter((l) => !hiddenResponseIds.has(l._responseId))
-    return [...coursReels, ...proposalsFiltres, ...(showConflicts ? conflitsFiltres : [])]
-  }, [existingLessons, proposalLessons, conflictLessons, weekDays, showConflicts, hiddenResponseIds])
+    // Les cours de groupe proposés par le moteur coexistent avec les propositions individuelles
+    return [...coursReels, ...proposalsFiltres, ...groupProposalLessons, ...(showConflicts ? conflitsFiltres : [])]
+  }, [existingLessons, proposalLessons, groupProposalLessons, conflictLessons, weekDays, showConflicts, hiddenResponseIds])
 
   /**
    * Détecte les chevauchements entre propositions dans lessonsForGrid.
@@ -932,7 +1157,42 @@ export default function SchedulingAssistantPage() {
    * - Met à jour proposalOverrides avec la nouvelle position et le nouveau score.
    */
   const handleMoveProposal = useCallback(async ({ lesson, newDate, newTime, durationMinutes }) => {
-    // ── Branche cours de groupe ──────────────────────────────────────────────
+    // ── Branche cours de groupe proposé (non encore en DB) ───────────────────
+    // Pas de _groupSessionId : il s'agit d'un groupe venant du moteur, pas encore persisté.
+    // Le déplacement met à jour uniquement l'état local (groupProposalOverrides).
+    if (lesson.planningStatus === 'groupe' && !lesson._groupSessionId && lesson._groupId) {
+      const nomJour  = JOURS_FR[new Date(newDate + 'T12:00:00').getDay()]
+      const members  = lesson._memberAvailabilities ?? []
+      const newStartMin = timeToMinutes(newTime)
+
+      const nonDispos = []
+      for (const m of members) {
+        const avail   = m.availabilities ?? {}
+        const hasSome = Object.values(avail).some((s) => Array.isArray(s) && s.length > 0)
+        if (!hasSome) continue  // inconnu → avertissement non bloquant géré dans validDropZones
+        const slotsDay = avail[nomJour] ?? []
+        if (slotsDay.length === 0) { nonDispos.push(m.firstName ?? 'Membre'); continue }
+        const minutesOk = new Set()
+        for (const slot of slotsDay) {
+          const debut = timeToMinutes(parseStartTime(slot))
+          for (let mm = debut; mm < debut + 15; mm++) minutesOk.add(mm)
+        }
+        for (let mm = newStartMin; mm < newStartMin + durationMinutes; mm += 15) {
+          if (!minutesOk.has(mm)) { nonDispos.push(m.firstName ?? 'Membre'); break }
+        }
+      }
+      if (nonDispos.length > 0) {
+        throw new Error(`Créneau impossible : ${nonDispos.join(', ')} n'${nonDispos.length === 1 ? 'est' : 'sont'} pas disponible${nonDispos.length > 1 ? 's' : ''} le ${nomJour} à ${newTime}.`)
+      }
+
+      setGroupProposalOverrides((prev) => ({
+        ...prev,
+        [lesson._groupId]: { candidateDate: newDate, startTime: newTime, durationMinutes, day: nomJour },
+      }))
+      return
+    }
+
+    // ── Branche cours de groupe confirmé (persisté en DB) ────────────────────
     if (lesson.planningStatus === 'groupe' && lesson._groupSessionId) {
       const nomJour  = JOURS_FR[new Date(newDate + 'T12:00:00').getDay()]
       const members  = lesson._memberAvailabilities ?? []
@@ -1197,6 +1457,71 @@ export default function SchedulingAssistantPage() {
     }
   }, [conflictSelectedIds, statsPlacement, teacherInfo])
 
+  // ── Sélection / déselection d'un groupe comme candidat dans le calcul ────────
+  const handleToggleGroupCandidat = useCallback((groupId) => {
+    setSelectedGroupIds((prev) => {
+      const n = new Set(prev)
+      if (n.has(groupId)) {
+        n.delete(groupId)
+        // Supprimer l'override éventuel pour éviter de garder une position orpheline
+        setGroupProposalOverrides((prev2) => { const p = { ...prev2 }; delete p[groupId]; return p })
+      } else {
+        n.add(groupId)
+      }
+      return n
+    })
+  }, [])
+
+  // ── Confirmation d'un cours de groupe proposé par le moteur ─────────────────
+
+  /**
+   * Persiste en DB la séance de groupe calculée par le moteur.
+   * Contrairement à handleGrouperConflits (qui crée le groupe), le groupe existe déjà :
+   * on insère uniquement une group_session, puis le bloc passe dans existingLessons
+   * avec _groupSessionId (= il peut être déplacé/modifié/dégroupé comme n'importe quel groupe).
+   */
+  const handleConfirmerGroupePropose = useCallback(async (lesson) => {
+    if (!lesson._groupId || lesson._groupSessionId) return  // déjà confirmé ou invalide
+    if (!window.confirm(`Planifier « ${lesson._groupName ?? lesson.studentName} » le ${JOURS_FR[new Date(lesson.lessonDate + 'T12:00:00').getDay()]} à ${lesson.lessonTime} (${lesson.durationMinutes} min) ?`)) return
+
+    try {
+      const { data: sessData, error: sessErr } = await supabase
+        .from('group_sessions')
+        .insert({
+          group_id:         lesson._groupId,
+          session_date:     lesson.lessonDate,
+          session_time:     lesson.lessonTime,
+          duration_minutes: lesson.durationMinutes,
+        })
+        .select('id')
+        .single()
+      if (sessErr) throw new Error(sessErr.message)
+      const groupSessionId = sessData?.id ?? null
+
+      // Retirer de la sélection des candidats (il est maintenant dans existingLessons)
+      setSelectedGroupIds((prev) => { const n = new Set(prev); n.delete(lesson._groupId); return n })
+      setGroupProposalOverrides((prev) => { const n = { ...prev }; delete n[lesson._groupId]; return n })
+
+      // Ajouter dans existingLessons avec les métadonnées complètes (identique à handleGrouperConflits)
+      setExistingLessons((prev) => [...prev, {
+        id:                    `groupe-${lesson._groupId}-${groupSessionId}`,
+        lessonDate:            lesson.lessonDate,
+        lessonTime:            lesson.lessonTime,
+        timeLabel:             lesson.lessonTime,
+        durationMinutes:       lesson.durationMinutes,
+        studentName:           lesson.studentName,
+        schoolName:            lesson.schoolName,
+        planningStatus:        'groupe',
+        _groupId:              lesson._groupId,
+        _groupSessionId:       groupSessionId,
+        _memberResponseIds:    [],  // pas de survey_responses liées (groupe pré-existant)
+        _memberAvailabilities: lesson._memberAvailabilities ?? [],
+      }])
+    } catch (e) {
+      alert('Erreur lors de la confirmation : ' + e.message)
+    }
+  }, [])
+
   // ── T3 : Dégroupement d'un cours de groupe ───────────────────────────────────
 
   /**
@@ -1205,9 +1530,17 @@ export default function SchedulingAssistantPage() {
    * dans la grille.
    * music_groups est conservé : le groupe reste disponible comme modèle.
    * INTERDIT : aucune modification des données de sondage (tokens, submitted_at…).
+   * Cas spécial : si pas de _groupSessionId, il s'agit d'un groupe proposé non persisté
+   * → retrait de la sélection sans aucune requête DB.
    */
   const handleDegrouper = useCallback(async (lesson) => {
-    if (!lesson._groupId || !lesson._groupSessionId) return
+    if (!lesson._groupId) return
+    // Groupe proposé non encore persisté → retrait local uniquement
+    if (!lesson._groupSessionId) {
+      setSelectedGroupIds((prev) => { const n = new Set(prev); n.delete(lesson._groupId); return n })
+      setGroupProposalOverrides((prev) => { const n = { ...prev }; delete n[lesson._groupId]; return n })
+      return
+    }
     if (!window.confirm(`Dégrouper « ${lesson.studentName} » ?\nLa séance sera supprimée et les élèves retrouveront leur statut individuel.`)) return
 
     try {
@@ -1933,6 +2266,17 @@ export default function SchedulingAssistantPage() {
                     Lancer le recalcul
                   </button>
                 </div>
+              )}
+
+              {/* ── Sélecteur de groupes à intégrer dans le calcul ───────────── */}
+              {availableGroups.length > 0 && (
+                <GroupCandidatSelector
+                  availableGroups={availableGroups}
+                  selectedGroupIds={selectedGroupIds}
+                  onToggle={handleToggleGroupCandidat}
+                  onConfirmerGroupe={handleConfirmerGroupePropose}
+                  groupProposalLessons={groupProposalLessons}
+                />
               )}
 
               {/* ── Panneau regroupement en cours de groupe ───────────────────── */}
