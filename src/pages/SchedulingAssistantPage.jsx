@@ -807,12 +807,19 @@ export default function SchedulingAssistantPage() {
     const nonPlaces = responses.filter((r) => (proposalsMap[r.id] ?? []).length === 0 && !proposalOverrides[r.id])
 
     // Catégoriser chaque non-placé pour distinguer CONFLITS et TROUS :
-    //   'sans-disponibilites' — aucun créneau déclaré → hors du champ de la passe d'échanges
-    //   'duree-incompatible'  — créneaux déclarés, mais aucune fenêtre consécutive assez longue
-    //   'conflit'             — fenêtres valides existent MAIS toutes prises (la passe d'échanges
-    //                          peut potentiellement libérer une d'entre elles)
-    // NB : un "trou" (slot libre que le greedy n'a pas utilisé) est théoriquement impossible :
-    //   si un slot valide était libre, le greedy l'aurait pris en priorité.
+    //   'sans-disponibilites'  — aucun créneau déclaré
+    //   'duree-incompatible'   — créneaux déclarés, mais aucune fenêtre consécutive assez longue
+    //   'sans-slot-compatible' — fenêtres valides existent ET sont libres dans l'état final
+    //                           (peut arriver après compaction — créneau libéré mais non re-tenté)
+    //   'conflit'              — fenêtres valides ET réellement occupées par un autre cours placé
+
+    // Reconstruit une fois les créneaux occupés à partir de l'état final de proposalsMap
+    const coursPlaces = places.flatMap((p) => {
+      const prop = proposalOverrides[p.id] ?? proposalsMap[p.id]?.[0]
+      if (!prop) return []
+      return [{ day: prop.day, startMin: timeToMinutes(prop.startTime), endMin: timeToMinutes(prop.startTime) + (prop.durationMinutes ?? 30) }]
+    })
+
     const nonPlacesAvecMotif = nonPlaces.map((r) => {
       const avail = r.availabilities ?? {}
       const hasSomeAvail = Object.values(avail).some((s) => Array.isArray(s) && s.length > 0)
@@ -838,18 +845,41 @@ export default function SchedulingAssistantPage() {
       }
 
       if (!hasCandidats) return { r, motif: 'duree-incompatible' }
-      // A des fenêtres valides → elles étaient toutes occupées par d'autres élèves (conflit réel).
+
+      // Vérifie si au moins une fenêtre valide est réellement occupée dans l'état final.
+      // Sans ça, la compaction peut libérer un créneau sans re-tenter les non-placés,
+      // et l'élève serait faussement classé conflit alors que son slot est libre.
+      let aCollisionReelle = false
+      outer2:
+      for (const [jour, slots] of Object.entries(avail)) {
+        if (!Array.isArray(slots)) continue
+        for (let i = 0; i <= slots.length - targetSlots; i++) {
+          let okC = true
+          for (let j = 1; j < targetSlots; j++) {
+            if (timeToMinutes(parseStartTime(slots[i + j])) !== timeToMinutes(parseStartTime(slots[i + j - 1])) + 15) { okC = false; break }
+          }
+          if (!okC) continue
+          const fenStart = timeToMinutes(parseStartTime(slots[i]))
+          const fenEnd   = fenStart + targetMin
+          if (coursPlaces.some((c) => c.day === jour && fenStart < c.endMin && fenEnd > c.startMin)) {
+            aCollisionReelle = true; break outer2
+          }
+        }
+      }
+
+      if (!aCollisionReelle) return { r, motif: 'sans-slot-compatible' }
       return { r, motif: 'conflit' }
     })
 
-    const conflits    = nonPlacesAvecMotif.filter((x) => x.motif === 'conflit')
-    const sansDispos  = nonPlacesAvecMotif.filter((x) => x.motif === 'sans-disponibilites')
-    const dureeIncomp = nonPlacesAvecMotif.filter((x) => x.motif === 'duree-incompatible')
+    const conflits         = nonPlacesAvecMotif.filter((x) => x.motif === 'conflit')
+    const sansSlotCompat   = nonPlacesAvecMotif.filter((x) => x.motif === 'sans-slot-compatible')
+    const sansDispos       = nonPlacesAvecMotif.filter((x) => x.motif === 'sans-disponibilites')
+    const dureeIncomp      = nonPlacesAvecMotif.filter((x) => x.motif === 'duree-incompatible')
 
     return {
       total: responses.length, places: places.length,
       nonPlaces, nonPlacesCount: nonPlaces.length,
-      nonPlacesAvecMotif, conflits, sansDispos, dureeIncomp,
+      nonPlacesAvecMotif, conflits, sansDispos, dureeIncomp, sansSlotCompat,
     }
   }, [responses, proposalsMap, proposalOverrides])
 
@@ -1034,7 +1064,13 @@ export default function SchedulingAssistantPage() {
    * Déplaçables : un drag-and-drop vers un créneau libre crée un proposalOverride.
    */
   const conflictLessons = useMemo(() => {
-    if (!showConflicts || statsPlacement.nonPlaces.length === 0) return []
+    // Vrais conflits : affichés seulement si showConflicts est actif.
+    // Sans-slot-compatible : le créneau est libre (compaction a bougé l'occupant)
+    //   → restent toujours visibles pour que "Masquer les conflits" ne les cache pas.
+    const conflitsR      = showConflicts ? (statsPlacement.conflits ?? []).map((x) => x.r) : []
+    const sansSlotR      = (statsPlacement.sansSlotCompat ?? []).map((x) => x.r)
+    const nonPlacesAffiches = [...conflitsR, ...sansSlotR]
+    if (nonPlacesAffiches.length === 0) return []
 
     const isoParJour = {}
     for (const d of weekDays) {
@@ -1043,7 +1079,7 @@ export default function SchedulingAssistantPage() {
     }
 
     const result = []
-    for (const response of statsPlacement.nonPlaces) {
+    for (const response of nonPlacesAffiches) {
       const avail       = response.availabilities ?? {}
       const targetMin   = response.effective_duration_minutes || 30
       const targetSlots = Math.max(1, Math.round(targetMin / 15))
