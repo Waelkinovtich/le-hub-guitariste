@@ -1076,7 +1076,17 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           outline: isChevauchement ? '1px solid #f9731660' : isConflitSelected ? '2px solid #a855f7' : isGroupe ? '1px solid #10b98160' : isHorsDispo ? '1px solid #f9731660' : undefined,
                         }}
                       >
-                        <p className="text-[10px] font-semibold leading-tight truncate" style={{ color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isHorsDispo ? '#f97316' : color }}>
+                        {/* T4 — Clic sur le nom ouvre le contact ; stopPropagation empêche le drag */}
+                        <p
+                          className="text-[10px] font-semibold leading-tight truncate"
+                          style={{
+                            color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isHorsDispo ? '#f97316' : color,
+                            cursor: onViewStudent && lesson._studentId && !estSelectablePourGroupe ? 'pointer' : undefined,
+                          }}
+                          onPointerDown={onViewStudent && lesson._studentId && !estSelectablePourGroupe ? (e) => e.stopPropagation() : undefined}
+                          onClick={onViewStudent && lesson._studentId && !estSelectablePourGroupe ? (e) => { e.stopPropagation(); onViewStudent(lesson) } : undefined}
+                          title={onViewStudent && lesson._studentId && !estSelectablePourGroupe ? 'Voir les contacts' : undefined}
+                        >
                           {lesson.studentName || 'Élève'}
                         </p>
                         {slotCount >= 3 && (

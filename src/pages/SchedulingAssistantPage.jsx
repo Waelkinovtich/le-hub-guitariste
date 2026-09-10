@@ -572,11 +572,12 @@ export default function SchedulingAssistantPage() {
   const [freeMoveEnabled, setFreeMoveEnabled]   = useState(false)
   const [outsideAvailIds, setOutsideAvailIds]   = useState(() => new Set())  // Set<responseId>
   // État replié des panneaux secondaires (sessionStorage)
+  // T3 — repliés par défaut (=== 'true' : null → false quand sessionStorage vierge)
   const [chevauchOuvert, setChevauchOuvert] = useState(() => {
-    try { return sessionStorage.getItem('planning_chevauchemnt_open') !== 'false' } catch { return true }
+    try { return sessionStorage.getItem('planning_chevauchemnt_open') === 'true' } catch { return false }
   })
   const [listeCreneauxOuverte, setListeCreneauxOuverte] = useState(() => {
-    try { return sessionStorage.getItem('planning_liste_open') !== 'false' } catch { return true }
+    try { return sessionStorage.getItem('planning_liste_open') === 'true' } catch { return false }
   })
   // Fiche contact rapide d'un élève (T5)
   const [contactCard, setContactCard] = useState(null)  // { lesson, student: {...} } | null
@@ -2611,11 +2612,28 @@ export default function SchedulingAssistantPage() {
                             ? '1 élève placé hors de ses disponibilités déclarées :'
                             : `${horsDispo.length} élèves placés hors de leurs disponibilités déclarées :`}
                         </p>
-                        {horsDispo.map((r) => (
-                          <p key={r.id} className="opacity-80">
-                            • {[r.first_name, r.last_name].filter(Boolean).join(' ') || '?'}
-                          </p>
-                        ))}
+                        {horsDispo.map((r) => {
+                          const orig = originalProposalMap[r.id]
+                          const curr = proposalOverrides[r.id] ?? proposalsMap[r.id]?.[0]
+                          // Calcule l'écart en minutes si même jour (sinon affiche les deux créneaux)
+                          let ecartLabel = ''
+                          if (orig && curr) {
+                            const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
+                            if (orig.day === curr.day) {
+                              const diff = toMin(curr.startTime) - toMin(orig.startTime)
+                              ecartLabel = diff === 0
+                                ? ` — créneau inchangé (hors dispo déclarées)`
+                                : ` — ${diff > 0 ? '+' : ''}${diff} min par rapport au créneau demandé`
+                            } else {
+                              ecartLabel = ` — Demandé : ${orig.day} ${orig.startTime} → Actuel : ${curr.day} ${curr.startTime}`
+                            }
+                          }
+                          return (
+                            <p key={r.id} className="opacity-80">
+                              • {[r.first_name, r.last_name].filter(Boolean).join(' ') || '?'}{ecartLabel}
+                            </p>
+                          )
+                        })}
                         <p className="text-orange-300/70 mt-1">Vous pouvez quand même acter — vérifiez avec l'élève avant confirmation.</p>
                       </div>
                     ) : null

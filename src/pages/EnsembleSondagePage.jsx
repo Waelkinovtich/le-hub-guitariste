@@ -164,11 +164,25 @@ function StepInstrument({ data, onChange }) {
   return (
     <div className="space-y-5">
       <Field label="Instrument" required>
-        <select className={selectCls} value={data.instrument} onChange={set('instrument')}>
+        <select className={selectCls} value={data.instrument} onChange={(e) => onChange({ ...data, instrument: e.target.value, instrument_autre: '' })}>
           <option value="">Choisir…</option>
           {INSTRUMENTS_ENSEMBLE.map((i) => <option key={i} value={i}>{i}</option>)}
         </select>
       </Field>
+
+      {/* Champ de précision quand "Autre" est sélectionné */}
+      {data.instrument === 'Autre' && (
+        <Field label="Précisez votre instrument" required>
+          <input
+            className={inputCls}
+            type="text"
+            placeholder="ex : Mandoline, Ukulélé, Accordéon…"
+            value={data.instrument_autre}
+            onChange={(e) => onChange({ ...data, instrument_autre: e.target.value })}
+            autoFocus
+          />
+        </Field>
+      )}
 
       <Field label="Niveau indicatif" required>
         <div className="space-y-2">
@@ -318,7 +332,7 @@ const defaultForm = {
   prenom: '', nom: '', email: '', telephone: '',
   birth_year: '',
   est_deja_eleve: null,
-  instrument: '', niveau: '',
+  instrument: '', instrument_autre: '', niveau: '',
   annees_pratique: '',
   lecture_partition: null, lecture_tablature: null,
   solfege_rythmique: null, harmonie: null,
@@ -330,7 +344,7 @@ const defaultForm = {
 
 function validerEtape(stepId, form) {
   if (stepId === 'identite') return form.prenom.trim() && form.nom.trim() && form.est_deja_eleve !== null
-  if (stepId === 'instrument') return form.instrument && form.niveau
+  if (stepId === 'instrument') return form.instrument && form.niveau && (form.instrument !== 'Autre' || form.instrument_autre.trim())
   if (stepId === 'disponibilites') return Object.keys(form.availabilities).length > 0
   return true
 }
@@ -450,7 +464,8 @@ export default function EnsembleSondagePage() {
           birth_year:              form.birth_year ? parseInt(form.birth_year, 10) : null,
           est_deja_eleve:          form.est_deja_eleve,
           // Champs instrument/compétences : seulement pour les participants externes
-          instrument:              isExternal ? (form.instrument || null)    : null,
+          // Si "Autre", on stocke la précision saisie plutôt que le label générique
+          instrument:              isExternal ? (form.instrument === 'Autre' ? (form.instrument_autre.trim() || 'Autre') : (form.instrument || null)) : null,
           niveau:                  isExternal ? (form.niveau || null)        : null,
           annees_pratique:         isExternal ? (form.annees_pratique ? parseInt(form.annees_pratique, 10) : null) : null,
           lecture_partition:       isExternal ? (form.lecture_partition ?? null)  : null,
