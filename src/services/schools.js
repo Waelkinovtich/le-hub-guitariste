@@ -2,10 +2,24 @@ import { supabase } from '../lib/supabase'
 
 // ─── Champs de base ───────────────────────────────────────────────────────────
 
+// Toutes les colonnes nécessaires à l'affichage des écoles (notation, contrat, géo, tags).
+// Extrait pour lisibilité — pattern identique à LESSON_SELECT dans lessons.js.
+const SCHOOL_SELECT = [
+  'id', 'name', 'structure_type',
+  'current_weekly_hours', 'desired_weekly_hours',
+  'manual_priority_rating', 'premises_quality_rating', 'work_atmosphere_rating',
+  'student_engagement_rating', 'team_stability_rating', 'equipment_rating',
+  'growth_perspective_rating', 'parking_rating',
+  'contract_type', 'contract_start_date', 'contract_end_date',
+  'payment_smoothing', 'fixed_monthly_salary', 'hours_stability',
+  'access_restriction_type', 'manual_reliability_override', 'administrative_reliability_rating',
+  'latitude', 'longitude', 'tags',
+].join(', ')
+
 export async function fetchTeacherSchools(teacherId) {
   const { data, error } = await supabase
     .from('schools')
-    .select('id, name, structure_type, current_weekly_hours, desired_weekly_hours, manual_priority_rating, premises_quality_rating, work_atmosphere_rating, student_engagement_rating, team_stability_rating, equipment_rating, growth_perspective_rating, parking_rating, contract_type, contract_start_date, payment_smoothing, fixed_monthly_salary, hours_stability, access_restriction_type, manual_reliability_override, administrative_reliability_rating, latitude, longitude, tags, contract_end_date')
+    .select(SCHOOL_SELECT)
     .eq('teacher_id', teacherId)
     .order('name')
   if (error) throw new Error(error.message)

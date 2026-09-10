@@ -38,17 +38,19 @@ export async function deleteTemplate(id) {
   if (error) throw new Error(error.message)
 }
 
-// Remplace les variables {prenom}, {nom}, {ecole}, {jour}, {heure}, {duree}
-// par les données de l'élève fourni.
+// Remplace les variables {prenom}, {nom}, {ecole} par les données de l'élève fourni.
+// {jour}, {heure}, {duree} : déclarées dans l'UI mais non alimentées ici — à implémenter
+// quand la planification injectable sera disponible (ticket futur).
 export function applyVariables(content, student) {
   if (!content || !student) return content
   const map = {
     '{prenom}': student.firstName  ?? student.first_name  ?? '',
     '{nom}':    student.lastName   ?? student.last_name   ?? '',
     '{ecole}':  student.schoolName ?? student.school_name ?? '',
-    '{jour}':   '',
-    '{heure}':  '',
-    '{duree}':  '',
+    // Variables non encore implémentées — laissées intactes pour compatibilité future
+    '{jour}':   '{jour}',
+    '{heure}':  '{heure}',
+    '{duree}':  '{duree}',
   }
   return content.replace(/\{[^}]+\}/g, (match) => map[match] ?? match)
 }
