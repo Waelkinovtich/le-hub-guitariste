@@ -1,14 +1,14 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers, SlidersHorizontal, Trash2, Users, CheckCircle2 } from 'lucide-react'
+import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers, SlidersHorizontal, Trash2, Users, CheckCircle2, ChevronDown, ChevronUp, Phone, Mail, UserRound, ExternalLink, Edit2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
 import ScoreBadge from '../components/ScoreBadge'
 import WeekGridPlanning from '../components/WeekGridPlanning'
 import { computeAllProposals, computeProposals, scoreCandidate, parseStartTime, JOURS_FR, timeToMinutes, intersectionDisponibilitesCollectives } from '../utils/scoringCreneaux'
 import { currentSchoolYear } from '../services/schools'
-import { fetchReservedSlots } from '../services/reservedSlots'
+import { fetchReservedSlots, updateReservedSlot } from '../services/reservedSlots'
 
 // ─── Persistance de session (sessionStorage) ──────────────────────────────────
 // Conserve les ajustements manuels (glisser-déposer) entre les changements de vue,
@@ -305,18 +305,53 @@ function ProposalCard({ response, proposals, onConfirm, confirming, schools = []
  * Chaque groupe sélectionné est traité par le moteur exactement comme un élève individuel,
  * avec l'intersection des disponibilités de ses membres comme contrainte de placement.
  */
+// Clé sessionStorage pour l'état replié du panneau groupes
+const SESSION_KEY_GROUPES_OUVERT = 'planning_groupe_panel_open'
+
 function GroupCandidatSelector({ availableGroups, selectedGroupIds, onToggle, onConfirmerGroupe, groupProposalLessons }) {
   if (availableGroups.length === 0) return null
+
+  // Replié par défaut si jamais utilisé (première ouverture de la page)
+  const [ouvert, setOuvert] = useState(() => {
+    try { return sessionStorage.getItem(SESSION_KEY_GROUPES_OUVERT) === 'true' } catch { return false }
+  })
+
+  function toggleOuvert() {
+    setOuvert((v) => {
+      try { sessionStorage.setItem(SESSION_KEY_GROUPES_OUVERT, String(!v)) } catch {}
+      return !v
+    })
+  }
 
   // Groupes déjà placés par le moteur (ont une proposition visible dans la grille)
   const groupsPlaces = new Set(groupProposalLessons.map((l) => l._groupId))
 
   return (
-    <div className="glass-panel rounded-xl p-4 space-y-3 border border-emerald-500/20 bg-emerald-500/3">
-      <div className="flex items-center gap-2">
-        <Users className="w-4 h-4 text-emerald-400" />
-        <p className="text-sm font-medium text-emerald-400">Intégrer un groupe dans le calcul</p>
-      </div>
+    <div className="glass-panel rounded-xl border border-emerald-500/20 bg-emerald-500/3 overflow-hidden">
+      {/* En-tête cliquable pour replier/déplier */}
+      <button
+        type="button"
+        onClick={toggleOuvert}
+        className="w-full flex items-center justify-between gap-2 px-4 py-3 hover:bg-emerald-500/5 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Users className="w-4 h-4 text-emerald-400 shrink-0" />
+          <p className="text-sm font-medium text-emerald-400">
+            Intégrer un groupe dans le calcul
+            {selectedGroupIds.size > 0 && (
+              <span className="ml-2 text-xs font-normal text-emerald-400/70">
+                ({selectedGroupIds.size} sélectionné{selectedGroupIds.size > 1 ? 's' : ''})
+              </span>
+            )}
+          </p>
+        </div>
+        {ouvert
+          ? <ChevronUp className="w-3.5 h-3.5 text-emerald-400/70 shrink-0" />
+          : <ChevronDown className="w-3.5 h-3.5 text-emerald-400/70 shrink-0" />}
+      </button>
+
+      {ouvert && (
+      <div className="px-4 pb-4 space-y-3">
       <p className="text-xs text-muted-foreground">
         Les groupes sélectionnés participent au calcul automatique sur la base de la disponibilité collective de leurs membres.
       </p>
@@ -376,6 +411,8 @@ function GroupCandidatSelector({ availableGroups, selectedGroupIds, onToggle, on
         <p className="text-xs text-amber-400/80 italic">
           Aucun créneau commun trouvé pour les groupes sélectionnés. Vérifiez que les membres ont renseigné leurs disponibilités dans le sondage.
         </p>
+      )}
+      </div>
       )}
     </div>
   )
@@ -534,6 +571,16 @@ export default function SchedulingAssistantPage() {
   // Les propositions hors dispo sont signalées en orange (outsideAvailIds).
   const [freeMoveEnabled, setFreeMoveEnabled]   = useState(false)
   const [outsideAvailIds, setOutsideAvailIds]   = useState(() => new Set())  // Set<responseId>
+  // État replié des panneaux secondaires (sessionStorage)
+  const [chevauchOuvert, setChevauchOuvert] = useState(() => {
+    try { return sessionStorage.getItem('planning_chevauchemnt_open') !== 'false' } catch { return true }
+  })
+  const [listeCreneauxOuverte, setListeCreneauxOuverte] = useState(() => {
+    try { return sessionStorage.getItem('planning_liste_open') !== 'false' } catch { return true }
+  })
+  // Fiche contact rapide d'un élève (T5)
+  const [contactCard, setContactCard] = useState(null)  // { lesson, student: {...} } | null
+  const [contactLoading, setContactLoading] = useState(false)
 
   useEffect(() => {
     if (!user?.id) return
@@ -1023,6 +1070,17 @@ export default function SchedulingAssistantPage() {
       })
       .filter(Boolean)
   }, [responses, proposalsMap, proposalOverrides, weekDays])
+
+  // T6 — Map responseId → { day, startTime } de la proposition AUTO-ORIGINALE (avant override).
+  // Utilisée dans WeekGridPlanning pour afficher l'écart quand un élève est forcé hors dispo.
+  const originalProposalMap = useMemo(() => {
+    const m = {}
+    for (const r of responses) {
+      const base = proposalsMap[r.id]?.[0]
+      if (base) m[r.id] = { day: base.day, startTime: base.startTime }
+    }
+    return m
+  }, [responses, proposalsMap])
 
   /**
    * Cours de groupe proposés par le moteur (non encore persistés en DB).
@@ -1867,6 +1925,40 @@ export default function SchedulingAssistantPage() {
   }, [])
 
   /**
+   * T5 — Fiche contact rapide : charge les données élève depuis la table students
+   * et les affiche dans un panneau modal sans naviguer vers la fiche complète.
+   */
+  const handleShowContact = useCallback(async (lesson) => {
+    if (!lesson._studentId) return
+    setContactCard({ lesson, student: null })
+    setContactLoading(true)
+    try {
+      const { data } = await supabase
+        .from('students')
+        .select('id, first_name, last_name, email, phone, student_phone, parent1_name, parent1_phone, parent1_email, parent2_name, parent2_phone, parent2_email, school_name, level')
+        .eq('id', lesson._studentId)
+        .single()
+      setContactCard({ lesson, student: data ?? null })
+    } catch {
+      setContactCard({ lesson, student: null })
+    } finally {
+      setContactLoading(false)
+    }
+  }, [])
+
+  /**
+   * T7 — Édition d'un créneau réservé directement depuis la grille du Planning intelligent.
+   * Met à jour school_reserved_slots via updateReservedSlot puis rafraîchit reservedSlots local.
+   */
+  const handleEditReservedSlot = useCallback(async ({ id, jourSemaine, heureDebut, dureeMinutes, libelle }) => {
+    await updateReservedSlot({ id, jourSemaine, heureDebut, dureeMinutes, libelle })
+    // Mise à jour locale optimiste
+    setReservedSlots((prev) => prev.map((s) =>
+      s.id === id ? { ...s, jourSemaine, heureDebut, dureeMinutes, libelle } : s
+    ))
+  }, [])
+
+  /**
    * Transforme une proposition acceptée en série de cours hebdomadaires jusqu'à la fin de l'année scolaire.
    * Partagé entre vue liste et vue grille — les deux appellent cette même fonction.
    * Dans la vue grille, proposal = proposalOverrides[id] ?? proposalsMap[id][0],
@@ -2449,15 +2541,17 @@ export default function SchedulingAssistantPage() {
                 onMoveLesson={handleMoveProposal}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
-                onViewStudent={(lesson) => lesson._studentId && navigate(`/eleves/${lesson._studentId}`)}
+                onViewStudent={handleShowContact}
                 onDurationChange={handleDurationChange}
                 onDegrouper={handleDegrouper}
                 allowOverlap
                 outsideAvailIds={outsideAvailIds}
+                originalProposalMap={originalProposalMap}
                 conflictSelectedIds={conflictSelectedIds}
                 onToggleConflictSelect={showConflicts ? handleToggleConflictSelect : null}
                 cascadeEnabled={cascadeEnabled}
                 onCascadeRequest={handleCascadeRequest}
+                onEditReservedSlot={handleEditReservedSlot}
               />
 
               {/* ── Panneau "Acter ce planning" ──────────────────────────────── */}
@@ -2528,19 +2622,37 @@ export default function SchedulingAssistantPage() {
                   })()
                 )}
 
-                {/* Avertissement chevauchements non résolus */}
+                {/* T3 — Avertissement chevauchements repliable */}
                 {chevauchementsProvisoires.length > 0 && (
-                  <div className="px-3 py-2.5 rounded-xl bg-orange-500/10 border border-orange-500/25 text-xs text-orange-400 space-y-1">
-                    <p className="font-medium">
-                      {chevauchementsProvisoires.length === 1
-                        ? '1 chevauchement à résoudre avant de pouvoir acter :'
-                        : `${chevauchementsProvisoires.length} chevauchements à résoudre avant de pouvoir acter :`}
-                    </p>
-                    {chevauchementsProvisoires.map((c, i) => (
-                      <p key={i} className="opacity-80">
-                        • {c.a.studentName} et {c.b.studentName} — {c.a.lessonDate} {c.a.lessonTime}–{c.b.lessonTime}
-                      </p>
-                    ))}
+                  <div className="rounded-xl bg-orange-500/10 border border-orange-500/25 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChevauchOuvert((v) => {
+                          try { sessionStorage.setItem('planning_chevauchemnt_open', String(!v)) } catch {}
+                          return !v
+                        })
+                      }}
+                      className="w-full flex items-center justify-between px-3 py-2 text-xs text-orange-400 hover:bg-orange-500/5 transition-colors"
+                    >
+                      <span className="font-medium">
+                        {chevauchementsProvisoires.length === 1
+                          ? '1 chevauchement à résoudre avant de pouvoir acter'
+                          : `${chevauchementsProvisoires.length} chevauchements à résoudre avant de pouvoir acter`}
+                      </span>
+                      {chevauchOuvert
+                        ? <ChevronUp className="w-3.5 h-3.5 shrink-0" />
+                        : <ChevronDown className="w-3.5 h-3.5 shrink-0" />}
+                    </button>
+                    {chevauchOuvert && (
+                      <div className="px-3 pb-2.5 space-y-1 text-xs text-orange-400">
+                        {chevauchementsProvisoires.map((c, i) => (
+                          <p key={i} className="opacity-80">
+                            • {c.a.studentName} et {c.b.studentName} — {c.a.lessonDate} {c.a.lessonTime}–{c.b.lessonTime}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -2548,8 +2660,28 @@ export default function SchedulingAssistantPage() {
                   <p className="text-xs text-guitar-400 px-1">{actError}</p>
                 )}
 
+                {/* T4 — En-tête repliable de la liste des créneaux */}
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground font-medium">
+                    {responses.filter((r) => proposalOverrides[r.id] ?? proposalsMap[r.id]?.[0]).length} proposition{responses.filter((r) => proposalOverrides[r.id] ?? proposalsMap[r.id]?.[0]).length > 1 ? 's' : ''} — cochez pour acter
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setListeCreneauxOuverte((v) => {
+                        try { sessionStorage.setItem('planning_liste_open', String(!v)) } catch {}
+                        return !v
+                      })
+                    }}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {listeCreneauxOuverte ? 'Réduire' : 'Afficher'}
+                    {listeCreneauxOuverte ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+
                 {/* Une ligne par réponse : case à cocher + détails de la proposition */}
-                {responses.map((response) => {
+                {listeCreneauxOuverte && responses.map((response) => {
                   const override  = proposalOverrides[response.id]
                   const base      = proposalsMap[response.id]?.[0]
                   const proposal  = override ?? base
@@ -2623,6 +2755,119 @@ export default function SchedulingAssistantPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* T5 — Fiche contact rapide (modal inline, sans navigation) */}
+      {contactCard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button type="button" className="absolute inset-0 bg-void/80 backdrop-blur-sm" onClick={() => setContactCard(null)} />
+          <div className="relative w-full max-w-sm glass-panel rounded-2xl p-6 shadow-2xl border border-border space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold text-foreground">{contactCard.lesson.studentName}</p>
+                <p className="text-xs text-muted-foreground">{contactCard.lesson.schoolName ?? ''}</p>
+              </div>
+              <button type="button" onClick={() => setContactCard(null)} className="p-2 rounded-lg text-muted hover:text-foreground hover:bg-surface-overlay transition-colors">
+                ✕
+              </button>
+            </div>
+
+            {contactLoading ? (
+              <div className="flex items-center justify-center py-6 text-muted-foreground">
+                <Loader2 className="w-5 h-5 animate-spin" />
+              </div>
+            ) : contactCard.student ? (
+              <div className="space-y-3 text-sm">
+                {/* Contact direct élève */}
+                {(contactCard.student.student_phone || contactCard.student.phone || contactCard.student.email) && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs text-muted font-medium uppercase tracking-wider">Élève</p>
+                    {(contactCard.student.student_phone || contactCard.student.phone) && (
+                      <a href={`tel:${contactCard.student.student_phone || contactCard.student.phone}`}
+                         className="flex items-center gap-2 text-guitar-400 hover:underline">
+                        <Phone className="w-3.5 h-3.5 shrink-0" />
+                        {contactCard.student.student_phone || contactCard.student.phone}
+                      </a>
+                    )}
+                    {contactCard.student.email && (
+                      <a href={`mailto:${contactCard.student.email}`}
+                         className="flex items-center gap-2 text-guitar-400 hover:underline">
+                        <Mail className="w-3.5 h-3.5 shrink-0" />
+                        {contactCard.student.email}
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {/* Parent 1 */}
+                {(contactCard.student.parent1_name || contactCard.student.parent1_phone || contactCard.student.parent1_email) && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs text-muted font-medium uppercase tracking-wider">
+                      {contactCard.student.parent1_name || 'Parent 1'}
+                    </p>
+                    {contactCard.student.parent1_phone && (
+                      <a href={`tel:${contactCard.student.parent1_phone}`}
+                         className="flex items-center gap-2 text-guitar-400 hover:underline">
+                        <Phone className="w-3.5 h-3.5 shrink-0" />
+                        {contactCard.student.parent1_phone}
+                      </a>
+                    )}
+                    {contactCard.student.parent1_email && (
+                      <a href={`mailto:${contactCard.student.parent1_email}`}
+                         className="flex items-center gap-2 text-guitar-400 hover:underline">
+                        <Mail className="w-3.5 h-3.5 shrink-0" />
+                        {contactCard.student.parent1_email}
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {/* Parent 2 */}
+                {(contactCard.student.parent2_name || contactCard.student.parent2_phone || contactCard.student.parent2_email) && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs text-muted font-medium uppercase tracking-wider">
+                      {contactCard.student.parent2_name || 'Parent 2'}
+                    </p>
+                    {contactCard.student.parent2_phone && (
+                      <a href={`tel:${contactCard.student.parent2_phone}`}
+                         className="flex items-center gap-2 text-guitar-400 hover:underline">
+                        <Phone className="w-3.5 h-3.5 shrink-0" />
+                        {contactCard.student.parent2_phone}
+                      </a>
+                    )}
+                    {contactCard.student.parent2_email && (
+                      <a href={`mailto:${contactCard.student.parent2_email}`}
+                         className="flex items-center gap-2 text-guitar-400 hover:underline">
+                        <Mail className="w-3.5 h-3.5 shrink-0" />
+                        {contactCard.student.parent2_email}
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {!contactCard.student.email && !contactCard.student.phone && !contactCard.student.student_phone &&
+                 !contactCard.student.parent1_phone && !contactCard.student.parent1_email &&
+                 !contactCard.student.parent2_phone && !contactCard.student.parent2_email && (
+                  <p className="text-xs text-muted-foreground italic">Aucune coordonnée enregistrée dans la fiche élève.</p>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">Fiche élève introuvable (student_id manquant).</p>
+            )}
+
+            {/* Lien vers la fiche complète */}
+            {contactCard.lesson._studentId && (
+              <button
+                type="button"
+                onClick={() => { setContactCard(null); navigate(`/eleves/${contactCard.lesson._studentId}`) }}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-border-subtle text-xs text-muted-foreground hover:text-foreground hover:border-border transition-all"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Ouvrir la fiche complète
+              </button>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )

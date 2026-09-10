@@ -1,5 +1,5 @@
 import { useRef, useState, useMemo, useCallback, useEffect } from 'react'
-import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X, Scissors, AlertTriangle } from 'lucide-react'
+import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X, Scissors, AlertTriangle, Edit2 } from 'lucide-react'
 import { updateLesson } from '../services/lessons'
 import { getSchoolColor, SCHOOL_COLOR_DEFAULT } from '../utils/schoolColors'
 import DeleteLessonModal from './DeleteLessonModal'
@@ -14,7 +14,10 @@ const START_HOUR     = 8
 const END_HOUR       = 22
 const TOTAL_SLOTS    = (END_HOUR - START_HOUR) * 4  // 56 créneaux de 15 min
 const SLOT_H         = 18                            // px par créneau en vue semaine
-const SLOT_H_JOUR    = 32                            // px par créneau en vue jour (plus lisible)
+// Vue jour : slotH calculé dynamiquement pour que 9h-21h tienne sans scroller (voir useEffect)
+const SLOT_H_JOUR_MIN = 12                           // px minimum en vue jour pour rester lisible
+// Overhead interne au composant (barre Semaine/Jour + en-têtes jours + marges)
+const GRID_INTERNAL_OVERHEAD_PX = 120
 const MOVE_THRESHOLD = 10                            // px avant activation du déplacement
 const CESU_COLOR     = '#3b82f6'                     // bleu fixe pour cours particuliers
 const RESERVED_OPACITY = 0.85                        // opacité du fond hachuré des créneaux réservés
@@ -259,6 +262,123 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
   )
 }
 
+// ─── Panneau d'édition créneau réservé (T7) ──────────────────────────────────
+
+const JOURS_SEMAINE = [
+  { value: 1, label: 'Lundi' },
+  { value: 2, label: 'Mardi' },
+  { value: 3, label: 'Mercredi' },
+  { value: 4, label: 'Jeudi' },
+  { value: 5, label: 'Vendredi' },
+  { value: 6, label: 'Samedi' },
+  { value: 0, label: 'Dimanche' },
+]
+
+function ReservedSlotEditPanel({ slot, onClose, onSaved }) {
+  const [jourSemaine,   setJourSemaine]   = useState(slot.jourSemaine)
+  const [heureDebut,    setHeureDebut]    = useState(slot.heureDebut)
+  const [dureeMinutes,  setDureeMinutes]  = useState(slot.dureeMinutes)
+  const [libelle,       setLibelle]       = useState(slot.libelle ?? '')
+  const [saving,        setSaving]        = useState(false)
+  const [error,         setError]         = useState(null)
+
+  async function handleSave() {
+    setSaving(true)
+    setError(null)
+    try {
+      await onSaved({ id: slot.id, jourSemaine, heureDebut, dureeMinutes: Number(dureeMinutes), libelle })
+    } catch (e) {
+      setError(e.message ?? 'Erreur lors de la sauvegarde')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onPointerDown={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="glass-panel rounded-2xl border border-border-subtle p-6 w-full max-w-sm mx-4 shadow-2xl space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-foreground">Modifier le créneau réservé</h3>
+          <button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-surface-overlay text-muted-foreground">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Libellé</label>
+            <input
+              type="text"
+              value={libelle}
+              onChange={(e) => setLibelle(e.target.value)}
+              placeholder="Ex : Intervention école"
+              className="w-full px-3 py-2 rounded-xl border border-border-subtle bg-surface-overlay text-sm focus:outline-none focus:ring-2 focus:ring-guitar-500/40"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Jour</label>
+            <select
+              value={jourSemaine}
+              onChange={(e) => setJourSemaine(Number(e.target.value))}
+              className="w-full px-3 py-2 rounded-xl border border-border-subtle bg-surface-overlay text-sm focus:outline-none focus:ring-2 focus:ring-guitar-500/40"
+            >
+              {JOURS_SEMAINE.map((j) => (
+                <option key={j.value} value={j.value}>{j.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Heure de début</label>
+              <input
+                type="time"
+                value={heureDebut}
+                onChange={(e) => setHeureDebut(e.target.value)}
+                step="900"
+                className="w-full px-3 py-2 rounded-xl border border-border-subtle bg-surface-overlay text-sm focus:outline-none focus:ring-2 focus:ring-guitar-500/40"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Durée (min)</label>
+              <select
+                value={dureeMinutes}
+                onChange={(e) => setDureeMinutes(Number(e.target.value))}
+                className="w-full px-3 py-2 rounded-xl border border-border-subtle bg-surface-overlay text-sm focus:outline-none focus:ring-2 focus:ring-guitar-500/40"
+              >
+                {[15, 30, 45, 60, 75, 90, 105, 120].map((d) => (
+                  <option key={d} value={d}>{d} min</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {error && <p className="text-xs text-red-400">{error}</p>}
+        </div>
+
+        <div className="flex gap-3 pt-1">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="flex-1 px-4 py-2.5 rounded-xl bg-guitar-600 hover:bg-guitar-500 disabled:opacity-50 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
+          >
+            {saving && <Loader2 className="w-3 h-3 animate-spin" />}
+            Enregistrer
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
+          >
+            Annuler
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Composant principal ──────────────────────────────────────────────────────
 
 /**
@@ -294,7 +414,7 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
 // cascadeEnabled : quand true, un dépôt sur une proposition déplaçable déclenche onCascadeRequest.
 // onCascadeRequest(displacedLesson, newDay, newTime, durationMinutes) : intercepte le DnD
 //   pour que le parent recalcule un créneau alternatif pour la leçon déplacée.
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, onDegrouper = null, allowOverlap = false, outsideAvailIds = null, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null }) {
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, onDegrouper = null, allowOverlap = false, outsideAvailIds = null, originalProposalMap = null, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null, onEditReservedSlot = null }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -303,6 +423,14 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
 
   // ── Vue : 'semaine' (grille 7 colonnes) ou 'jour' (colonne unique) ────────
   const [vueMode,   setVueMode]   = useState('semaine')
+
+  // Hauteur de fenêtre — recalculée au resize pour adapter slotH en vue jour
+  const [windowH, setWindowH] = useState(() => window.innerHeight)
+  useEffect(() => {
+    const handler = () => setWindowH(window.innerHeight)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [])
   // Index du jour actif dans weekDays (0 = premier jour de la semaine).
   // Initialisé sur "aujourd'hui" s'il est dans la semaine, sinon sur le premier jour.
   const [jourIdx, setJourIdx] = useState(() => {
@@ -317,8 +445,17 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
 
   // Jours effectivement affichés : tous en mode semaine, un seul en mode jour.
   const activeDays = vueMode === 'jour' ? [weekDays[jourIdx] ?? weekDays[0]] : weekDays
-  // Hauteur d'un créneau selon la vue
-  const slotH = vueMode === 'jour' ? SLOT_H_JOUR : SLOT_H
+
+  // Hauteur d'un créneau :
+  // • Vue semaine : fixe (SLOT_H)
+  // • Vue jour    : calculée dynamiquement pour que 9h-21h (= 48 slots) tienne sans molette.
+  //   Le parent de WeekGridPlanning absorbe l'overhead externe (header page, bandeau, etc.).
+  //   On soustrait uniquement l'overhead interne au composant (barre vue + en-têtes jours).
+  const SLOTS_JOUR_CIBLE = (21 - 9) * 4  // 48 slots = plage 9h-21h
+  const slotHJour = vueMode === 'jour'
+    ? Math.max(SLOT_H_JOUR_MIN, Math.floor((windowH - GRID_INTERNAL_OVERHEAD_PX) / SLOTS_JOUR_CIBLE))
+    : SLOT_H
+  const slotH = vueMode === 'jour' ? slotHJour : SLOT_H
 
   // ── Refs ──────────────────────────────────────────────────────────────────
   const gridRef    = useRef(null)
@@ -342,6 +479,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
   const [deleteLessonItem,   setDeleteLessonItem]   = useState(null)
   // Proposition dont on modifie la durée depuis la grille (ouvre DurationEditPanel)
   const [durationEditLesson, setDurationEditLesson] = useState(null)
+  // T7 — Créneau réservé en cours d'édition (ouvre ReservedSlotEditPanel)
+  const [editingReservedSlot, setEditingReservedSlot] = useState(null)
 
   const lessonsByDay    = useMemo(() => groupByDay(localLessons), [localLessons])
   const reservedByDay   = useMemo(() => indexReservedByDay(reservedSlots, weekDays), [reservedSlots, weekDays])
@@ -682,8 +821,17 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
         ))}
       </div>
 
-      {/* Zone scrollable */}
-      <div className="overflow-y-auto" style={{ maxHeight: '60vh' }}>
+      {/* Zone scrollable.
+          En vue jour : hauteur exacte = totalH (pas de scroll), overscrollBehavior bloque la propagation.
+          En vue semaine : maxHeight 60vh + overscrollBehavior pour que la molette reste cantonnée
+          à la grille et ne remonte pas à la page parent. */}
+      <div
+        className="overflow-y-auto"
+        style={vueMode === 'jour'
+          ? { height: totalH, overflowY: 'hidden', overscrollBehavior: 'contain' }
+          : { maxHeight: '60vh', overscrollBehavior: 'contain' }
+        }
+      >
         <div
           ref={gridRef}
           className="grid cursor-crosshair"
@@ -745,15 +893,21 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         borderLeft:  `3px dashed ${rsColor}`,
                         borderTop:   `1px solid ${rsColor}30`,
                         pointerEvents: 'all',
-                        cursor: 'not-allowed',
+                        cursor: onEditReservedSlot ? 'pointer' : 'not-allowed',
                       }}
                       onPointerDown={(e) => e.stopPropagation()}
-                      title={`Réservé : ${rs.libelle || rs.schoolName || 'Intervention école'} (${rs.heureDebut}, ${rs.dureeMinutes} min)`}
+                      onClick={onEditReservedSlot ? () => setEditingReservedSlot(rs) : undefined}
+                      title={onEditReservedSlot ? `Cliquer pour modifier : ${rs.libelle || rs.schoolName || 'Réservé'}` : `Réservé : ${rs.libelle || rs.schoolName || 'Intervention école'} (${rs.heureDebut}, ${rs.dureeMinutes} min)`}
                     >
                       <div className="px-1 py-0.5 overflow-hidden h-full flex flex-col justify-start">
-                        <p className="text-[9px] font-semibold leading-tight truncate" style={{ color: rsColor, opacity: RESERVED_OPACITY }}>
-                          🔒 {rs.libelle || 'Réservé'}
-                        </p>
+                        <div className="flex items-center gap-1">
+                          <p className="text-[9px] font-semibold leading-tight truncate flex-1" style={{ color: rsColor, opacity: RESERVED_OPACITY }}>
+                            🔒 {rs.libelle || 'Réservé'}
+                          </p>
+                          {onEditReservedSlot && (
+                            <Edit2 className="w-2.5 h-2.5 shrink-0 opacity-50" style={{ color: rsColor }} />
+                          )}
+                        </div>
                         {rsSlots >= 3 && (
                           <p className="text-[8px] leading-tight opacity-60" style={{ color: rsColor }}>
                             {rs.heureDebut} · {rs.dureeMinutes} min
@@ -934,6 +1088,12 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         {isHorsDispo && slotCount >= 2 && (
                           <AlertTriangle className="w-2.5 h-2.5 shrink-0" style={{ color: '#f97316' }} aria-label="Hors disponibilités déclarées" />
                         )}
+                        {/* T6 — Écart entre slot forcé et proposition originale */}
+                        {isHorsDispo && originalProposalMap?.[lesson._responseId] && slotCount >= 3 && (
+                          <p className="text-[8px] leading-tight opacity-70" style={{ color: '#f97316' }}>
+                            ↔ {originalProposalMap[lesson._responseId].day} {originalProposalMap[lesson._responseId].startTime}
+                          </p>
+                        )}
                       </div>
 
                       {/* Actions rapides — masquées sur les tuiles éligibles au regroupement pour
@@ -989,8 +1149,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         </button>
                       )}
 
-                      {/* Fiche élève — masquée sur tuiles groupables pour éviter la superposition */}
-                      {onViewStudent && (isEnvisage || isConflit) && lesson._studentId && !estSelectablePourGroupe && (
+                      {/* Fiche élève — sur propositions et tuiles hors-dispo */}
+                      {onViewStudent && (isEnvisage || isConflit || isHorsDispo) && lesson._studentId && !estSelectablePourGroupe && (
                         <button
                           type="button"
                           aria-label="Voir la fiche élève"
@@ -1058,6 +1218,18 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
             // Le parent recalcule effective_duration_minutes et relance computeAllProposals
             onDurationChange?.(durationEditLesson, newMinutes)
             setDurationEditLesson(null)
+          }}
+        />
+      )}
+
+      {/* T7 — Panneau d'édition d'un créneau réservé (école) */}
+      {editingReservedSlot && (
+        <ReservedSlotEditPanel
+          slot={editingReservedSlot}
+          onClose={() => setEditingReservedSlot(null)}
+          onSaved={(updated) => {
+            onEditReservedSlot?.(updated)
+            setEditingReservedSlot(null)
           }}
         />
       )}

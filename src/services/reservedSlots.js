@@ -68,6 +68,20 @@ export async function createReservedSlot({ teacherId, schoolId, jourSemaine, heu
   return mapSlot(data)
 }
 
+/** Met à jour un créneau réservé depuis la grille Planning (T7). */
+export async function updateReservedSlot({ id, jourSemaine, heureDebut, dureeMinutes, libelle }) {
+  const { error } = await supabase
+    .from('school_reserved_slots')
+    .update({
+      jour_semaine:  jourSemaine,
+      heure_debut:   heureDebut,
+      duree_minutes: dureeMinutes,
+      libelle:       libelle ?? '',
+    })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
 /** Supprime un créneau réservé (par son id, RLS garantit l'appartenance). */
 export async function deleteReservedSlot(slotId) {
   const { error } = await supabase
