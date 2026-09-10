@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Mic, MicOff, Square, Download, Loader2, AlertCircle, Trash2 } from 'lucide-react'
+import { Mic, MicOff, Square, Download, Loader2, AlertCircle, Trash2, ClipboardList } from 'lucide-react'
 
 // ─── Helpers privés ───────────────────────────────────────────────────────────
 
@@ -27,16 +27,18 @@ function fmtTimestampForFilename(date) {
 
 /**
  * Dictée vocale réutilisable : bouton "Dicter", enregistrement MediaRecorder,
- * transcription Web Speech API en temps réel, lecteur audio + transcription
- * figée, téléchargement local. Audio strictement local — aucun envoi réseau.
+ * transcription Web Speech API affichée en temps réel dans sa propre zone,
+ * lecteur audio + transcription éditable après l'arrêt, téléchargement local.
+ * Audio strictement local — aucun envoi réseau.
  *
  * Props :
- *   onTranscription(text)   — appelé à chaque résultat de reconnaissance ; le
- *     parent branche ce callback sur son propre état de contenu.
- *   onActiveChange(isActive) — appelé quand l'état "en cours" change ; permet
- *     au parent de désactiver ses propres contrôles pendant la dictée.
+ *   onInsert(text)      — appelé quand l'utilisateur clique "Insérer dans mes notes" ;
+ *     le parent appende ce texte à son propre champ. La zone de saisie manuelle
+ *     n'est JAMAIS touchée automatiquement pendant l'enregistrement.
+ *   onActiveChange(bool) — appelé quand l'état "en cours" change ; permet au
+ *     parent de désactiver ses propres contrôles pendant la dictée.
  */
-export default function DicteeAudio({ onTranscription, onActiveChange }) {
+export default function DicteeAudio({ onInsert, onActiveChange }) {
   const [recording,  setRecording]  = useState(false)
   // true entre le clic sur "Arrêter" et la finalisation réelle du blob audio
   // (onstop est asynchrone — surtout sur Safari).
@@ -45,7 +47,9 @@ export default function DicteeAudio({ onTranscription, onActiveChange }) {
   const [elapsed,    setElapsed]    = useState(0)
   const [voiceError,    setVoiceError]    = useState('')
   const [playbackError, setPlaybackError] = useState('')
-  // Transcription figée à la finalisation du blob, distincte du flux live.
+  // Transcription en temps réel pendant l'enregistrement (state React → rendu).
+  const [liveTranscript,   setLiveTranscript]   = useState('')
+  // Transcription figée + éditable après la finalisation du blob.
   const [frozenTranscript, setFrozenTranscript] = useState(null)
 
   const recorderRef       = useRef(null)
@@ -53,7 +57,9 @@ export default function DicteeAudio({ onTranscription, onActiveChange }) {
   const recognitionRef    = useRef(null)
   const timerRef          = useRef(null)
   const streamRef         = useRef(null)
-  const liveTranscriptRef = useRef('')
+  // Accumulateur de texte reconnu : écrit depuis le callback SpeechRecognition
+  // (hors cycle React) pour éviter la closure sur liveTranscript.
+  const liveAccRef        = useRef('')
   const audioMimeTypeRef  = useRef('')
   const recordedAtRef     = useRef(null)
 
@@ -79,7 +85,8 @@ export default function DicteeAudio({ onTranscription, onActiveChange }) {
     setVoiceError('')
     setPlaybackError('')
     setFrozenTranscript(null)
-    liveTranscriptRef.current = ''
+    setLiveTranscript('')
+    liveAccRef.current = ''
     if (audioUrl) { URL.revokeObjectURL(audioUrl); setAudioUrl(null) }
     chunksRef.current = []
 
@@ -101,7 +108,7 @@ export default function DicteeAudio({ onTranscription, onActiveChange }) {
       setAudioUrl(URL.createObjectURL(blob))
       // Figé ici (finalisation réelle), pas au clic "Arrêter" : la reconnaissance
       // peut encore livrer un résultat tardif entre les deux (notamment Safari).
-      setFrozenTranscript(liveTranscriptRef.current)
+      setFrozenTranscript(liveAccRef.current || null)
       setProcessing(false)
     }
     rec.onerror = () => {
@@ -118,8 +125,10 @@ export default function DicteeAudio({ onTranscription, onActiveChange }) {
       r.interimResults = false
       r.onresult = (e) => {
         const text = Array.from(e.results).map((res) => res[0].transcript).join(' ')
-        onTranscription?.(text)
-        liveTranscriptRef.current = liveTranscriptRef.current ? `${liveTranscriptRef.current} ${text}` : text
+        // Accumule dans le ref (pas de closure stale) puis met à jour le state
+        // pour l'affichage en temps réel dans la zone "Transcription en cours".
+        liveAccRef.current = liveAccRef.current ? `${liveAccRef.current} ${text}` : text
+        setLiveTranscript(liveAccRef.current)
       }
       r.onend = () => {
         // Ne relancer que si l'instance est encore la courante (évite les doublons).
@@ -151,7 +160,8 @@ export default function DicteeAudio({ onTranscription, onActiveChange }) {
     setAudioUrl(null)
     setPlaybackError('')
     setFrozenTranscript(null)
-    liveTranscriptRef.current = ''
+    setLiveTranscript('')
+    liveAccRef.current = ''
   }
 
   const downloadRecording = () => {
@@ -189,20 +199,30 @@ export default function DicteeAudio({ onTranscription, onActiveChange }) {
       )}
 
       {recording && (
-        <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/20">
-          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
-          <span className="text-xs text-guitar-400 font-mono">{fmtElapsed(elapsed)}</span>
-          <span className="text-xs text-muted-foreground flex-1">
-            {hasSpeechRecognition ? 'Dictée en cours…' : 'Enregistrement en cours…'}
-          </span>
-          <button
-            type="button"
-            onClick={stopRecording}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-guitar-600/20 text-guitar-400 text-xs font-medium hover:bg-guitar-600/30 transition-colors"
-          >
-            <Square className="w-3 h-3" />
-            Arrêter
-          </button>
+        <div className="space-y-2">
+          <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/20">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+            <span className="text-xs text-guitar-400 font-mono">{fmtElapsed(elapsed)}</span>
+            <span className="text-xs text-muted-foreground flex-1">
+              {hasSpeechRecognition ? 'Dictée en cours…' : 'Enregistrement en cours…'}
+            </span>
+            <button
+              type="button"
+              onClick={stopRecording}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-guitar-600/20 text-guitar-400 text-xs font-medium hover:bg-guitar-600/30 transition-colors"
+            >
+              <Square className="w-3 h-3" />
+              Arrêter
+            </button>
+          </div>
+
+          {/* Zone de transcription en temps réel — visible dès le premier mot reconnu */}
+          {hasSpeechRecognition && liveTranscript && (
+            <div className="px-3 py-2.5 rounded-xl bg-surface border border-border-subtle">
+              <p className="text-xs font-medium text-muted-foreground mb-1">Transcription en cours…</p>
+              <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{liveTranscript}</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -225,12 +245,35 @@ export default function DicteeAudio({ onTranscription, onActiveChange }) {
             />
           </div>
 
+          {/* Zone de transcription éditable — l'utilisateur peut corriger les erreurs de reconnaissance */}
           <div className="px-3 py-2.5 rounded-xl bg-surface border border-border-subtle">
-            <p className="text-xs font-medium text-muted-foreground mb-1">Transcription</p>
-            <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-              {frozenTranscript || 'Aucune transcription disponible pour cet enregistrement.'}
-            </p>
+            <p className="text-xs font-medium text-muted-foreground mb-1.5">Transcription audio</p>
+            {frozenTranscript !== null ? (
+              <textarea
+                value={frozenTranscript}
+                onChange={e => setFrozenTranscript(e.target.value)}
+                rows={3}
+                className="w-full bg-transparent text-sm text-foreground placeholder:text-muted focus:outline-none resize-none leading-relaxed"
+                placeholder="Aucune transcription disponible pour cet enregistrement."
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground italic">
+                Aucune transcription disponible pour cet enregistrement.
+              </p>
+            )}
           </div>
+
+          {/* Insérer la transcription dans le champ notes — action explicite, jamais automatique */}
+          {onInsert && frozenTranscript && (
+            <button
+              type="button"
+              onClick={() => onInsert(frozenTranscript)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-guitar-600/30 bg-guitar-600/10 text-xs font-medium text-guitar-400 hover:bg-guitar-600/20 transition-all"
+            >
+              <ClipboardList className="w-3.5 h-3.5" />
+              Insérer la transcription dans mes notes
+            </button>
+          )}
 
           <div className="flex flex-wrap gap-2">
             <button

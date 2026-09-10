@@ -1,5 +1,5 @@
 import { useRef, useState, useMemo, useCallback, useEffect } from 'react'
-import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X, Scissors } from 'lucide-react'
+import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X, Scissors, AlertTriangle } from 'lucide-react'
 import { updateLesson } from '../services/lessons'
 import { getSchoolColor, SCHOOL_COLOR_DEFAULT } from '../utils/schoolColors'
 import DeleteLessonModal from './DeleteLessonModal'
@@ -294,7 +294,7 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
 // cascadeEnabled : quand true, un dépôt sur une proposition déplaçable déclenche onCascadeRequest.
 // onCascadeRequest(displacedLesson, newDay, newTime, durationMinutes) : intercepte le DnD
 //   pour que le parent recalcule un créneau alternatif pour la leçon déplacée.
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, onDegrouper = null, allowOverlap = false, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null }) {
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, onDegrouper = null, allowOverlap = false, outsideAvailIds = null, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -855,6 +855,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   const isBeingMoved = movePreview?.lessonId === lesson.id
                   // Chevauchement temporaire autorisé (mode Planning intelligent) → signalé en orange
                   const isChevauchement = idsEnChevauchement.has(lesson.id)
+                  // Hors des disponibilités déclarées (mode déplacement libre) → signalé en orange plein
+                  const isHorsDispo = !isChevauchement && !!(outsideAvailIds?.has(lesson._responseId))
                   // Leçon sélectionnée pour regroupement → bordure violette (conflit auto OU chevauchement manuel)
                   const isConflitSelected = (isConflit || isChevauchement) && conflictSelectedIds?.has(lesson._responseId)
                   // Éligible au regroupement : masquer TOUS les boutons d'action pour éviter toute
@@ -912,18 +914,25 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                             : isGroupe
                             // Vert émeraude plein : cours de groupe confirmé, remplace les conflits
                             ? '#10b98130'
+                            : isHorsDispo
+                            // Orange plein (non hachuré) : hors disponibilités déclarées (mode déplacement libre)
+                            ? '#f9731618'
                             : color + '30',
-                          borderLeft: `3px ${(isEnvisage || isConflit || isChevauchement) ? 'dashed' : 'solid'} ${isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : color}`,
-                          outline: isChevauchement ? '1px solid #f9731660' : isConflitSelected ? '2px solid #a855f7' : isGroupe ? '1px solid #10b98160' : undefined,
+                          borderLeft: `3px ${(isEnvisage || isConflit || isChevauchement) ? 'dashed' : 'solid'} ${isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isHorsDispo ? '#f97316' : color}`,
+                          outline: isChevauchement ? '1px solid #f9731660' : isConflitSelected ? '2px solid #a855f7' : isGroupe ? '1px solid #10b98160' : isHorsDispo ? '1px solid #f9731660' : undefined,
                         }}
                       >
-                        <p className="text-[10px] font-semibold leading-tight truncate" style={{ color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : color }}>
+                        <p className="text-[10px] font-semibold leading-tight truncate" style={{ color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isHorsDispo ? '#f97316' : color }}>
                           {lesson.studentName || 'Élève'}
                         </p>
                         {slotCount >= 3 && (
-                          <p className="text-[9px] leading-tight opacity-70" style={{ color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : color }}>
+                          <p className="text-[9px] leading-tight opacity-70" style={{ color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isHorsDispo ? '#f97316' : color }}>
                             {lesson.timeLabel} · {lesson.durationMinutes} min
                           </p>
+                        )}
+                        {/* Icône avertissement hors-dispo — mode déplacement libre */}
+                        {isHorsDispo && slotCount >= 2 && (
+                          <AlertTriangle className="w-2.5 h-2.5 shrink-0" style={{ color: '#f97316' }} aria-label="Hors disponibilités déclarées" />
                         )}
                       </div>
 

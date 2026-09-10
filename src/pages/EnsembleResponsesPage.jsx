@@ -1,63 +1,37 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Users, Music2, Check, Loader2, AlertCircle, ChevronDown, ChevronUp, Sparkles, X } from 'lucide-react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { Users, Music2, Check, Loader2, AlertCircle, ChevronDown, ChevronUp, Sparkles, X, Link, Search } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 
 // ─── Algorithme de suggestion de groupes ──────────────────────────────────────
 
-/**
- * Calcule les créneaux communs entre plusieurs participants.
- * availabilities : { "Lundi": ["09:00–09:30", ...], ... }
- * Retourne un tableau de { jour, slot } communs à TOUS les participants.
- */
 function creneauxCommuns(participants) {
   if (participants.length === 0) return []
-  // Commence par tous les créneaux du premier participant, puis intersecte
   const premier = participants[0].availabilities ?? {}
   const candidats = []
   for (const [jour, slots] of Object.entries(premier)) {
-    for (const slot of (slots ?? [])) {
-      candidats.push({ jour, slot })
-    }
+    for (const slot of (slots ?? [])) candidats.push({ jour, slot })
   }
   return candidats.filter(({ jour, slot }) =>
     participants.every((p) => (p.availabilities?.[jour] ?? []).includes(slot))
   )
 }
 
-/**
- * Regroupe les participants par disponibilités communes (au moins 1 créneau partagé).
- * Algorithme glouton : prend le premier participant non traité, cherche tous ceux
- * qui ont au moins 1 créneau en commun avec lui, forme un groupe.
- * Retourne un tableau de { membres: participant[], creneaux: {jour,slot}[] }.
- */
 function suggererGroupes(participants) {
   const nonTraites = [...participants]
   const groupes = []
-
   while (nonTraites.length > 0) {
     const pivot = nonTraites.shift()
     const groupe = [pivot]
     const restants = []
-
     for (const p of nonTraites) {
-      // Test si p partage au moins 1 créneau avec le pivot
-      const commun = creneauxCommuns([pivot, p])
-      if (commun.length > 0) {
-        groupe.push(p)
-      } else {
-        restants.push(p)
-      }
+      if (creneauxCommuns([pivot, p]).length > 0) groupe.push(p)
+      else restants.push(p)
     }
     nonTraites.length = 0
     nonTraites.push(...restants)
-
-    // Calcul des créneaux communs à TOUS les membres du groupe
-    const creneaux = creneauxCommuns(groupe)
-    groupes.push({ membres: groupe, creneaux })
+    groupes.push({ membres: groupe, creneaux: creneauxCommuns(groupe) })
   }
-
-  // Trie par taille de groupe décroissante (les plus gros groupes d'abord)
   return groupes.sort((a, b) => b.membres.length - a.membres.length)
 }
 
@@ -78,7 +52,7 @@ const STATUT_COLOR = {
 }
 const STATUT_LABEL = { attente: 'En attente', groupe: 'Intégré dans un groupe' }
 
-// ─── Panneau disponibilités d'un participant ──────────────────────────────────
+// ─── Panneau disponibilités ───────────────────────────────────────────────────
 
 function DisponibilitesDetail({ availabilities }) {
   const jours = Object.keys(availabilities ?? {})
@@ -90,9 +64,7 @@ function DisponibilitesDetail({ availabilities }) {
           <span className="text-xs font-medium text-muted-foreground w-20 shrink-0">{jour}</span>
           <div className="flex flex-wrap gap-1">
             {(availabilities[jour] ?? []).map((slot) => (
-              <span key={slot} className="text-xs px-1.5 py-0.5 rounded bg-surface-overlay border border-border-subtle">
-                {slot}
-              </span>
+              <span key={slot} className="text-xs px-1.5 py-0.5 rounded bg-surface-overlay border border-border-subtle">{slot}</span>
             ))}
           </div>
         </div>
@@ -101,32 +73,184 @@ function DisponibilitesDetail({ availabilities }) {
   )
 }
 
-// ─── Carte participant ─────────────────────────────────────────────────────────
+// ─── Badge compétence (oui/non/non renseigné) ────────────────────────────────
 
-function CarteParticipant({ reponse, showDispos }) {
+function BadgeCompetence({ label, value }) {
+  if (value === null || value === undefined) return null
+  return (
+    <span className={`text-xs px-1.5 py-0.5 rounded border ${
+      value ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-surface-overlay text-muted-foreground border-border-subtle'
+    }`}>
+      {value ? '✓' : '✗'} {label}
+    </span>
+  )
+}
+
+// ─── Carte participant ────────────────────────────────────────────────────────
+
+function CarteParticipant({ reponse, showDispos, onRapprocher }) {
   const p = reponse.ensemble_participants
   const nb = totalCreneaux(reponse.availabilities)
+  const estEleve = p?.est_deja_eleve === true
+  const dejaLie  = !!p?.student_id
+
   return (
     <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-border-subtle bg-surface-raised hover:border-border transition-colors">
       <div className="flex-1 min-w-0 space-y-1.5">
+        {/* Nom + statut */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-medium">{p?.prenom} {p?.nom}</span>
           <span className={`text-xs px-1.5 py-0.5 rounded border ${STATUT_COLOR[reponse.status] ?? ''}`}>
             {STATUT_LABEL[reponse.status] ?? reponse.status}
           </span>
+          {estEleve && (
+            <span className="text-xs px-1.5 py-0.5 rounded border bg-blue-500/10 text-blue-400 border-blue-500/20">
+              Déjà élève
+            </span>
+          )}
+          {dejaLie && (
+            <span className="text-xs px-1.5 py-0.5 rounded border bg-guitar-600/10 text-guitar-400 border-guitar-600/20">
+              ✓ Lié
+            </span>
+          )}
         </div>
+
+        {/* Infos de base */}
         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-          {p?.instrument && <span>🎸 {p.instrument}</span>}
-          {p?.niveau     && <span>📊 {p.niveau}</span>}
-          {p?.email      && <span>{p.email}</span>}
+          {p?.birth_year    && <span>🎂 {p.birth_year}</span>}
+          {p?.instrument    && <span>🎸 {p.instrument}</span>}
+          {p?.niveau        && <span>📊 {p.niveau}</span>}
+          {p?.annees_pratique != null && <span>{p.annees_pratique} an{p.annees_pratique > 1 ? 's' : ''} de pratique</span>}
+          {p?.email         && <span>{p.email}</span>}
           <span>📅 {fmtDate(reponse.submitted_at)}</span>
           <span>{nb} créneau{nb > 1 ? 'x' : ''}</span>
         </div>
+
+        {/* Compétences musicales (seulement pour les externes) */}
+        {!estEleve && (
+          <div className="flex flex-wrap gap-1">
+            <BadgeCompetence label="Partitions"      value={p?.lecture_partition} />
+            <BadgeCompetence label="Tablatures"      value={p?.lecture_tablature} />
+            <BadgeCompetence label="Solfège"         value={p?.solfege_rythmique} />
+            <BadgeCompetence label="Harmonie"        value={p?.harmonie} />
+            <BadgeCompetence label="Exp. groupe"     value={p?.experience_groupe} />
+            {p?.experience_groupe && p?.experience_groupe_duree && (
+              <span className="text-xs text-muted-foreground italic">{p.experience_groupe_duree}</span>
+            )}
+          </div>
+        )}
+
         {showDispos && (
           <div className="mt-2">
             <DisponibilitesDetail availabilities={reponse.availabilities} />
           </div>
         )}
+
+        {/* Action rapprochement pour les élèves déclarés */}
+        {estEleve && !dejaLie && (
+          <button
+            type="button"
+            onClick={() => onRapprocher(reponse)}
+            className="mt-1 flex items-center gap-1.5 text-xs text-guitar-400 hover:text-guitar-300 transition-colors"
+          >
+            <Link className="w-3 h-3" />
+            Rapprocher d'un élève existant
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Modale rapprochement ─────────────────────────────────────────────────────
+
+function ModaleRapprochement({ reponse, onClose, onLier }) {
+  const [query,    setQuery]    = useState('')
+  const [results,  setResults]  = useState([])
+  const [loading,  setLoading]  = useState(false)
+  const [saving,   setSaving]   = useState(false)
+  const p = reponse.ensemble_participants
+
+  const rechercher = useCallback(async (q) => {
+    if (!q.trim()) { setResults([]); return }
+    setLoading(true)
+    const { data } = await supabase
+      .from('students')
+      .select('id, prenom, nom, school_name')
+      .or(`prenom.ilike.%${q}%,nom.ilike.%${q}%`)
+      .limit(10)
+    setResults(data ?? [])
+    setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    const t = setTimeout(() => rechercher(query), 300)
+    return () => clearTimeout(t)
+  }, [query, rechercher])
+
+  async function handleLier(student) {
+    setSaving(true)
+    await onLier(reponse.ensemble_participants.id, student.id)
+    setSaving(false)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="glass-panel rounded-2xl p-6 w-full max-w-md space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-base">Rapprocher d'un élève existant</h3>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-overlay text-muted-foreground">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <p className="text-sm text-muted-foreground">
+          Participant : <strong>{p?.prenom} {p?.nom}</strong>
+          {p?.email && <span className="ml-1">({p.email})</span>}
+        </p>
+
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Rechercher par prénom ou nom…"
+            className="w-full pl-9 pr-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600 transition-colors"
+            autoFocus
+          />
+        </div>
+
+        <div className="min-h-[80px] space-y-1">
+          {loading && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="w-3 h-3 animate-spin" />Recherche…
+            </div>
+          )}
+          {!loading && query && results.length === 0 && (
+            <p className="text-xs text-muted-foreground">Aucun élève trouvé pour « {query} ».</p>
+          )}
+          {results.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              disabled={saving}
+              onClick={() => handleLier(s)}
+              className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-border-subtle bg-surface-raised hover:border-guitar-600/40 hover:bg-guitar-600/5 text-sm transition-all text-left disabled:opacity-50"
+            >
+              <span>
+                <span className="font-medium">{s.prenom} {s.nom}</span>
+                {s.school_name && <span className="ml-2 text-xs text-muted-foreground">{s.school_name}</span>}
+              </span>
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link className="w-3.5 h-3.5 text-guitar-400" />}
+            </button>
+          ))}
+        </div>
+
+        <button type="button" onClick={onClose}
+          className="w-full px-4 py-2 rounded-xl border border-border-subtle text-sm text-muted-foreground hover:border-border transition-colors">
+          Annuler
+        </button>
       </div>
     </div>
   )
@@ -136,7 +260,6 @@ function CarteParticipant({ reponse, showDispos }) {
 
 function ModaleValiderGroupe({ groupe, onClose, onValidate, saving }) {
   const [nom, setNom] = useState('')
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="glass-panel rounded-2xl p-6 w-full max-w-md space-y-4">
@@ -149,7 +272,7 @@ function ModaleValiderGroupe({ groupe, onClose, onValidate, saving }) {
 
         <p className="text-sm text-muted-foreground">
           Ce groupe ({groupe.membres.length} participants) sera créé dans <strong>Groupes & Répétitions</strong> avec
-          le type <em>Ensemble</em>. Les participants déjà élèves seront liés si possible.
+          le type <em>Ensemble</em>. Les participants déjà liés à un élève seront ajoutés.
         </p>
 
         <div className="space-y-1.5">
@@ -166,12 +289,17 @@ function ModaleValiderGroupe({ groupe, onClose, onValidate, saving }) {
 
         <div className="space-y-1">
           <p className="text-xs font-medium text-muted-foreground">Membres :</p>
-          {groupe.membres.map((m) => (
-            <p key={m.participant_id ?? m.id} className="text-xs text-foreground">
-              • {m.ensemble_participants?.prenom} {m.ensemble_participants?.nom}
-              {m.ensemble_participants?.instrument && ` — ${m.ensemble_participants.instrument}`}
-            </p>
-          ))}
+          {groupe.membres.map((m) => {
+            const p = m.ensemble_participants
+            return (
+              <p key={m.participant_id ?? m.id} className="text-xs text-foreground">
+                • {p?.prenom} {p?.nom}
+                {p?.instrument && ` — ${p.instrument}`}
+                {p?.student_id && <span className="text-guitar-400"> ✓ lié</span>}
+                {p?.est_deja_eleve && !p?.student_id && <span className="text-amber-400"> (élève non lié)</span>}
+              </p>
+            )
+          })}
         </div>
 
         {groupe.creneaux.length > 0 && (
@@ -183,9 +311,7 @@ function ModaleValiderGroupe({ groupe, onClose, onValidate, saving }) {
                   {jour} {slot}
                 </span>
               ))}
-              {groupe.creneaux.length > 8 && (
-                <span className="text-xs text-muted-foreground">+{groupe.creneaux.length - 8}</span>
-              )}
+              {groupe.creneaux.length > 8 && <span className="text-xs text-muted-foreground">+{groupe.creneaux.length - 8}</span>}
             </div>
           </div>
         )}
@@ -214,14 +340,15 @@ function ModaleValiderGroupe({ groupe, onClose, onValidate, saving }) {
 
 export default function EnsembleResponsesPage() {
   const { user } = useAuth()
-  const [reponses, setReponses] = useState([])
-  const [loading,  setLoading]  = useState(true)
-  const [erreur,   setErreur]   = useState(null)
-  const [showDispos, setShowDispos] = useState(false)
-  const [modeSuggestion, setModeSuggestion] = useState(false)
-  const [groupeAValider, setGroupeAValider] = useState(null)
-  const [saving, setSaving] = useState(false)
-  const [succesMsg, setSuccesMsg] = useState('')
+  const [reponses,        setReponses]        = useState([])
+  const [loading,         setLoading]         = useState(true)
+  const [erreur,          setErreur]          = useState(null)
+  const [showDispos,      setShowDispos]      = useState(false)
+  const [modeSuggestion,  setModeSuggestion]  = useState(false)
+  const [groupeAValider,  setGroupeAValider]  = useState(null)
+  const [saving,          setSaving]          = useState(false)
+  const [succesMsg,       setSuccesMsg]       = useState('')
+  const [rapprochement,   setRapprochement]   = useState(null) // reponse à rapprocher
 
   // ── Chargement ──────────────────────────────────────────────────────────────
 
@@ -232,7 +359,13 @@ export default function EnsembleResponsesPage() {
       setLoading(true)
       const { data, error } = await supabase
         .from('ensemble_responses')
-        .select('id, availabilities, submitted_at, status, participant_id, ensemble_participants(id, prenom, nom, email, telephone, instrument, niveau, student_id)')
+        .select(`id, availabilities, submitted_at, status, participant_id,
+          ensemble_participants(
+            id, prenom, nom, email, telephone, instrument, niveau, student_id,
+            birth_year, est_deja_eleve, annees_pratique,
+            lecture_partition, lecture_tablature, solfege_rythmique,
+            harmonie, experience_groupe, experience_groupe_duree
+          )`)
         .eq('teacher_id', user.id)
         .order('submitted_at', { ascending: false })
       if (!cancelled) {
@@ -245,9 +378,6 @@ export default function EnsembleResponsesPage() {
     return () => { cancelled = true }
   }, [user])
 
-  // ── Suggestions de groupes (Tâche 4) ───────────────────────────────────────
-
-  // Ne travaille que sur les réponses en 'attente' (non encore intégrées)
   const reponsesEnAttente = useMemo(
     () => reponses.filter((r) => r.status === 'attente'),
     [reponses],
@@ -258,51 +388,59 @@ export default function EnsembleResponsesPage() {
     [modeSuggestion, reponsesEnAttente],
   )
 
-  // ── Validation d'un groupe suggéré → music_groups + group_members ──────────
+  // ── Rapprochement : lier un participant à un élève existant ──────────────────
+
+  async function handleLier(participantId, studentId) {
+    const { error } = await supabase
+      .from('ensemble_participants')
+      .update({ student_id: studentId })
+      .eq('id', participantId)
+    if (error) { alert('Erreur : ' + error.message); return }
+    // Mise à jour locale sans rechargement
+    setReponses((prev) =>
+      prev.map((r) =>
+        r.ensemble_participants?.id === participantId
+          ? { ...r, ensemble_participants: { ...r.ensemble_participants, student_id: studentId } }
+          : r
+      )
+    )
+    setRapprochement(null)
+    setSuccesMsg('Participant lié à l\'élève avec succès.')
+    setTimeout(() => setSuccesMsg(''), 4000)
+  }
+
+  // ── Validation d'un groupe suggéré ──────────────────────────────────────────
 
   async function handleValiderGroupe(nomGroupe) {
     if (!groupeAValider || !nomGroupe.trim()) return
     setSaving(true)
     try {
-      // 1. Créer le groupe dans music_groups (type 'ensemble' déjà existant dans le projet)
       const { data: groupData, error: gErr } = await supabase
         .from('music_groups')
-        .insert({
-          teacher_id: user.id,
-          name:       nomGroupe.trim(),
-          type:       'ensemble',
-        })
+        .insert({ teacher_id: user.id, name: nomGroupe.trim(), type: 'ensemble' })
         .select('id')
         .single()
       if (gErr) throw gErr
 
-      // 2. Ajouter les membres dans group_members
-      //    student_id nullable : si le participant est aussi élève (student_id non null),
-      //    on le lie ; sinon on laisse null (participant externe).
-      const membresAInserer = groupeAValider.membres.map((r) => ({
-        group_id:   groupData.id,
-        student_id: r.ensemble_participants?.student_id ?? null,
-        // instrument du participant copié pour info dans le groupe
-        role:       r.ensemble_participants?.instrument ?? null,
-      })).filter((m) => m.student_id !== null) // group_members requiert student_id — on n'insère que les élèves liés
+      // Uniquement les membres déjà liés à un student_id (group_members l'exige)
+      const membresAInserer = groupeAValider.membres
+        .filter((r) => r.ensemble_participants?.student_id)
+        .map((r) => ({
+          group_id:   groupData.id,
+          student_id: r.ensemble_participants.student_id,
+          role:       r.ensemble_participants?.instrument ?? null,
+        }))
 
       if (membresAInserer.length > 0) {
         const { error: mErr } = await supabase.from('group_members').insert(membresAInserer)
         if (mErr) throw mErr
       }
 
-      // 3. Marquer les réponses correspondantes comme 'groupe'
       const ids = groupeAValider.membres.map((r) => r.id)
-      const { error: sErr } = await supabase
-        .from('ensemble_responses')
-        .update({ status: 'groupe' })
-        .in('id', ids)
+      const { error: sErr } = await supabase.from('ensemble_responses').update({ status: 'groupe' }).in('id', ids)
       if (sErr) throw sErr
 
-      // Mise à jour locale sans rechargement
-      setReponses((prev) =>
-        prev.map((r) => ids.includes(r.id) ? { ...r, status: 'groupe' } : r)
-      )
+      setReponses((prev) => prev.map((r) => ids.includes(r.id) ? { ...r, status: 'groupe' } : r))
       setSuccesMsg(`Groupe "${nomGroupe}" créé avec succès.`)
       setGroupeAValider(null)
       setModeSuggestion(false)
@@ -379,7 +517,7 @@ export default function EnsembleResponsesPage() {
         </div>
       )}
 
-      {/* ── Suggestions de groupes (Tâche 4) ─────────────────────────── */}
+      {/* ── Suggestions de groupes ─────────────────────────────────────── */}
       {modeSuggestion && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
@@ -393,10 +531,7 @@ export default function EnsembleResponsesPage() {
             suggestions.map((g, idx) => {
               if (g.membres.length < 2) return null
               return (
-                <div
-                  key={idx}
-                  className="rounded-xl border border-guitar-600/30 bg-guitar-600/5 p-4 space-y-3"
-                >
+                <div key={idx} className="rounded-xl border border-guitar-600/30 bg-guitar-600/5 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium">Groupe suggéré #{idx + 1}</p>
@@ -422,6 +557,7 @@ export default function EnsembleResponsesPage() {
                           <span className="font-medium">{p?.prenom} {p?.nom}</span>
                           {p?.instrument && <span className="text-muted-foreground">{p.instrument}</span>}
                           {p?.niveau && <span className="text-muted-foreground">· {p.niveau}</span>}
+                          {p?.student_id && <span className="text-guitar-400">✓ lié</span>}
                         </div>
                       )
                     })}
@@ -435,9 +571,7 @@ export default function EnsembleResponsesPage() {
                           {jour} {slot}
                         </span>
                       ))}
-                      {g.creneaux.length > 6 && (
-                        <span className="text-xs text-muted-foreground">+{g.creneaux.length - 6}</span>
-                      )}
+                      {g.creneaux.length > 6 && <span className="text-xs text-muted-foreground">+{g.creneaux.length - 6}</span>}
                     </div>
                   )}
                 </div>
@@ -445,7 +579,6 @@ export default function EnsembleResponsesPage() {
             })
           )}
 
-          {/* Participants sans groupe compatible */}
           {suggestions.filter((g) => g.membres.length < 2).length > 0 && (
             <div className="rounded-xl border border-border-subtle bg-surface-raised px-4 py-3">
               <p className="text-xs font-medium text-muted-foreground mb-2">Sans créneau commun avec d'autres :</p>
@@ -470,30 +603,42 @@ export default function EnsembleResponsesPage() {
         <div className="text-center py-12 space-y-2">
           <Music2 className="w-8 h-8 mx-auto text-muted-foreground/40" />
           <p className="text-sm text-muted-foreground">Aucune réponse reçue pour l'instant.</p>
-          <p className="text-xs text-muted-foreground">Créez des liens d'inscription dans "Liens d'inscription — Ensemble" et envoyez-les aux participants.</p>
+          <p className="text-xs text-muted-foreground">Créez des liens d'inscription dans "Liens — Ensemble" et envoyez-les aux participants.</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {reponses.length > 0 && (
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              <div className="rounded-xl border border-border-subtle bg-surface-raised px-4 py-3">
-                <p className="text-xs text-muted-foreground">En attente</p>
-                <p className="text-2xl font-semibold">{reponsesEnAttente.length}</p>
-              </div>
-              <div className="rounded-xl border border-border-subtle bg-surface-raised px-4 py-3">
-                <p className="text-xs text-muted-foreground">Intégrés</p>
-                <p className="text-2xl font-semibold">{reponses.filter((r) => r.status === 'groupe').length}</p>
-              </div>
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            <div className="rounded-xl border border-border-subtle bg-surface-raised px-4 py-3">
+              <p className="text-xs text-muted-foreground">En attente</p>
+              <p className="text-2xl font-semibold">{reponsesEnAttente.length}</p>
             </div>
-          )}
+            <div className="rounded-xl border border-border-subtle bg-surface-raised px-4 py-3">
+              <p className="text-xs text-muted-foreground">Intégrés</p>
+              <p className="text-2xl font-semibold">{reponses.filter((r) => r.status === 'groupe').length}</p>
+            </div>
+          </div>
 
           {reponses.map((r) => (
-            <CarteParticipant key={r.id} reponse={r} showDispos={showDispos} />
+            <CarteParticipant
+              key={r.id}
+              reponse={r}
+              showDispos={showDispos}
+              onRapprocher={setRapprochement}
+            />
           ))}
         </div>
       )}
 
-      {/* Modale de validation */}
+      {/* Modale rapprochement */}
+      {rapprochement && (
+        <ModaleRapprochement
+          reponse={rapprochement}
+          onClose={() => setRapprochement(null)}
+          onLier={handleLier}
+        />
+      )}
+
+      {/* Modale validation groupe */}
       {groupeAValider && (
         <ModaleValiderGroupe
           groupe={groupeAValider}

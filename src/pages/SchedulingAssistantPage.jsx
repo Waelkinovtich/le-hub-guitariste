@@ -530,6 +530,10 @@ export default function SchedulingAssistantPage() {
   const [selectedGroupIds, setSelectedGroupIds]       = useState(() => new Set())
   // Positions modifiées manuellement pour les cours de groupe proposés (non encore confirmés en DB)
   const [groupProposalOverrides, setGroupProposalOverrides] = useState({})  // groupId → { candidateDate, startTime, durationMinutes, day }
+  // Mode déplacement libre : autorise le dépôt hors des disponibilités déclarées de l'élève.
+  // Les propositions hors dispo sont signalées en orange (outsideAvailIds).
+  const [freeMoveEnabled, setFreeMoveEnabled]   = useState(false)
+  const [outsideAvailIds, setOutsideAvailIds]   = useState(() => new Set())  // Set<responseId>
 
   useEffect(() => {
     if (!user?.id) return
@@ -1310,27 +1314,34 @@ export default function SchedulingAssistantPage() {
     const slotsForDay    = avail[nomJour] ?? []
     const hasAvailability = Object.values(avail).some((s) => Array.isArray(s) && s.length > 0)
 
+    // Vérifie si le créneau est hors des disponibilités déclarées de l'élève.
+    let estHorsDispo = false
     if (hasAvailability && slotsForDay.length === 0) {
-      // L'élève n'est pas disponible ce jour-là du tout
-      throw new Error(`${response.first_name || 'Cet élève'} n'a déclaré aucune disponibilité le ${nomJour}.`)
-    }
-
-    if (hasAvailability && slotsForDay.length > 0) {
-      // Construire l'ensemble des minutes disponibles (chaque slot couvre 15 min)
+      estHorsDispo = true
+    } else if (hasAvailability && slotsForDay.length > 0) {
       const minutesDisponibles = new Set()
       for (const slot of slotsForDay) {
         const debut = timeToMinutes(parseStartTime(slot))
         for (let m = debut; m < debut + 15; m++) minutesDisponibles.add(m)
       }
-      // Vérifier que chaque tranche de 15 min du nouveau créneau est disponible
       const newStartMin = timeToMinutes(newTime)
       for (let m = newStartMin; m < newStartMin + durationMinutes; m += 15) {
-        if (!minutesDisponibles.has(m)) {
-          throw new Error(`Créneau non déclaré disponible par ${response.first_name || 'cet élève'} — déplacement annulé.`)
-        }
+        if (!minutesDisponibles.has(m)) { estHorsDispo = true; break }
       }
     }
-    // Si hasAvailability est false (aucune donnée), on laisse passer sans bloquer.
+
+    if (estHorsDispo && !freeMoveEnabled) {
+      // Mode normal : bloquer le déplacement hors disponibilités
+      throw new Error(`Créneau non déclaré disponible par ${response.first_name || 'cet élève'} — déplacement annulé. Activez « Déplacement libre » pour forcer.`)
+    }
+
+    // En mode déplacement libre, on track les IDs hors dispo pour signalisation orange.
+    setOutsideAvailIds((prev) => {
+      const next = new Set(prev)
+      if (estHorsDispo) next.add(responseId)
+      else next.delete(responseId)  // retour dans les dispos → retirer le signal
+      return next
+    })
 
     // ── Recalcul du score côté client ────────────────────────────────────────
     const finMin = timeToMinutes(newTime) + durationMinutes
@@ -1445,13 +1456,15 @@ export default function SchedulingAssistantPage() {
       // Première séance — récupère l'id pour pouvoir la modifier/supprimer plus tard
       let groupSessionId = null
       if (sessionDay && sessionTime) {
-        const { data: sessData } = await supabase.from('group_sessions').insert({
+        const { data: sessData, error: sessErr } = await supabase.from('group_sessions').insert({
           group_id:         groupId,
           session_date:     sessionDay,
           session_time:     sessionTime,
           duration_minutes: durationMinutes,
         }).select('id').single()
+        if (sessErr) throw new Error('Création de séance impossible : ' + sessErr.message)
         groupSessionId = sessData?.id ?? null
+        if (!groupSessionId) throw new Error('Séance créée mais id non retourné — vérifiez les permissions RLS sur group_sessions.')
       }
 
       // Marquer les réponses comme traitées
@@ -1579,11 +1592,21 @@ export default function SchedulingAssistantPage() {
    * → retrait de la sélection sans aucune requête DB.
    */
   const handleDegrouper = useCallback(async (lesson) => {
+    // Trace pour diagnostic — confirme que lesson porte bien les métadonnées nécessaires
+    console.log('[handleDegrouper] lesson reçu :', {
+      id: lesson.id,
+      _groupId: lesson._groupId,
+      _groupSessionId: lesson._groupSessionId,
+      _memberResponseIds: lesson._memberResponseIds,
+      planningStatus: lesson.planningStatus,
+    })
     if (!lesson._groupId) return
     // Groupe proposé non encore persisté → retrait local uniquement
     if (!lesson._groupSessionId) {
       setSelectedGroupIds((prev) => { const n = new Set(prev); n.delete(lesson._groupId); return n })
       setGroupProposalOverrides((prev) => { const n = { ...prev }; delete n[lesson._groupId]; return n })
+      // Retire aussi de existingLessons si le cours s'y trouve (cas : _groupSessionId=null après INSERT raté)
+      setExistingLessons((prev) => prev.filter((l) => l._groupId !== lesson._groupId))
       return
     }
     if (!window.confirm(`Dégrouper « ${lesson.studentName} » ?\nLa séance sera supprimée et les élèves retrouveront leur statut individuel.`)) return
@@ -1906,7 +1929,7 @@ export default function SchedulingAssistantPage() {
   }, [weekDays])
 
   return (
-    <div className="p-6 sm:p-8 max-w-5xl">
+    <div className="p-6 sm:p-8">
       <header className="mb-8">
         <div className="flex items-center gap-3 mb-2">
           <div className="w-10 h-10 rounded-xl bg-guitar-600/15 flex items-center justify-center">
@@ -2205,7 +2228,7 @@ export default function SchedulingAssistantPage() {
                     </div>
                   )}
 
-                  {/* Toggle cascade DnD (T2) */}
+                  {/* Toggle cascade DnD */}
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
@@ -2221,6 +2244,30 @@ export default function SchedulingAssistantPage() {
                     </button>
                     <HelpTooltip
                       texte="Quand activé, déplacer une proposition vers un créneau déjà occupé relogera automatiquement l'autre élève sur le meilleur créneau libre compatible. Si aucun créneau alternatif n'est trouvé, le déplacement est annulé silencieusement."
+                      position="bottom"
+                    />
+                  </div>
+
+                  {/* Toggle déplacement libre (T2) */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFreeMoveEnabled((v) => !v)
+                        // Réinitialiser les signaux hors-dispo quand on désactive le mode
+                        if (freeMoveEnabled) setOutsideAvailIds(new Set())
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                        freeMoveEnabled
+                          ? 'border-orange-500/40 bg-orange-500/10 text-orange-400'
+                          : 'border-border-subtle text-muted-foreground hover:text-foreground hover:border-border'
+                      }`}
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      {freeMoveEnabled ? 'Libre ON' : 'Dépl. libre'}
+                    </button>
+                    <HelpTooltip
+                      texte="Quand activé, vous pouvez déposer une proposition sur n'importe quel créneau — même hors des disponibilités déclarées par l'élève. Les tuiles hors dispo apparaissent en orange. Vous pouvez quand même acter le planning, mais une alerte vous en informera."
                       position="bottom"
                     />
                   </div>
@@ -2387,6 +2434,7 @@ export default function SchedulingAssistantPage() {
                 onDurationChange={handleDurationChange}
                 onDegrouper={handleDegrouper}
                 allowOverlap
+                outsideAvailIds={outsideAvailIds}
                 conflictSelectedIds={conflictSelectedIds}
                 onToggleConflictSelect={showConflicts ? handleToggleConflictSelect : null}
                 cascadeEnabled={cascadeEnabled}
@@ -2438,6 +2486,28 @@ export default function SchedulingAssistantPage() {
                     </button>
                   </div>
                 </div>
+
+                {/* Avertissement propositions hors disponibilités (mode déplacement libre) */}
+                {outsideAvailIds.size > 0 && selectedIds.size > 0 && (
+                  (() => {
+                    const horsDispo = responses.filter((r) => selectedIds.has(r.id) && outsideAvailIds.has(r.id))
+                    return horsDispo.length > 0 ? (
+                      <div className="px-3 py-2.5 rounded-xl bg-orange-500/10 border border-orange-500/25 text-xs text-orange-400 space-y-1">
+                        <p className="font-medium">
+                          ⚠ {horsDispo.length === 1
+                            ? '1 élève placé hors de ses disponibilités déclarées :'
+                            : `${horsDispo.length} élèves placés hors de leurs disponibilités déclarées :`}
+                        </p>
+                        {horsDispo.map((r) => (
+                          <p key={r.id} className="opacity-80">
+                            • {[r.first_name, r.last_name].filter(Boolean).join(' ') || '?'}
+                          </p>
+                        ))}
+                        <p className="text-orange-300/70 mt-1">Vous pouvez quand même acter — vérifiez avec l'élève avant confirmation.</p>
+                      </div>
+                    ) : null
+                  })()
+                )}
 
                 {/* Avertissement chevauchements non résolus */}
                 {chevauchementsProvisoires.length > 0 && (

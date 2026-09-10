@@ -339,16 +339,27 @@ function validerEtape(stepId, form) {
 
 export default function EnsembleSondagePage() {
   const { token } = useParams()
-  const [status,       setStatus]       = useState('loading')
-  const [tokenRow,     setTokenRow]     = useState(null)
-  const [scheduleJours, setScheduleJours] = useState(null) // null = chargement, [] = libre
-  const [stepIdx,      setStepIdx]      = useState(0)
-  const [form,         setForm]         = useState(defaultForm)
-  const [submitting,   setSubmitting]   = useState(false)
-  const [submitError,  setSubmitError]  = useState('')
+  const [status,          setStatus]          = useState('loading')
+  const [tokenRow,        setTokenRow]        = useState(null)
+  const [scheduleJours,   setScheduleJours]   = useState(null) // null = chargement, [] = libre
+  const [creneauxProposes, setCreneauxProposes] = useState(null) // null = non chargé / restriction absente
+  const [stepIdx,         setStepIdx]         = useState(0)
+  const [form,            setForm]            = useState(defaultForm)
+  const [submitting,      setSubmitting]       = useState(false)
+  const [submitError,     setSubmitError]     = useState('')
 
   // Étapes dynamiques selon est_deja_eleve
   const stepIds = useMemo(() => getStepIds(form.est_deja_eleve), [form.est_deja_eleve])
+
+  // Priorité : creneaux_proposes (restriction prof) > school_schedules > créneaux libres
+  // creneaux_proposes format : { "Mardi": ["17:00–17:30", ...] } (même structure qu'availabilities)
+  const effectiveScheduleJours = useMemo(() => {
+    if (creneauxProposes && Object.keys(creneauxProposes).length > 0) {
+      const rows = Object.entries(creneauxProposes).map(([day, slots]) => ({ day, slots }))
+      return trierLignesSchedule(rows)
+    }
+    return scheduleJours
+  }, [creneauxProposes, scheduleJours])
   const currentStepId = stepIds[stepIdx] ?? 'identite'
 
   // ── Validation du token + chargement emploi du temps ─────────────────────────
@@ -382,23 +393,33 @@ export default function EnsembleSondagePage() {
       setTokenRow(data)
       setStatus('valid')
 
-      // Phase 2 : chargement de l'emploi du temps — erreur non bloquante,
-      // on bascule simplement sur les créneaux libres en fallback.
+      // Phase 2 & 2b — non-bloquantes, lancées en parallèle après status='valid'
+
+      // Phase 2 : emploi du temps complet de l'école (fallback si aucun creneaux_proposes)
       if (data.school_name) {
-        try {
-          const { data: rows } = await supabase
-            .from('school_schedules')
-            .select('day, slots')
-            .eq('school_name', data.school_name)
-            .eq('school_year', CURRENT_YEAR)
-          setScheduleJours(trierLignesSchedule(rows ?? []))
-        } catch {
-          // Échec de lecture des créneaux d'école → fallback créneaux libres
-          setScheduleJours([])
-        }
+        supabase
+          .from('school_schedules')
+          .select('day, slots')
+          .eq('school_name', data.school_name)
+          .eq('school_year', CURRENT_YEAR)
+          .then(({ data: rows }) => setScheduleJours(trierLignesSchedule(rows ?? [])))
+          .catch(() => setScheduleJours([]))
       } else {
         setScheduleJours([]) // pas d'école liée → créneaux libres
       }
+
+      // Phase 2b : restriction de créneaux définie sur ce token par le professeur.
+      // SELECT séparé car creneaux_proposes n'existe qu'après migration-enrichissement-sondage-ensemble.sql.
+      // Erreur ignorée silencieusement (colonne absente pre-migration → comportement par défaut inchangé).
+      supabase
+        .from('ensemble_tokens')
+        .select('creneaux_proposes')
+        .eq('id', data.id)
+        .maybeSingle()
+        .then(({ data: cpRow }) => {
+          if (cpRow?.creneaux_proposes) setCreneauxProposes(cpRow.creneaux_proposes)
+        })
+        .catch(() => { /* colonne absente pre-migration — pas de restriction */ })
     }
     checkToken()
   }, [token])
@@ -528,7 +549,7 @@ export default function EnsembleSondagePage() {
   const stepContent = {
     identite:       <StepIdentite       data={form} onChange={setForm} />,
     instrument:     <StepInstrument     data={form} onChange={setForm} />,
-    disponibilites: <StepDisponibilites data={form} onChange={setForm} scheduleJours={scheduleJours} />,
+    disponibilites: <StepDisponibilites data={form} onChange={setForm} scheduleJours={effectiveScheduleJours} />,
   }
 
   return (

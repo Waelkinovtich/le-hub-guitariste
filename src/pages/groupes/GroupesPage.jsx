@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { Plus, Users, Music2, Trash2, CalendarDays } from 'lucide-react'
+import { Plus, Users, Music2, Trash2, CalendarDays, AlertTriangle, Loader2 } from 'lucide-react'
 import HelpTooltip from '../../components/HelpTooltip'
 import CreateGroupModal from './CreateGroupModal'
 import { usePeriod } from '../../context/PeriodContext'
@@ -21,6 +21,8 @@ export default function GroupesPage() {
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [counts, setCounts] = useState({})
+  const [deletingAll, setDeletingAll] = useState(false)
+  const [deleteAllError, setDeleteAllError] = useState('')
 
   useEffect(() => { fetchGroups() }, [])
 
@@ -50,6 +52,65 @@ export default function GroupesPage() {
     fetchGroups()
   }
 
+  /**
+   * Supprime TOUS les groupes de l'enseignant.
+   * Ordre : group_sessions → group_members → music_groups (respect des FK).
+   * Ne touche PAS aux survey_responses ni aux disponibilités des élèves.
+   * Remet les survey_responses des membres à 'attente' pour qu'elles réapparaissent dans le planning.
+   */
+  async function deleteAllGroups() {
+    // Confirmation forte : l'utilisateur doit taper "CONFIRMER"
+    const saisie = window.prompt(
+      `Supprimer les ${groups.length} groupe(s) et toutes leurs séances ?\n\n` +
+      `Les disponibilités et réponses au sondage des élèves ne seront PAS supprimées.\n` +
+      `Leurs statuts de planification seront remis à "en attente".\n\n` +
+      `Tapez CONFIRMER pour valider :`
+    )
+    if (saisie?.trim() !== 'CONFIRMER') return
+
+    setDeletingAll(true)
+    setDeleteAllError('')
+    try {
+      const groupIds = groups.map((g) => g.id)
+      if (groupIds.length === 0) return
+
+      // 1. Récupérer les student_ids des membres avant suppression
+      const { data: membersData } = await supabase
+        .from('group_members')
+        .select('student_id')
+        .in('group_id', groupIds)
+      const studentIds = [...new Set((membersData ?? []).map((m) => m.student_id).filter(Boolean))]
+
+      // 2. Supprimer séances (group_sessions) — d'abord pour respecter la FK
+      const { error: sessErr } = await supabase.from('group_sessions').delete().in('group_id', groupIds)
+      if (sessErr) throw new Error('Erreur suppression séances : ' + sessErr.message)
+
+      // 3. Supprimer les membres
+      const { error: membErr } = await supabase.from('group_members').delete().in('group_id', groupIds)
+      if (membErr) throw new Error('Erreur suppression membres : ' + membErr.message)
+
+      // 4. Supprimer les groupes
+      const { error: grpErr } = await supabase.from('music_groups').delete().in('id', groupIds)
+      if (grpErr) throw new Error('Erreur suppression groupes : ' + grpErr.message)
+
+      // 5. Remettre les réponses des membres à 'attente' (jamais 'confirme' — ça, c'est les cours individuels)
+      // On ne touche que les réponses en status 'planifie' liées à ces élèves.
+      if (studentIds.length > 0) {
+        await supabase
+          .from('survey_responses')
+          .update({ status: 'attente', assigned_day: null, assigned_time: null })
+          .in('student_id', studentIds)
+          .eq('status', 'planifie')
+      }
+
+      fetchGroups()
+    } catch (e) {
+      setDeleteAllError(e.message)
+    } finally {
+      setDeletingAll(false)
+    }
+  }
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
@@ -60,12 +121,31 @@ export default function GroupesPage() {
           </div>
           <p className="text-sm text-muted mt-1">Gérez vos cours collectifs, répétitions et ensembles</p>
         </div>
-        <button onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-guitar-600 text-white text-sm font-medium hover:bg-guitar-700 transition-all">
-          <Plus className="w-4 h-4" />
-          Nouveau groupe
-        </button>
+        <div className="flex items-center gap-2">
+          {groups.length > 0 && (
+            <button
+              onClick={deleteAllGroups}
+              disabled={deletingAll}
+              title="Supprime tous les groupes et remet les élèves en attente"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-red-500/30 text-red-400 text-sm font-medium hover:bg-red-500/10 disabled:opacity-40 transition-all"
+            >
+              {deletingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />}
+              Supprimer tous les groupes
+            </button>
+          )}
+          <button onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-guitar-600 text-white text-sm font-medium hover:bg-guitar-700 transition-all">
+            <Plus className="w-4 h-4" />
+            Nouveau groupe
+          </button>
+        </div>
       </div>
+
+      {deleteAllError && (
+        <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-400">
+          {deleteAllError}
+        </div>
+      )}
 
       {periodCtx.mode !== 'toutes' && (
         <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/20 text-xs text-guitar-400">
