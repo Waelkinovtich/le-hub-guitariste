@@ -1382,7 +1382,7 @@ export default function SchedulingAssistantPage() {
       ecrireSession(next, lockedIds)
       return next
     })
-  }, [responses, existingLessons, schools, teacherInfo, reservedSlots, lockedIds])
+  }, [responses, existingLessons, schools, teacherInfo, reservedSlots, lockedIds, freeMoveEnabled, outsideAvailIds])
 
   // ── Verrouillage / déverrouillage d'une proposition ────────────────────────
   const handleToggleLock = useCallback((responseId) => {
@@ -1626,26 +1626,45 @@ export default function SchedulingAssistantPage() {
         .eq('group_id', lesson._groupId)
       if (membErr) throw new Error(membErr.message)
 
-      // 3. Remettre les survey_responses à 'a_traiter'
+      // 3. Remettre les survey_responses à 'attente' (pas 'a_traiter' — non reconnu par statsPlacement)
       const memberIds = lesson._memberResponseIds ?? []
       if (memberIds.length > 0) {
         const { error: respErr } = await supabase
           .from('survey_responses')
-          .update({ status: 'a_traiter', assigned_day: null, assigned_time: null })
+          .update({ status: 'attente', assigned_day: null, assigned_time: null })
           .in('id', memberIds)
         if (respErr) throw new Error(respErr.message)
 
-        // 4. Remettre les réponses dans l'état local pour qu'elles réapparaissent
-        //    Reconstituer depuis _memberAvailabilities (snapshot stocké au moment du regroupement)
-        const membersToRestore = (lesson._memberAvailabilities ?? []).map((m) => ({
-          id:            m.responseId,
-          student_id:    m.studentId,
-          first_name:    m.firstName,
-          availabilities: m.availabilities,
-          status:        'a_traiter',
-          // Champs manquants volontairement non renseignés ici — un rechargement de page
-          // restituera toutes les données. Le snapshot partiel suffit pour l'affichage immédiat.
-        }))
+        // 4. Re-fetcher les réponses complètes depuis la DB (le snapshot de regroupement est partiel :
+        //    il manque school_name, desired_duration_minutes, last_name — champs critiques pour le scoring)
+        const { data: restoredRaw, error: fetchErr } = await supabase
+          .from('survey_responses')
+          .select('*')
+          .in('id', memberIds)
+        if (fetchErr) throw new Error(fetchErr.message)
+
+        // Enrichir avec effective_duration_minutes depuis student_contexts (même logique que load())
+        const studentIds = [...new Set((restoredRaw ?? []).map((r) => r.student_id).filter(Boolean))]
+        let contextsMap = {}
+        if (studentIds.length > 0) {
+          const { data: ctxData } = await supabase
+            .from('student_contexts')
+            .select('student_id, school_name, duree_cours_minutes')
+            .in('student_id', studentIds)
+          ;(ctxData ?? []).forEach((c) => {
+            const key = `${c.student_id}|${c.school_name ?? ''}`
+            contextsMap[key] = c.duree_cours_minutes
+          })
+        }
+
+        const membersToRestore = (restoredRaw ?? []).map((r) => {
+          const ctxKey = `${r.student_id ?? ''}|${r.school_name ?? ''}`
+          return {
+            ...r,
+            status: 'attente',
+            effective_duration_minutes: contextsMap[ctxKey] || r.desired_duration_minutes || 30,
+          }
+        })
         setResponses((prev) => [...prev, ...membersToRestore])
       }
 
