@@ -169,7 +169,7 @@ function SondagesDropdown({ badges = {} }) {
           <FileText className="w-4 h-4 shrink-0" />Messages &amp; Sondages
         </div>
         <div className="flex items-center gap-1.5">
-          {!open && badges.sondages > 0 && <NavBadge count={badges.sondages} />}
+          {!open && (badges.sondages > 0 || badges.ensemble > 0) && <NavBadge count={(badges.sondages || 0) + (badges.ensemble || 0)} />}
           {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
         </div>
       </button>
@@ -188,7 +188,10 @@ function SondagesDropdown({ badges = {} }) {
           <p className="px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
             Répétitions d'ensemble
           </p>
-          <SubSectionLinks links={sondageLinksEnsemble} />
+          <SubSectionLinks
+            links={sondageLinksEnsemble}
+            badgeFn={(link) => link.to === '/admin/ensemble/reponses' ? <NavBadge count={badges.ensemble} /> : null}
+          />
 
           {/* ── Divers ───────────────────────────────────────────────────── */}
           <p className="px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
@@ -250,7 +253,7 @@ function PlanningDropdown() {
 // Requêtes COUNT uniquement (head:true → aucune ligne transférée).
 // RLS garantit que chaque professeur ne voit que ses propres données.
 function useBadges(userId) {
-  const [badges, setBadges] = useState({ sondages: 0, rattrapage: 0 })
+  const [badges, setBadges] = useState({ sondages: 0, rattrapage: 0, ensemble: 0 })
 
   useEffect(() => {
     if (!userId) return
@@ -282,12 +285,20 @@ function useBadges(userId) {
           .eq('teacher_id', userId)
           .eq('status', 'annule_prof')
 
-        const [studentsResp, rattResp] = await Promise.all([studentsQ, rattrapageQ])
+        // Réponses ensemble en attente (non encore intégrées dans un groupe)
+        const ensembleQ = supabase
+          .from('ensemble_responses')
+          .select('id', { count: 'exact', head: true })
+          .eq('teacher_id', userId)
+          .eq('status', 'attente')
+
+        const [studentsResp, rattResp, ensembleResp] = await Promise.all([studentsQ, rattrapageQ, ensembleQ])
         if (cancelled) return
 
         setBadges({
-          sondages:   studentsResp.count ?? 0,
-          rattrapage: rattResp.count     ?? 0,
+          sondages:   studentsResp.count  ?? 0,
+          rattrapage: rattResp.count      ?? 0,
+          ensemble:   ensembleResp.count  ?? 0,
         })
       } catch { /* erreur réseau ignorée */ }
     })()

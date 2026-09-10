@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Users, Music2, Check, Loader2, AlertCircle, ChevronDown, ChevronUp, Sparkles, X, Link, Search } from 'lucide-react'
+import { Users, Music2, Check, Loader2, AlertCircle, ChevronDown, ChevronUp, Sparkles, X, Link, Search, Trash2, Eye } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 
@@ -88,14 +88,14 @@ function BadgeCompetence({ label, value }) {
 
 // ─── Carte participant ────────────────────────────────────────────────────────
 
-function CarteParticipant({ reponse, showDispos, onRapprocher }) {
+function CarteParticipant({ reponse, showDispos, onRapprocher, onVoirFiche }) {
   const p = reponse.ensemble_participants
   const nb = totalCreneaux(reponse.availabilities)
   const estEleve = p?.est_deja_eleve === true
   const dejaLie  = !!p?.student_id
 
   return (
-    <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-border-subtle bg-surface-raised hover:border-border transition-colors">
+    <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-border-subtle bg-surface-raised hover:border-border transition-colors cursor-pointer" onClick={() => onVoirFiche?.(reponse)} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onVoirFiche?.(reponse)}>
       <div className="flex-1 min-w-0 space-y-1.5">
         {/* Nom + statut */}
         <div className="flex items-center gap-2 flex-wrap">
@@ -146,11 +146,11 @@ function CarteParticipant({ reponse, showDispos, onRapprocher }) {
           </div>
         )}
 
-        {/* Action rapprochement pour les élèves déclarés */}
+        {/* Action rapprochement — stopPropagation pour ne pas ouvrir la fiche */}
         {estEleve && !dejaLie && (
           <button
             type="button"
-            onClick={() => onRapprocher(reponse)}
+            onClick={(e) => { e.stopPropagation(); onRapprocher(reponse) }}
             className="mt-1 flex items-center gap-1.5 text-xs text-guitar-400 hover:text-guitar-300 transition-colors"
           >
             <Link className="w-3 h-3" />
@@ -158,6 +158,8 @@ function CarteParticipant({ reponse, showDispos, onRapprocher }) {
           </button>
         )}
       </div>
+      {/* Indicateur "voir fiche" */}
+      <Eye className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-muted-foreground shrink-0 mt-0.5" />
     </div>
   )
 }
@@ -336,6 +338,120 @@ function ModaleValiderGroupe({ groupe, onClose, onValidate, saving }) {
   )
 }
 
+// ─── Fiche détail + Suppression ──────────────────────────────────────────────
+
+function FicheDetailReponse({ reponse, onClose, onSupprimer }) {
+  const p = reponse.ensemble_participants
+  const [confirmSuppr, setConfirmSuppr] = useState(false)
+  const [supprimant,   setSupprimant]   = useState(false)
+
+  async function handleSupprimer() {
+    setSupprimant(true)
+    await onSupprimer(reponse)
+    // onSupprimer ferme la fiche si succès (via setFicheOuverte(null))
+    setSupprimant(false)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onPointerDown={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="glass-panel rounded-2xl border border-border-subtle p-6 w-full max-w-lg space-y-5 overflow-y-auto max-h-[90vh]">
+        {/* En-tête */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-base">{p?.prenom} {p?.nom}</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Réponse reçue le {fmtDate(reponse.submitted_at)}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-overlay text-muted-foreground">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Statut */}
+        <span className={`inline-flex text-xs px-2 py-0.5 rounded border ${STATUT_COLOR[reponse.status] ?? ''}`}>
+          {STATUT_LABEL[reponse.status] ?? reponse.status}
+        </span>
+
+        {/* Identité */}
+        <section className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Identité</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+            {p?.email      && <span className="col-span-2 text-muted-foreground">{p.email}</span>}
+            {p?.telephone  && <span className="col-span-2 text-muted-foreground">{p.telephone}</span>}
+            {p?.birth_year && <span>Né·e en <strong>{p.birth_year}</strong></span>}
+            <span>{p?.est_deja_eleve ? '✓ Déjà élève' : 'Participant externe'}</span>
+          </div>
+        </section>
+
+        {/* Instrument & niveau (seulement pour les externes) */}
+        {!p?.est_deja_eleve && (
+          <section className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Instrument & Niveau</p>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+              {p?.instrument      && <span>🎸 {p.instrument}</span>}
+              {p?.niveau          && <span>📊 {p.niveau}</span>}
+              {p?.annees_pratique != null && <span>{p.annees_pratique} an{p.annees_pratique > 1 ? 's' : ''} de pratique</span>}
+            </div>
+            <div className="flex flex-wrap gap-1 mt-1">
+              <BadgeCompetence label="Partitions"  value={p?.lecture_partition} />
+              <BadgeCompetence label="Tablatures"  value={p?.lecture_tablature} />
+              <BadgeCompetence label="Solfège"     value={p?.solfege_rythmique} />
+              <BadgeCompetence label="Harmonie"    value={p?.harmonie} />
+              <BadgeCompetence label="Exp. groupe" value={p?.experience_groupe} />
+              {p?.experience_groupe && p?.experience_groupe_duree && (
+                <span className="text-xs text-muted-foreground italic">{p.experience_groupe_duree}</span>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Disponibilités */}
+        <section className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Disponibilités</p>
+          <DisponibilitesDetail availabilities={reponse.availabilities} />
+        </section>
+
+        {/* Actions */}
+        <div className="flex items-center justify-between pt-2 border-t border-border-subtle">
+          {!confirmSuppr ? (
+            <button
+              type="button"
+              onClick={() => setConfirmSuppr(true)}
+              className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Supprimer cette réponse
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-red-400">Supprimer définitivement ?</span>
+              <button
+                type="button"
+                onClick={handleSupprimer}
+                disabled={supprimant}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-600 text-white text-xs font-medium hover:bg-red-500 disabled:opacity-50 transition-colors"
+              >
+                {supprimant ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                Oui, supprimer
+              </button>
+              <button type="button" onClick={() => setConfirmSuppr(false)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                Annuler
+              </button>
+            </div>
+          )}
+          <button type="button" onClick={onClose} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+            Fermer
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Page principale ──────────────────────────────────────────────────────────
 
 export default function EnsembleResponsesPage() {
@@ -349,6 +465,7 @@ export default function EnsembleResponsesPage() {
   const [saving,          setSaving]          = useState(false)
   const [succesMsg,       setSuccesMsg]       = useState('')
   const [rapprochement,   setRapprochement]   = useState(null) // reponse à rapprocher
+  const [ficheOuverte,    setFicheOuverte]    = useState(null) // reponse dont la fiche est ouverte
 
   // ── Chargement ──────────────────────────────────────────────────────────────
 
@@ -407,6 +524,36 @@ export default function EnsembleResponsesPage() {
     setRapprochement(null)
     setSuccesMsg('Participant lié à l\'élève avec succès.')
     setTimeout(() => setSuccesMsg(''), 4000)
+  }
+
+  // ── Suppression d'une réponse ensemble (et du participant si aucune autre réponse) ──
+
+  async function handleSupprimer(reponse) {
+    const participantId = reponse.participant_id ?? reponse.ensemble_participants?.id
+    try {
+      // 1. Supprimer la réponse
+      const { error: rErr } = await supabase.from('ensemble_responses').delete().eq('id', reponse.id)
+      if (rErr) throw rErr
+
+      // 2. Vérifier si le participant a d'autres réponses avant de le supprimer
+      if (participantId) {
+        const { count } = await supabase
+          .from('ensemble_responses')
+          .select('id', { count: 'exact', head: true })
+          .eq('participant_id', participantId)
+        if (count === 0) {
+          // Aucune autre réponse — supprimer le participant orphelin
+          await supabase.from('ensemble_participants').delete().eq('id', participantId)
+        }
+      }
+
+      setReponses((prev) => prev.filter((r) => r.id !== reponse.id))
+      setFicheOuverte(null)
+      setSuccesMsg('Réponse supprimée.')
+      setTimeout(() => setSuccesMsg(''), 4000)
+    } catch (err) {
+      alert('Erreur lors de la suppression : ' + err.message)
+    }
   }
 
   // ── Validation d'un groupe suggéré ──────────────────────────────────────────
@@ -624,9 +771,19 @@ export default function EnsembleResponsesPage() {
               reponse={r}
               showDispos={showDispos}
               onRapprocher={setRapprochement}
+              onVoirFiche={setFicheOuverte}
             />
           ))}
         </div>
+      )}
+
+      {/* Fiche détail d'une réponse */}
+      {ficheOuverte && (
+        <FicheDetailReponse
+          reponse={ficheOuverte}
+          onClose={() => setFicheOuverte(null)}
+          onSupprimer={handleSupprimer}
+        />
       )}
 
       {/* Modale rapprochement */}

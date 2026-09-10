@@ -418,6 +418,141 @@ function GroupCandidatSelector({ availableGroups, selectedGroupIds, onToggle, on
   )
 }
 
+// ─── Candidats ensemble : blocs visuels dans la grille Planning intelligent ───
+
+const SESSION_KEY_ENSEMBLE_OUVERT = 'planning_ensemble_panel_open'
+const ENSEMBLE_COLOR = '#7c3aed'  // violet — distinct de emerald (groupe) et orange (conflit)
+
+/**
+ * Convertit les réponses ensemble sélectionnées en blocs de grille.
+ * Chaque tranche de créneaux contigus sur un jour donné → un bloc.
+ * Pur (pas d'effet de bord).
+ */
+function buildEnsembleLessons(selectedResponses, weekDays) {
+  const lessons = []
+  for (const r of selectedResponses) {
+    const p = r.ensemble_participants
+    const nom = p ? [p.prenom, p.nom].filter(Boolean).join(' ') : '?'
+    for (const day of weekDays) {
+      const nomJour = JOURS_FR[new Date(day.iso + 'T12:00:00').getDay()]
+      const slots = r.availabilities?.[nomJour] ?? []
+      if (slots.length === 0) continue
+      // Regroupe les créneaux contigus en blocs (gap > 15 min → nouveau bloc)
+      let blockStart = null, blockDuration = 0
+      function flush(start, dur) {
+        const h = Math.floor(start / 60), m = start % 60
+        const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+        lessons.push({
+          id: `ensemble-${r.id}-${day.iso}-${timeStr}`,
+          lessonDate: day.iso,
+          lessonTime: timeStr,
+          durationMinutes: dur,
+          studentName: nom,
+          planningStatus: 'ensemble',
+          nonMovable: true,
+          _ensembleResponseId: r.id,
+        })
+      }
+      for (const slot of slots) {
+        const [hh, mm] = slot.split('–')[0].split(':').map(Number)
+        const startMin = hh * 60 + mm
+        if (blockStart === null) {
+          blockStart = startMin; blockDuration = 15
+        } else if (startMin === blockStart + blockDuration) {
+          blockDuration += 15
+        } else {
+          flush(blockStart, blockDuration)
+          blockStart = startMin; blockDuration = 15
+        }
+      }
+      if (blockStart !== null) flush(blockStart, blockDuration)
+    }
+  }
+  return lessons
+}
+
+function EnsembleCandidatSelector({ ensembleReponses, selectedEnsembleIds, onToggle }) {
+  if (ensembleReponses.length === 0) return null
+
+  const [ouvert, setOuvert] = useState(() => {
+    try { return sessionStorage.getItem(SESSION_KEY_ENSEMBLE_OUVERT) === 'true' } catch { return false }
+  })
+  function toggleOuvert() {
+    setOuvert((v) => {
+      try { sessionStorage.setItem(SESSION_KEY_ENSEMBLE_OUVERT, String(!v)) } catch {}
+      return !v
+    })
+  }
+
+  return (
+    <div className="glass-panel rounded-xl overflow-hidden" style={{ border: `1px solid ${ENSEMBLE_COLOR}30`, background: `${ENSEMBLE_COLOR}05` }}>
+      <button
+        type="button"
+        onClick={toggleOuvert}
+        className="w-full flex items-center justify-between gap-2 px-4 py-3 transition-colors"
+        style={{ '--hover-bg': `${ENSEMBLE_COLOR}08` }}
+      >
+        <div className="flex items-center gap-2">
+          <Music2 className="w-4 h-4 shrink-0" style={{ color: ENSEMBLE_COLOR }} />
+          <p className="text-sm font-medium" style={{ color: ENSEMBLE_COLOR }}>
+            Visualiser les candidats ensemble
+            {selectedEnsembleIds.size > 0 && (
+              <span className="ml-2 text-xs font-normal opacity-70">
+                ({selectedEnsembleIds.size} affiché{selectedEnsembleIds.size > 1 ? 's' : ''})
+              </span>
+            )}
+          </p>
+        </div>
+        {ouvert
+          ? <ChevronUp className="w-3.5 h-3.5 shrink-0 opacity-60" style={{ color: ENSEMBLE_COLOR }} />
+          : <ChevronDown className="w-3.5 h-3.5 shrink-0 opacity-60" style={{ color: ENSEMBLE_COLOR }} />}
+      </button>
+
+      {ouvert && (
+        <div className="px-4 pb-4 space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Cochez un participant pour afficher ses disponibilités dans la grille — non définitif, juste pour visualiser.
+          </p>
+          <div className="space-y-1.5">
+            {ensembleReponses.map((r) => {
+              const p = r.ensemble_participants
+              const selected = selectedEnsembleIds.has(r.id)
+              const nb = Object.values(r.availabilities ?? {}).reduce((s, a) => s + (a?.length ?? 0), 0)
+              return (
+                <div
+                  key={r.id}
+                  className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-all cursor-pointer"
+                  style={{
+                    borderColor: selected ? `${ENSEMBLE_COLOR}50` : undefined,
+                    background: selected ? `${ENSEMBLE_COLOR}10` : undefined,
+                  }}
+                  onClick={() => onToggle(r.id)}
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{p?.prenom} {p?.nom}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {p?.instrument && `${p.instrument} · `}{nb} créneau{nb > 1 ? 'x' : ''}
+                    </p>
+                  </div>
+                  <div
+                    className="w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-all"
+                    style={{
+                      borderColor: selected ? ENSEMBLE_COLOR : undefined,
+                      background: selected ? ENSEMBLE_COLOR : undefined,
+                    }}
+                  >
+                    {selected && <Check className="w-2.5 h-2.5 text-white" />}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Panneau de regroupement en cours de groupe (T1) ─────────────────────────
 // Affiché quand l'utilisateur a sélectionné ≥ 2 leçons en conflit.
 // Permet de choisir un nom et une heure de départ avant de créer le groupe.
@@ -565,6 +700,9 @@ export default function SchedulingAssistantPage() {
   const [availableGroups, setAvailableGroups]         = useState([])
   // IDs des groupes sélectionnés par l'utilisateur pour les inclure dans le calcul
   const [selectedGroupIds, setSelectedGroupIds]       = useState(() => new Set())
+  // T1 — Réponses ensemble (status='attente') affichables en lecture seule dans la grille
+  const [ensembleReponses,    setEnsembleReponses]    = useState([])
+  const [selectedEnsembleIds, setSelectedEnsembleIds] = useState(() => new Set())
   // Positions modifiées manuellement pour les cours de groupe proposés (non encore confirmés en DB)
   const [groupProposalOverrides, setGroupProposalOverrides] = useState({})  // groupId → { candidateDate, startTime, durationMinutes, day }
   // Mode déplacement libre : autorise le dépôt hors des disponibilités déclarées de l'élève.
@@ -654,6 +792,17 @@ export default function SchedulingAssistantPage() {
         }
 
         setAvailableGroups(groupsAvecMembres)
+
+        // T1 — Réponses ensemble en attente (lecture seule, pour visualisation dans la grille)
+        supabase
+          .from('ensemble_responses')
+          .select(`id, availabilities, status, participant_id,
+            ensemble_participants(id, prenom, nom, instrument)`)
+          .eq('teacher_id', tInfo.id)
+          .eq('status', 'attente')
+          .order('submitted_at', { ascending: false })
+          .then(({ data }) => setEnsembleReponses(data ?? []))
+          .catch(() => { /* non-bloquant */ })
 
         const rawResponses = respRes.data ?? []
 
@@ -1204,9 +1353,16 @@ export default function SchedulingAssistantPage() {
     return result
   }, [showConflicts, statsPlacement.nonPlacesAvecMotif, weekDays])
 
+  // T1 — Blocs de disponibilité des réponses ensemble sélectionnées pour visualisation
+  const ensembleLessons = useMemo(
+    () => buildEnsembleLessons(ensembleReponses.filter((r) => selectedEnsembleIds.has(r.id)), weekDays),
+    [ensembleReponses, selectedEnsembleIds, weekDays],
+  )
+
   /**
    * Cours affichés dans la grille = cours réels de la semaine (en lecture seule, fond)
-   * + propositions (déplaçables) + créneaux en conflit si le mode est activé.
+   * + propositions (déplaçables) + créneaux en conflit si le mode est activé
+   * + blocs de disponibilité ensemble (visualisation, non définitifs).
    * Les cours réels ont nonMovable: true pour bloquer le drag et éviter toute modification.
    */
   const lessonsForGrid = useMemo(() => {
@@ -1220,8 +1376,8 @@ export default function SchedulingAssistantPage() {
     const proposalsFiltres = proposalLessons.filter((l) => !hiddenResponseIds.has(l._responseId))
     const conflitsFiltres  = conflictLessons.filter((l) => !hiddenResponseIds.has(l._responseId))
     // Les cours de groupe proposés par le moteur coexistent avec les propositions individuelles
-    return [...coursReels, ...proposalsFiltres, ...groupProposalLessons, ...(showConflicts ? conflitsFiltres : [])]
-  }, [existingLessons, proposalLessons, groupProposalLessons, conflictLessons, weekDays, showConflicts, hiddenResponseIds])
+    return [...coursReels, ...proposalsFiltres, ...groupProposalLessons, ...(showConflicts ? conflitsFiltres : []), ...ensembleLessons]
+  }, [existingLessons, proposalLessons, groupProposalLessons, conflictLessons, weekDays, showConflicts, hiddenResponseIds, ensembleLessons])
 
   /**
    * Détecte les chevauchements entre propositions dans lessonsForGrid.
@@ -1575,6 +1731,14 @@ export default function SchedulingAssistantPage() {
   }, [conflictSelectedIds, statsPlacement, teacherInfo])
 
   // ── Sélection / déselection d'un groupe comme candidat dans le calcul ────────
+  const handleToggleEnsembleCandidat = useCallback((id) => {
+    setSelectedEnsembleIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }, [])
+
   const handleToggleGroupCandidat = useCallback((groupId) => {
     setSelectedGroupIds((prev) => {
       const n = new Set(prev)
@@ -2504,6 +2668,13 @@ export default function SchedulingAssistantPage() {
                   groupProposalLessons={groupProposalLessons}
                 />
               )}
+
+              {/* ── Candidats ensemble — visualisation optionnelle dans la grille ─ */}
+              <EnsembleCandidatSelector
+                ensembleReponses={ensembleReponses}
+                selectedEnsembleIds={selectedEnsembleIds}
+                onToggle={handleToggleEnsembleCandidat}
+              />
 
               {/* ── Panneau regroupement en cours de groupe ───────────────────── */}
               {/* Visible dès que 2+ leçons sont sélectionnées, que ce soit des conflits auto

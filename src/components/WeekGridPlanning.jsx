@@ -1006,6 +1006,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   const isEnvisage   = lesson.planningStatus === 'envisage'
                   const isConflit    = lesson.planningStatus === 'conflit'
                   const isGroupe     = lesson.planningStatus === 'groupe'
+                  // Disponibilité ensemble — visualisation non définitive, fond violet hachuré
+                  const isEnsemble   = lesson.planningStatus === 'ensemble'
                   const isBeingMoved = movePreview?.lessonId === lesson.id
                   // Chevauchement temporaire autorisé (mode Planning intelligent) → signalé en orange
                   const isChevauchement = idsEnChevauchement.has(lesson.id)
@@ -1034,7 +1036,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         left:  `calc(${colIdx * pct}% + 2px)`,
                         right: `calc(${(colCount - colIdx - 1) * pct}% + 2px)`,
                         position: 'absolute', zIndex: 10,
-                        opacity: isBeingMoved ? 0.25 : (isEnvisage || isConflit) ? 0.75 : isGroupe ? 0.9 : 1,
+                        opacity: isBeingMoved ? 0.25 : (isEnvisage || isConflit) ? 0.75 : isGroupe ? 0.9 : isEnsemble ? 0.85 : 1,
                         cursor: 'grab',
                       }}
                       className="rounded overflow-hidden group"
@@ -1068,19 +1070,22 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                             : isGroupe
                             // Vert émeraude plein : cours de groupe confirmé, remplace les conflits
                             ? '#10b98130'
+                            : isEnsemble
+                            // Violet hachuré : disponibilité ensemble — candidat non définitif
+                            ? 'repeating-linear-gradient(135deg, #7c3aed25 0px, #7c3aed25 4px, transparent 4px, transparent 10px)'
                             : isHorsDispo
                             // Orange plein (non hachuré) : hors disponibilités déclarées (mode déplacement libre)
                             ? '#f9731618'
                             : color + '30',
-                          borderLeft: `3px ${(isEnvisage || isConflit || isChevauchement) ? 'dashed' : 'solid'} ${isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isHorsDispo ? '#f97316' : color}`,
-                          outline: isChevauchement ? '1px solid #f9731660' : isConflitSelected ? '2px solid #a855f7' : isGroupe ? '1px solid #10b98160' : isHorsDispo ? '1px solid #f9731660' : undefined,
+                          borderLeft: `3px ${(isEnvisage || isConflit || isChevauchement || isEnsemble) ? 'dashed' : 'solid'} ${isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isEnsemble ? '#7c3aed' : isHorsDispo ? '#f97316' : color}`,
+                          outline: isChevauchement ? '1px solid #f9731660' : isConflitSelected ? '2px solid #a855f7' : isGroupe ? '1px solid #10b98160' : isEnsemble ? '1px solid #7c3aed60' : isHorsDispo ? '1px solid #f9731660' : undefined,
                         }}
                       >
                         {/* T4 — Clic sur le nom ouvre le contact ; stopPropagation empêche le drag */}
                         <p
                           className="text-[10px] font-semibold leading-tight truncate"
                           style={{
-                            color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isHorsDispo ? '#f97316' : color,
+                            color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isEnsemble ? '#7c3aed' : isHorsDispo ? '#f97316' : color,
                             cursor: onViewStudent && lesson._studentId && !estSelectablePourGroupe ? 'pointer' : undefined,
                           }}
                           onPointerDown={onViewStudent && lesson._studentId && !estSelectablePourGroupe ? (e) => e.stopPropagation() : undefined}
@@ -1090,7 +1095,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           {lesson.studentName || 'Élève'}
                         </p>
                         {slotCount >= 3 && (
-                          <p className="text-[9px] leading-tight opacity-70" style={{ color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isHorsDispo ? '#f97316' : color }}>
+                          <p className="text-[9px] leading-tight opacity-70" style={{ color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isEnsemble ? '#7c3aed' : isHorsDispo ? '#f97316' : color }}>
                             {lesson.timeLabel} · {lesson.durationMinutes} min
                           </p>
                         )}
