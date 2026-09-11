@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers, SlidersHorizontal, Trash2, Users, CheckCircle2, ChevronDown, ChevronUp, Phone, Mail, UserRound, ExternalLink, Edit2 } from 'lucide-react'
+import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers, SlidersHorizontal, Trash2, Users, CheckCircle2, ChevronDown, ChevronUp, Phone, Mail, UserRound, ExternalLink, Edit2, Music2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
 import ScoreBadge from '../components/ScoreBadge'
