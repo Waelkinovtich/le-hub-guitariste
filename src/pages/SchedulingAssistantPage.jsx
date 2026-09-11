@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers, SlidersHorizontal, Trash2, Users, CheckCircle2, ChevronDown, ChevronUp, Phone, Mail, UserRound, ExternalLink, Edit2, Music2 } from 'lucide-react'
+import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers, SlidersHorizontal, Trash2, Users, CheckCircle2, ChevronDown, ChevronUp, Phone, Mail, UserRound, ExternalLink, Edit2, Music2, Printer } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import HelpTooltip from '../components/HelpTooltip'
 import ScoreBadge from '../components/ScoreBadge'
@@ -9,6 +9,7 @@ import WeekGridPlanning from '../components/WeekGridPlanning'
 import { computeAllProposals, computeProposals, scoreCandidate, parseStartTime, JOURS_FR, timeToMinutes, intersectionDisponibilitesCollectives } from '../utils/scoringCreneaux'
 import { currentSchoolYear } from '../services/schools'
 import { fetchReservedSlots, updateReservedSlot } from '../services/reservedSlots'
+import { exportPlanningPDF } from '../utils/exportPDF'
 
 // ─── Persistance de session (sessionStorage) ──────────────────────────────────
 // Conserve les ajustements manuels (glisser-déposer) entre les changements de vue,
@@ -681,6 +682,13 @@ export default function SchedulingAssistantPage() {
   const [joursARecalculer, setJoursARecalculer] = useState(null)
   const [showRecalcPanel, setShowRecalcPanel]   = useState(false)
   const [recalculating, setRecalculating]       = useState(false)
+  // ── Panneau export PDF du planning ───────────────────────────────────────────
+  const [showPdfPanel, setShowPdfPanel]         = useState(false)
+  // Jours inclus dans l'export (tous par défaut)
+  const [pdfJours, setPdfJours]                 = useState(['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'])
+  // 'session' = état actuel affiché, ou un snapshot id string
+  const [pdfSource, setPdfSource]               = useState('session')
+  const [pdfGenerating, setPdfGenerating]       = useState(false)
   // Mode "vue avec chevauchements" : affiche les élèves sans créneau sur leurs dispo réelles
   const [showConflicts, setShowConflicts]       = useState(false)
   // Propositions masquées localement (clic sur Supprimer dans la grille).
@@ -1154,6 +1162,74 @@ export default function SchedulingAssistantPage() {
     if (err) { alert('Erreur lors de la suppression : ' + err.message); return }
     setSnapshots((prev) => prev.filter((s) => s.id !== snapshotId))
   }, [])
+
+  // ── Export PDF du planning (session en cours ou snapshot sauvegardé) ─────────
+  const handleExportPDF = useCallback(async () => {
+    setPdfGenerating(true)
+    try {
+      let lessonsToExport = proposalLessons
+
+      if (pdfSource !== 'session') {
+        // Charge le snapshot et reconstruit les leçons à partir de ses overrides
+        const { data, error: err } = await supabase
+          .from('planning_provisoire_snapshots')
+          .select('donnees')
+          .eq('id', pdfSource)
+          .single()
+        if (err || !data?.donnees) { alert('Impossible de charger ce snapshot pour le PDF.'); return }
+
+        const overridesSnap = data.donnees.proposalOverrides ?? {}
+        const isoParJour = {}
+        for (const d of weekDays) {
+          const nomJour = JOURS_FR[new Date(d.iso + 'T12:00:00').getDay()]
+          isoParJour[nomJour] = d.iso
+        }
+        lessonsToExport = responses
+          .map((response) => {
+            const override = overridesSnap[response.id]
+            const base     = proposalsMap[response.id]?.[0]
+            const proposal = override ?? base
+            if (!proposal) return null
+            const overrideEnSemaine = override && weekDays.some((d) => d.iso === override.candidateDate)
+            const lessonDate = overrideEnSemaine
+              ? override.candidateDate
+              : (isoParJour[(override ?? proposal).day] ?? (override ?? proposal).candidateDate)
+            return {
+              id:              `proposal-${response.id}`,
+              lessonDate,
+              lessonTime:      proposal.startTime,
+              timeLabel:       proposal.startTime,
+              durationMinutes: proposal.durationMinutes,
+              studentName:     [response.first_name, response.last_name].filter(Boolean).join(' ') || 'Élève',
+              schoolName:      response.school_name ?? null,
+              planningStatus:  'envisage',
+              _responseId:     response.id,
+            }
+          })
+          .filter(Boolean)
+      }
+
+      const dateLabel = weekDays.length > 0
+        ? `semaine du ${new Date(weekDays[0].iso + 'T12:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
+        : new Date().toLocaleDateString('fr-FR')
+
+      exportPlanningPDF({
+        lessons:      lessonsToExport,
+        responses,
+        joursInclus:  pdfJours,
+        dateLabel,
+        teacherName:    user?.name    ?? '',
+        teacherPhone:   user?.phone   ?? '',
+        teacherEmail:   user?.email   ?? '',
+        teacherAddress: user?.address ?? '',
+      })
+      setShowPdfPanel(false)
+    } catch (e) {
+      alert('Erreur lors de la génération du PDF : ' + e.message)
+    } finally {
+      setPdfGenerating(false)
+    }
+  }, [pdfSource, pdfJours, proposalLessons, responses, proposalsMap, weekDays, user])
 
   // ── Restauration d'un snapshot ───────────────────────────────────────────────
   const handleRestoreSnapshot = useCallback(async (snapshotId) => {
@@ -2470,6 +2546,26 @@ export default function SchedulingAssistantPage() {
                     Reprendre
                   </button>
 
+                  {/* Export PDF du planning */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Charge la liste des snapshots si elle n'a pas encore été demandée
+                      if (snapshots.length === 0) handleLoadSnapshots().catch(() => {})
+                      setShowPdfPanel((v) => !v)
+                      setShowSnapshots(false)
+                    }}
+                    title="Générer un PDF imprimable du planning (grille + récapitulatif élèves)"
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                      showPdfPanel
+                        ? 'border-violet-500/40 bg-violet-500/10 text-violet-400'
+                        : 'border-border-subtle text-muted-foreground hover:text-foreground hover:border-border'
+                    }`}
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    Imprimer
+                  </button>
+
                   {/* Recalcul ciblé par jour */}
                   <button
                     type="button"
@@ -2596,6 +2692,115 @@ export default function SchedulingAssistantPage() {
                       </div>
                     ))
                   )}
+                </div>
+              )}
+
+              {/* Panneau export PDF — sélection source + jours ──────────────── */}
+              {showPdfPanel && (
+                <div className="glass-panel rounded-xl p-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium flex items-center gap-2">
+                      <Printer className="w-4 h-4" />
+                      Exporter le planning en PDF
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowPdfPanel(false)}
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      Fermer
+                    </button>
+                  </div>
+
+                  {/* Sélection de la source */}
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Source</p>
+                    <label className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="radio"
+                        name="pdfSource"
+                        value="session"
+                        checked={pdfSource === 'session'}
+                        onChange={() => setPdfSource('session')}
+                        className="accent-violet-500"
+                      />
+                      Session en cours (état affiché à l'écran)
+                    </label>
+                    {snapshots.length > 0 && (
+                      <div className="space-y-1.5 ml-1">
+                        <p className="text-xs text-muted-foreground">Planning sauvegardé :</p>
+                        {snapshots.map((s) => (
+                          <label key={s.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                            <input
+                              type="radio"
+                              name="pdfSource"
+                              value={s.id}
+                              checked={pdfSource === s.id}
+                              onChange={() => setPdfSource(s.id)}
+                              className="accent-violet-500"
+                            />
+                            <span>{s.nom || '(sans nom)'}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(s.date_creation).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {snapshots.length === 0 && (
+                      <p className="text-xs text-muted-foreground italic ml-4">Aucun planning sauvegardé.</p>
+                    )}
+                  </div>
+
+                  {/* Sélection des jours */}
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Jours à inclure</p>
+                    <div className="flex flex-wrap gap-2">
+                      {['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'].map((jour) => {
+                        const actif = pdfJours.includes(jour)
+                        return (
+                          <button
+                            key={jour}
+                            type="button"
+                            onClick={() => {
+                              if (actif) {
+                                const next = pdfJours.filter((j) => j !== jour)
+                                // Empêche de décocher tous les jours
+                                if (next.length > 0) setPdfJours(next)
+                              } else {
+                                setPdfJours([...pdfJours, jour])
+                              }
+                            }}
+                            className={`px-3 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                              actif
+                                ? 'bg-violet-600 text-white border-violet-500'
+                                : 'border-border-subtle text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            {jour.slice(0, 3)}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Bouton de génération */}
+                  <button
+                    type="button"
+                    onClick={handleExportPDF}
+                    disabled={pdfGenerating || pdfJours.length === 0}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium transition-colors disabled:opacity-50"
+                  >
+                    {pdfGenerating ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Printer className="w-4 h-4" />
+                    )}
+                    {pdfGenerating ? 'Génération…' : 'Télécharger le PDF'}
+                  </button>
+                  <p className="text-[10px] text-muted-foreground text-center">
+                    Page 1 : grille visuelle · Page 2 : récapitulatif avec disponibilités demandées
+                  </p>
                 </div>
               )}
 

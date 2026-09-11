@@ -435,3 +435,260 @@ export function exportTravelPDF({ entries, category, periodLabel, teacherName, t
   const safeDate = new Date().toISOString().slice(0, 10)
   doc.save('deplacements-' + safeCat + '-' + safeDate + '.pdf')
 }
+
+// ─── Export Planning intelligent ─────────────────────────────────────────────
+
+/**
+ * Formate une map de disponibilités en texte compact pour la page récapitulatif.
+ * Ex : { Lundi: ["09:00–09:15","09:15–09:30"], Mardi: ["14:00–14:15"] }
+ *   → "Lundi 09:00–10:00, Mardi 14:00–14:15"
+ * On fusionne les créneaux de 15 min contigus en un seul bloc pour la lisibilité.
+ */
+function formatDisposPDF(availabilities) {
+  if (!availabilities || typeof availabilities !== 'object') return '—'
+  const ORDRE_JOURS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+  const parts = []
+  for (const jour of ORDRE_JOURS) {
+    const slots = availabilities[jour]
+    if (!Array.isArray(slots) || slots.length === 0) continue
+    // Fusionne les plages contigus pour ne pas afficher "09:00–09:15, 09:15–09:30"
+    const blocs = []
+    let debut = null, fin = null
+    for (const slot of slots) {
+      const [start, end] = slot.split('–').map((s) => s.trim())
+      if (!debut) { debut = start; fin = end; continue }
+      // Contigu si le début du nouveau = la fin du précédent
+      if (start === fin) { fin = end } else { blocs.push(`${debut}–${fin}`); debut = start; fin = end }
+    }
+    if (debut) blocs.push(`${debut}–${fin}`)
+    parts.push(`${jour} ${blocs.join(', ')}`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : '—'
+}
+
+/**
+ * Convertit "HH:MM" en nombre de minutes depuis minuit (pour tri et fusion).
+ */
+function hhmm(t) {
+  const [h, m] = (t ?? '00:00').split(':').map(Number)
+  return h * 60 + (m || 0)
+}
+
+/**
+ * Génère le planning de la semaine au format PDF 2 pages :
+ *  - Page 1 (paysage A4) : grille visuelle jours × horaires avec noms d'élèves
+ *  - Page 2 (portrait A4) : tableau récapitulatif avec créneaux assignés vs demandés
+ *
+ * @param {object[]} lessons          - Leçons/propositions à inclure (proposalLessons ou équivalent)
+ * @param {object[]} responses        - survey_responses pour les disponibilités déclarées
+ * @param {string[]} joursInclus      - Noms de jours FR à afficher (ex. ['Lundi','Mardi'])
+ * @param {string}   dateLabel        - Libellé de la période (ex. "semaine du 08/09/2026")
+ * @param {string}   teacherName      - Nom complet du professeur
+ * @param {string}   teacherPhone     - Téléphone
+ * @param {string}   teacherEmail     - Email
+ * @param {string}   teacherAddress   - Adresse (optionnel)
+ */
+export function exportPlanningPDF({
+  lessons, responses, joursInclus, dateLabel,
+  teacherName, teacherPhone, teacherEmail, teacherAddress,
+}) {
+  // ── Constantes de mise en page grille ────────────────────────────────────────
+  const HEURE_DEBUT  = 8    // 8h00
+  const HEURE_FIN    = 20   // 20h00 (exclusive)
+  const NB_TRANCHES  = (HEURE_FIN - HEURE_DEBUT) * 2  // tranches de 30 min
+  const COL_HEURE_W  = 14   // largeur colonne "Heure" (pt)
+  const HEADER_ROW_H = 8    // hauteur ligne d'en-tête des jours (pt)
+  const ROW_H        = 6    // hauteur d'une tranche de 30 min (pt)
+  const MARGIN       = 10   // marge gauche/droite page paysage
+
+  // ── Filtrage des leçons par jours sélectionnés ───────────────────────────────
+  const JOURS_FR_ORDER = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+  const joursOrdonnes  = JOURS_FR_ORDER.filter((j) => joursInclus.includes(j))
+
+  // Associe chaque leçon à un nom de jour FR via la date ISO
+  const lessonsByJour = {}
+  for (const j of joursOrdonnes) lessonsByJour[j] = []
+  for (const l of lessons) {
+    if (!l.lessonDate) continue
+    const nomJour = JOURS_FR_ORDER[new Date(l.lessonDate + 'T12:00:00').getDay()]
+    if (lessonsByJour[nomJour]) lessonsByJour[nomJour].push(l)
+  }
+
+  // ── Page 1 — Grille paysage ───────────────────────────────────────────────────
+  const doc = new jsPDF({ orientation: 'landscape', format: 'a4' })
+  const pageW = doc.internal.pageSize.getWidth()   // ≈ 297 pt
+  const nbJours    = joursOrdonnes.length || 1
+  const colDayW    = (pageW - MARGIN * 2 - COL_HEURE_W) / nbJours
+
+  // En-tête professionnel (adapté paysage : on le dessine manuellement, compact)
+  doc.setFontSize(12)
+  doc.setTextColor(192, 57, 43)
+  doc.text(teacherName || 'Professeur de guitare', MARGIN, 10)
+  doc.setFontSize(8)
+  doc.setTextColor(100, 100, 100)
+  const contactLine = [teacherPhone, teacherEmail].filter(Boolean).join('  •  ')
+  if (contactLine) doc.text(contactLine, MARGIN, 16)
+  doc.setFontSize(10)
+  doc.setTextColor(0, 0, 0)
+  doc.text('Planning — ' + (dateLabel || ''), MARGIN, 22)
+  doc.setFontSize(7)
+  doc.setTextColor(150, 150, 150)
+  doc.text('Document confidentiel — ' + new Date().toLocaleDateString('fr-FR'), pageW - MARGIN, 22, { align: 'right' })
+
+  // Grille : point de départ Y
+  let gridY = 28
+
+  // Ligne d'en-tête : cellule "Heure" + une cellule par jour
+  doc.setFillColor(192, 57, 43)
+  doc.setTextColor(255, 255, 255)
+  doc.setFontSize(8)
+  doc.rect(MARGIN, gridY, COL_HEURE_W, HEADER_ROW_H, 'F')
+  doc.text('Heure', MARGIN + COL_HEURE_W / 2, gridY + HEADER_ROW_H - 2, { align: 'center' })
+  for (let i = 0; i < joursOrdonnes.length; i++) {
+    const x = MARGIN + COL_HEURE_W + i * colDayW
+    doc.rect(x, gridY, colDayW, HEADER_ROW_H, 'F')
+    doc.text(joursOrdonnes[i], x + colDayW / 2, gridY + HEADER_ROW_H - 2, { align: 'center' })
+  }
+  gridY += HEADER_ROW_H
+
+  // Lignes de créneaux 30 min (8h → 20h)
+  doc.setTextColor(0, 0, 0)
+  doc.setFontSize(6.5)
+  for (let t = 0; t < NB_TRANCHES; t++) {
+    const totalMin  = HEURE_DEBUT * 60 + t * 30
+    const hh        = String(Math.floor(totalMin / 60)).padStart(2, '0')
+    const mm        = String(totalMin % 60).padStart(2, '0')
+    const rowY      = gridY + t * ROW_H
+    const isHeure   = mm === '00'
+
+    // Fond légèrement alterné toutes les heures pour la lisibilité
+    if (isHeure) {
+      doc.setFillColor(248, 248, 248)
+      doc.rect(MARGIN, rowY, pageW - MARGIN * 2, ROW_H * 2, 'F')
+    }
+
+    // Colonne horaire
+    doc.setDrawColor(200, 200, 200)
+    doc.rect(MARGIN, rowY, COL_HEURE_W, ROW_H)
+    if (isHeure) {
+      doc.setFontSize(6.5)
+      doc.setTextColor(80, 80, 80)
+      doc.text(`${hh}:${mm}`, MARGIN + COL_HEURE_W / 2, rowY + ROW_H - 1.5, { align: 'center' })
+    }
+
+    // Colonnes jours
+    for (let i = 0; i < joursOrdonnes.length; i++) {
+      const x = MARGIN + COL_HEURE_W + i * colDayW
+      doc.setDrawColor(200, 200, 200)
+      doc.rect(x, rowY, colDayW, ROW_H)
+    }
+  }
+
+  // Superpose les leçons sous forme de blocs colorés sur la grille
+  const LESSON_COLORS = {
+    envisage: [100, 140, 240],
+    groupe:   [16, 185, 129],
+    ensemble: [124, 58, 237],
+    confirme: [60, 60, 60],
+    default:  [80, 130, 200],
+  }
+  for (let i = 0; i < joursOrdonnes.length; i++) {
+    const jour = joursOrdonnes[i]
+    const x    = MARGIN + COL_HEURE_W + i * colDayW + 0.5
+    for (const l of lessonsByJour[jour]) {
+      const startMin = hhmm(l.lessonTime ?? l.timeLabel)
+      const durée    = l.durationMinutes ?? 30
+      const offsetT  = (startMin - HEURE_DEBUT * 60) / 30  // tranches depuis le début
+      if (offsetT < 0 || offsetT >= NB_TRANCHES) continue
+      const blockH   = Math.min((durée / 30) * ROW_H, (NB_TRANCHES - offsetT) * ROW_H) - 1
+      const blockY   = gridY + offsetT * ROW_H + 0.5
+      const rgb      = LESSON_COLORS[l.planningStatus] ?? LESSON_COLORS.default
+
+      // Fond coloré de la leçon
+      doc.setFillColor(...rgb)
+      doc.setDrawColor(...rgb)
+      doc.roundedRect(x, blockY, colDayW - 1, blockH, 1, 1, 'F')
+
+      // Texte élève (tronqué si besoin)
+      doc.setTextColor(255, 255, 255)
+      doc.setFontSize(6)
+      const nameLines = doc.splitTextToSize(l.studentName ?? 'Élève', colDayW - 3)
+      doc.text(nameLines[0], x + 1.5, blockY + 3.5)
+      if (nameLines.length > 1 && blockH > 7) doc.text(nameLines[1], x + 1.5, blockY + 7)
+      // École (si place)
+      if (l.schoolName && blockH > 9) {
+        doc.setFontSize(5)
+        doc.setTextColor(220, 220, 255)
+        const ecoleLines = doc.splitTextToSize(l.schoolName, colDayW - 3)
+        doc.text(ecoleLines[0], x + 1.5, blockY + blockH - 2)
+      }
+    }
+  }
+
+  // ── Page 2 — Tableau récapitulatif (portrait) ─────────────────────────────────
+  doc.addPage('a4', 'portrait')
+
+  let y2 = drawProfessionalHeader(doc, {
+    teacherName, teacherAddress, teacherPhone, teacherEmail,
+    documentTitle: 'Récapitulatif élèves — ' + (dateLabel || ''),
+  })
+  y2 += 10
+
+  // Construit une map responseId → response pour les disponibilités
+  const responseById = {}
+  for (const r of (responses ?? [])) responseById[r.id] = r
+
+  // Trie les leçons affichées par jour puis par heure pour le tableau récapitulatif
+  const allLessons = joursOrdonnes.flatMap((j) => lessonsByJour[j])
+    .sort((a, b) => {
+      const dA = joursOrdonnes.indexOf(JOURS_FR_ORDER[new Date((a.lessonDate ?? '') + 'T12:00:00').getDay()])
+      const dB = joursOrdonnes.indexOf(JOURS_FR_ORDER[new Date((b.lessonDate ?? '') + 'T12:00:00').getDay()])
+      if (dA !== dB) return dA - dB
+      return hhmm(a.lessonTime ?? '') - hhmm(b.lessonTime ?? '')
+    })
+
+  const rows2 = allLessons.map((l) => {
+    const responseId = l._responseId
+    const response   = responseById[responseId]
+    const nomJour    = JOURS_FR_ORDER[new Date((l.lessonDate ?? '') + 'T12:00:00').getDay()]
+    const créneau    = `${nomJour} ${l.lessonTime ?? '—'} (${l.durationMinutes ?? '?'} min)`
+    const dispos     = response ? formatDisposPDF(response.availabilities) : '—'
+    return [
+      l.studentName ?? '—',
+      l.schoolName  ?? '—',
+      créneau,
+      dispos,
+    ]
+  })
+
+  autoTable(doc, {
+    startY: y2,
+    head: [['Élève', 'École', 'Créneau assigné', 'Disponibilités demandées']],
+    body: rows2,
+    headStyles: { fillColor: [192, 57, 43], textColor: 255, fontStyle: 'bold', fontSize: 9 },
+    alternateRowStyles: { fillColor: [248, 248, 248] },
+    styles: { fontSize: 8, cellPadding: 3, valign: 'middle', overflow: 'linebreak' },
+    columnStyles: {
+      0: { cellWidth: 38 },
+      1: { cellWidth: 38 },
+      2: { cellWidth: 44 },
+      3: { cellWidth: 'auto' },
+    },
+    didDrawPage: (data) => {
+      // Pied de page : numéro de page
+      doc.setFontSize(7)
+      doc.setTextColor(150, 150, 150)
+      doc.text(
+        `Page ${data.pageNumber}`,
+        doc.internal.pageSize.getWidth() / 2,
+        doc.internal.pageSize.getHeight() - 8,
+        { align: 'center' },
+      )
+    },
+  })
+
+  // ── Nom du fichier : lisible, daté, jours inclus ──────────────────────────────
+  const dateISO    = new Date().toISOString().slice(0, 10)
+  const joursAbrev = joursOrdonnes.map((j) => j.slice(0, 3)).join('-')
+  doc.save(`Planning-${dateISO}-${joursAbrev}.pdf`)
+}
