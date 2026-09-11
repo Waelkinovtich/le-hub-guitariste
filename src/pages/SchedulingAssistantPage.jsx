@@ -1163,7 +1163,75 @@ export default function SchedulingAssistantPage() {
     setSnapshots((prev) => prev.filter((s) => s.id !== snapshotId))
   }, [])
 
+  // ── Restauration d'un snapshot ───────────────────────────────────────────────
+  const handleRestoreSnapshot = useCallback(async (snapshotId) => {
+    const { data, error: err } = await supabase
+      .from('planning_provisoire_snapshots')
+      .select('donnees')
+      .eq('id', snapshotId)
+      .single()
+    if (err || !data?.donnees) { alert('Impossible de charger ce snapshot.'); return }
+    const overrides = data.donnees.proposalOverrides ?? {}
+    const restoredLocked = new Set(data.donnees.lockedIds ?? [])
+    setProposalOverrides(overrides)
+    setLockedIds(restoredLocked)
+    ecrireSession(overrides, restoredLocked)
+    setShowSnapshots(false)
+  }, [])
+
+  /**
+   * Faux cours représentant les propositions dans la grille.
+   * Chaque proposition est projetée sur le jour correspondant de la semaine affichée
+   * (sauf si l'utilisateur l'a déjà déplacée — override conserve la date exacte).
+   * planningStatus 'envisage' → style bordure pointillée, opacité 0.6 (déjà géré par WeekGridPlanning).
+   */
+  const proposalLessons = useMemo(() => {
+    // Index nom-de-jour → date ISO de la semaine affichée
+    const isoParJour = {}
+    for (const d of weekDays) {
+      const nomJour = JOURS_FR[new Date(d.iso + 'T12:00:00').getDay()]
+      isoParJour[nomJour] = d.iso
+    }
+
+    return responses
+      .map((response) => {
+        const override = proposalOverrides[response.id]
+        const base     = proposalsMap[response.id]?.[0]
+        const proposal = override ?? base
+        if (!proposal) return null
+
+        // Règle de projection des dates :
+        // • Drag-and-drop manuel : l'utilisateur a choisi une date DANS la semaine affichée
+        //   → on conserve cette date exacte (elle est déjà dans isoParJour).
+        // • Recalcul automatique (handleRecalculer) : candidateDate = nextDateForDay() = semaine N+1
+        //   → la date n'est PAS dans la semaine affichée, on projette par nom de jour comme
+        //   pour les propositions sans override (même comportement que le moteur initial).
+        // Cela corrige le bug : recalcul → proposition disparaît de la semaine courante.
+        const overrideEnSemaine = override && weekDays.some((d) => d.iso === override.candidateDate)
+        const lessonDate = overrideEnSemaine
+          ? override.candidateDate
+          : (isoParJour[(override ?? proposal).day] ?? (override ?? proposal).candidateDate)
+
+        return {
+          id:              `proposal-${response.id}`,
+          lessonDate,
+          lessonTime:      proposal.startTime,
+          timeLabel:       proposal.startTime,
+          durationMinutes: proposal.durationMinutes,
+          studentName:     [response.first_name, response.last_name].filter(Boolean).join(' ') || 'Élève',
+          schoolName:      response.school_name ?? null,
+          planningStatus:  'envisage',  // → bordure pointillée dans WeekGridPlanning
+          // Méta : retrouver le contexte pour recalculer le score après déplacement
+          _responseId:     response.id,
+          _studentId:      response.student_id ?? null,
+        }
+      })
+      .filter(Boolean)
+  }, [responses, proposalsMap, proposalOverrides, weekDays])
+
   // ── Export PDF du planning (session en cours ou snapshot sauvegardé) ─────────
+  // Placé APRÈS proposalLessons pour éviter la TDZ (temporal dead zone) :
+  // le tableau de dépendances du useCallback évalue proposalLessons immédiatement.
   const handleExportPDF = useCallback(async () => {
     setPdfGenerating(true)
     try {
@@ -1230,72 +1298,6 @@ export default function SchedulingAssistantPage() {
       setPdfGenerating(false)
     }
   }, [pdfSource, pdfJours, proposalLessons, responses, proposalsMap, weekDays, user])
-
-  // ── Restauration d'un snapshot ───────────────────────────────────────────────
-  const handleRestoreSnapshot = useCallback(async (snapshotId) => {
-    const { data, error: err } = await supabase
-      .from('planning_provisoire_snapshots')
-      .select('donnees')
-      .eq('id', snapshotId)
-      .single()
-    if (err || !data?.donnees) { alert('Impossible de charger ce snapshot.'); return }
-    const overrides = data.donnees.proposalOverrides ?? {}
-    const restoredLocked = new Set(data.donnees.lockedIds ?? [])
-    setProposalOverrides(overrides)
-    setLockedIds(restoredLocked)
-    ecrireSession(overrides, restoredLocked)
-    setShowSnapshots(false)
-  }, [])
-
-  /**
-   * Faux cours représentant les propositions dans la grille.
-   * Chaque proposition est projetée sur le jour correspondant de la semaine affichée
-   * (sauf si l'utilisateur l'a déjà déplacée — override conserve la date exacte).
-   * planningStatus 'envisage' → style bordure pointillée, opacité 0.6 (déjà géré par WeekGridPlanning).
-   */
-  const proposalLessons = useMemo(() => {
-    // Index nom-de-jour → date ISO de la semaine affichée
-    const isoParJour = {}
-    for (const d of weekDays) {
-      const nomJour = JOURS_FR[new Date(d.iso + 'T12:00:00').getDay()]
-      isoParJour[nomJour] = d.iso
-    }
-
-    return responses
-      .map((response) => {
-        const override = proposalOverrides[response.id]
-        const base     = proposalsMap[response.id]?.[0]
-        const proposal = override ?? base
-        if (!proposal) return null
-
-        // Règle de projection des dates :
-        // • Drag-and-drop manuel : l'utilisateur a choisi une date DANS la semaine affichée
-        //   → on conserve cette date exacte (elle est déjà dans isoParJour).
-        // • Recalcul automatique (handleRecalculer) : candidateDate = nextDateForDay() = semaine N+1
-        //   → la date n'est PAS dans la semaine affichée, on projette par nom de jour comme
-        //   pour les propositions sans override (même comportement que le moteur initial).
-        // Cela corrige le bug : recalcul → proposition disparaît de la semaine courante.
-        const overrideEnSemaine = override && weekDays.some((d) => d.iso === override.candidateDate)
-        const lessonDate = overrideEnSemaine
-          ? override.candidateDate
-          : (isoParJour[(override ?? proposal).day] ?? (override ?? proposal).candidateDate)
-
-        return {
-          id:              `proposal-${response.id}`,
-          lessonDate,
-          lessonTime:      proposal.startTime,
-          timeLabel:       proposal.startTime,
-          durationMinutes: proposal.durationMinutes,
-          studentName:     [response.first_name, response.last_name].filter(Boolean).join(' ') || 'Élève',
-          schoolName:      response.school_name ?? null,
-          planningStatus:  'envisage',  // → bordure pointillée dans WeekGridPlanning
-          // Méta : retrouver le contexte pour recalculer le score après déplacement
-          _responseId:     response.id,
-          _studentId:      response.student_id ?? null,
-        }
-      })
-      .filter(Boolean)
-  }, [responses, proposalsMap, proposalOverrides, weekDays])
 
   // T6 — Map responseId → { day, startTime } de la proposition AUTO-ORIGINALE (avant override).
   // Utilisée dans WeekGridPlanning pour afficher l'écart quand un élève est forcé hors dispo.
