@@ -494,33 +494,46 @@ export function exportPlanningPDF({
 }) {
   // ── Constantes de mise en page grille ────────────────────────────────────────
   const HEURE_DEBUT  = 8    // 8h00
-  const HEURE_FIN    = 20   // 20h00 (exclusive)
+  const HEURE_FIN    = 19   // 19h00 — limite à 19h pour tenir 8mm/tranche sur A4 paysage
   const NB_TRANCHES  = (HEURE_FIN - HEURE_DEBUT) * 2  // tranches de 30 min
-  const COL_HEURE_W  = 14   // largeur colonne "Heure" (pt)
-  const HEADER_ROW_H = 8    // hauteur ligne d'en-tête des jours (pt)
-  const ROW_H        = 6    // hauteur d'une tranche de 30 min (pt)
-  const MARGIN       = 10   // marge gauche/droite page paysage
+  const COL_HEURE_W  = 16   // largeur colonne "Heure" (mm)
+  const HEADER_ROW_H = 9    // hauteur ligne d'en-tête des jours (mm)
+  const ROW_H        = 8    // hauteur d'une tranche de 30 min (mm) — espace pour annotation manuelle
+  const MARGIN       = 10   // marge gauche/droite page paysage (mm)
+  // Calcul vérifié : gridY(26) + header(9) + 22×8(176) = 211mm ≈ A4 paysage hauteur 210mm ✓
+
+  // ── Ordre des jours ─────────────────────────────────────────────────────────
+  // JOURS_JS : ordre de Date.getDay() — 0=Dimanche, 1=Lundi, ..., 6=Samedi.
+  // Utilisé UNIQUEMENT pour convertir une date ISO en nom de jour.
+  const JOURS_JS    = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi']
+  // JOURS_ORDRE : ordre d'affichage (convention FR : Lundi en premier).
+  // Utilisé pour filtrer/ordonner les colonnes et l'affichage.
+  const JOURS_ORDRE = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+
+  // Convertit une date ISO en nom de jour FR via l'ordre JS natif (0=Dimanche)
+  function isoToJourFR(iso) { return JOURS_JS[new Date(iso + 'T12:00:00').getDay()] }
 
   // ── Filtrage des leçons par jours sélectionnés ───────────────────────────────
-  const JOURS_FR_ORDER = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
-  const joursOrdonnes  = JOURS_FR_ORDER.filter((j) => joursInclus.includes(j))
+  const joursOrdonnes  = JOURS_ORDRE.filter((j) => joursInclus.includes(j))
 
-  // Associe chaque leçon à un nom de jour FR via la date ISO
+  // Associe chaque leçon à son jour FR réel via la date ISO
   const lessonsByJour = {}
   for (const j of joursOrdonnes) lessonsByJour[j] = []
   for (const l of lessons) {
     if (!l.lessonDate) continue
-    const nomJour = JOURS_FR_ORDER[new Date(l.lessonDate + 'T12:00:00').getDay()]
+    const nomJour = isoToJourFR(l.lessonDate)   // ← correction T1 : JOURS_JS indexé par getDay()
     if (lessonsByJour[nomJour]) lessonsByJour[nomJour].push(l)
   }
 
   // ── Page 1 — Grille paysage ───────────────────────────────────────────────────
   const doc = new jsPDF({ orientation: 'landscape', format: 'a4' })
-  const pageW = doc.internal.pageSize.getWidth()   // ≈ 297 pt
-  const nbJours    = joursOrdonnes.length || 1
-  const colDayW    = (pageW - MARGIN * 2 - COL_HEURE_W) / nbJours
+  const pageW = doc.internal.pageSize.getWidth()   // ≈ 297 mm
+  const nbJours = joursOrdonnes.length || 1
+  // Limite pratique : au-delà de 6 jours la colonne devient trop étroite pour annoter.
+  // 7 jours tient sur la page (≈37mm/colonne) mais l'espace d'annotation est réduit.
+  const colDayW = (pageW - MARGIN * 2 - COL_HEURE_W) / nbJours
 
-  // En-tête professionnel (adapté paysage : on le dessine manuellement, compact)
+  // En-tête professionnel compact (paysage)
   doc.setFontSize(12)
   doc.setTextColor(192, 57, 43)
   doc.text(teacherName || 'Professeur de guitare', MARGIN, 10)
@@ -535,51 +548,50 @@ export function exportPlanningPDF({
   doc.setTextColor(150, 150, 150)
   doc.text('Document confidentiel — ' + new Date().toLocaleDateString('fr-FR'), pageW - MARGIN, 22, { align: 'right' })
 
-  // Grille : point de départ Y
-  let gridY = 28
+  // Grille : point de départ Y (compact pour maximiser l'espace disponible)
+  let gridY = 26
 
   // Ligne d'en-tête : cellule "Heure" + une cellule par jour
   doc.setFillColor(192, 57, 43)
   doc.setTextColor(255, 255, 255)
-  doc.setFontSize(8)
+  doc.setFontSize(9)
   doc.rect(MARGIN, gridY, COL_HEURE_W, HEADER_ROW_H, 'F')
-  doc.text('Heure', MARGIN + COL_HEURE_W / 2, gridY + HEADER_ROW_H - 2, { align: 'center' })
+  doc.text('Heure', MARGIN + COL_HEURE_W / 2, gridY + HEADER_ROW_H - 2.5, { align: 'center' })
   for (let i = 0; i < joursOrdonnes.length; i++) {
     const x = MARGIN + COL_HEURE_W + i * colDayW
     doc.rect(x, gridY, colDayW, HEADER_ROW_H, 'F')
-    doc.text(joursOrdonnes[i], x + colDayW / 2, gridY + HEADER_ROW_H - 2, { align: 'center' })
+    doc.text(joursOrdonnes[i], x + colDayW / 2, gridY + HEADER_ROW_H - 2.5, { align: 'center' })
   }
   gridY += HEADER_ROW_H
 
-  // Lignes de créneaux 30 min (8h → 20h)
+  // Lignes de créneaux 30 min (8h → 19h)
   doc.setTextColor(0, 0, 0)
-  doc.setFontSize(6.5)
   for (let t = 0; t < NB_TRANCHES; t++) {
-    const totalMin  = HEURE_DEBUT * 60 + t * 30
-    const hh        = String(Math.floor(totalMin / 60)).padStart(2, '0')
-    const mm        = String(totalMin % 60).padStart(2, '0')
-    const rowY      = gridY + t * ROW_H
-    const isHeure   = mm === '00'
+    const totalMin = HEURE_DEBUT * 60 + t * 30
+    const hh       = String(Math.floor(totalMin / 60)).padStart(2, '0')
+    const mm       = String(totalMin % 60).padStart(2, '0')
+    const rowY     = gridY + t * ROW_H
+    const isHeure  = mm === '00'
 
-    // Fond légèrement alterné toutes les heures pour la lisibilité
+    // Fond légèrement alterné toutes les heures pour guider l'œil
     if (isHeure) {
       doc.setFillColor(248, 248, 248)
       doc.rect(MARGIN, rowY, pageW - MARGIN * 2, ROW_H * 2, 'F')
     }
 
-    // Colonne horaire
-    doc.setDrawColor(200, 200, 200)
+    // Colonne horaire — libellé uniquement aux heures pleines
+    doc.setDrawColor(210, 210, 210)
     doc.rect(MARGIN, rowY, COL_HEURE_W, ROW_H)
     if (isHeure) {
-      doc.setFontSize(6.5)
+      doc.setFontSize(7)
       doc.setTextColor(80, 80, 80)
-      doc.text(`${hh}:${mm}`, MARGIN + COL_HEURE_W / 2, rowY + ROW_H - 1.5, { align: 'center' })
+      doc.text(`${hh}:${mm}`, MARGIN + COL_HEURE_W / 2, rowY + ROW_H - 2, { align: 'center' })
     }
 
-    // Colonnes jours
+    // Colonnes jours — trait plus léger pour la demi-heure, normal pour l'heure
+    doc.setDrawColor(isHeure ? 180 : 220, isHeure ? 180 : 220, isHeure ? 180 : 220)
     for (let i = 0; i < joursOrdonnes.length; i++) {
       const x = MARGIN + COL_HEURE_W + i * colDayW
-      doc.setDrawColor(200, 200, 200)
       doc.rect(x, rowY, colDayW, ROW_H)
     }
   }
@@ -598,29 +610,30 @@ export function exportPlanningPDF({
     for (const l of lessonsByJour[jour]) {
       const startMin = hhmm(l.lessonTime ?? l.timeLabel)
       const durée    = l.durationMinutes ?? 30
-      const offsetT  = (startMin - HEURE_DEBUT * 60) / 30  // tranches depuis le début
+      const offsetT  = (startMin - HEURE_DEBUT * 60) / 30  // tranches 30min depuis 8h
       if (offsetT < 0 || offsetT >= NB_TRANCHES) continue
-      const blockH   = Math.min((durée / 30) * ROW_H, (NB_TRANCHES - offsetT) * ROW_H) - 1
-      const blockY   = gridY + offsetT * ROW_H + 0.5
-      const rgb      = LESSON_COLORS[l.planningStatus] ?? LESSON_COLORS.default
+      // blockH laisse 2mm de blanc sous le bloc pour l'annotation manuelle
+      const blockH = Math.min((durée / 30) * ROW_H, (NB_TRANCHES - offsetT) * ROW_H) - 2
+      const blockY = gridY + offsetT * ROW_H + 0.5
+      const rgb    = LESSON_COLORS[l.planningStatus] ?? LESSON_COLORS.default
 
       // Fond coloré de la leçon
       doc.setFillColor(...rgb)
       doc.setDrawColor(...rgb)
-      doc.roundedRect(x, blockY, colDayW - 1, blockH, 1, 1, 'F')
+      doc.roundedRect(x, blockY, colDayW - 1, blockH, 1.5, 1.5, 'F')
 
-      // Texte élève (tronqué si besoin)
+      // Texte élève — plus grand et mieux espacé qu'avant
       doc.setTextColor(255, 255, 255)
-      doc.setFontSize(6)
-      const nameLines = doc.splitTextToSize(l.studentName ?? 'Élève', colDayW - 3)
-      doc.text(nameLines[0], x + 1.5, blockY + 3.5)
-      if (nameLines.length > 1 && blockH > 7) doc.text(nameLines[1], x + 1.5, blockY + 7)
-      // École (si place)
-      if (l.schoolName && blockH > 9) {
-        doc.setFontSize(5)
-        doc.setTextColor(220, 220, 255)
-        const ecoleLines = doc.splitTextToSize(l.schoolName, colDayW - 3)
-        doc.text(ecoleLines[0], x + 1.5, blockY + blockH - 2)
+      doc.setFontSize(7)
+      const nameLines = doc.splitTextToSize(l.studentName ?? 'Élève', colDayW - 4)
+      doc.text(nameLines[0], x + 2, blockY + 4.5)
+      if (nameLines.length > 1 && blockH > 9) doc.text(nameLines[1], x + 2, blockY + 9)
+      // École — petite police, en bas du bloc si assez de place
+      if (l.schoolName && blockH > 11) {
+        doc.setFontSize(5.5)
+        doc.setTextColor(210, 225, 255)
+        const ecoleLines = doc.splitTextToSize(l.schoolName, colDayW - 4)
+        doc.text(ecoleLines[0], x + 2, blockY + blockH - 1.5)
       }
     }
   }
@@ -638,11 +651,11 @@ export function exportPlanningPDF({
   const responseById = {}
   for (const r of (responses ?? [])) responseById[r.id] = r
 
-  // Trie les leçons affichées par jour puis par heure pour le tableau récapitulatif
+  // Trie les leçons par jour (ordre d'affichage) puis par heure
   const allLessons = joursOrdonnes.flatMap((j) => lessonsByJour[j])
     .sort((a, b) => {
-      const dA = joursOrdonnes.indexOf(JOURS_FR_ORDER[new Date((a.lessonDate ?? '') + 'T12:00:00').getDay()])
-      const dB = joursOrdonnes.indexOf(JOURS_FR_ORDER[new Date((b.lessonDate ?? '') + 'T12:00:00').getDay()])
+      const dA = joursOrdonnes.indexOf(isoToJourFR(a.lessonDate ?? ''))  // ← correction T1
+      const dB = joursOrdonnes.indexOf(isoToJourFR(b.lessonDate ?? ''))
       if (dA !== dB) return dA - dB
       return hhmm(a.lessonTime ?? '') - hhmm(b.lessonTime ?? '')
     })
@@ -650,7 +663,7 @@ export function exportPlanningPDF({
   const rows2 = allLessons.map((l) => {
     const responseId = l._responseId
     const response   = responseById[responseId]
-    const nomJour    = JOURS_FR_ORDER[new Date((l.lessonDate ?? '') + 'T12:00:00').getDay()]
+    const nomJour    = isoToJourFR(l.lessonDate ?? '')   // ← correction T1
     const créneau    = `${nomJour} ${l.lessonTime ?? '—'} (${l.durationMinutes ?? '?'} min)`
     const dispos     = response ? formatDisposPDF(response.availabilities) : '—'
     return [
