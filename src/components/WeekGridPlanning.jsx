@@ -1081,16 +1081,20 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           outline: isChevauchement ? '1px solid #f9731660' : isConflitSelected ? '2px solid #a855f7' : isGroupe ? '1px solid #10b98160' : isEnsemble ? '1px solid #7c3aed60' : isHorsDispo ? '1px solid #f9731660' : undefined,
                         }}
                       >
-                        {/* T4 — Clic sur le nom ouvre le contact ; stopPropagation empêche le drag */}
+                        {/* T4 — Clic sur le nom ouvre le contact ; stopPropagation empêche le drag.
+                            Condition : _studentId OU _responseId suffit — un répondant sans compte
+                            élève lié a aussi droit à la fiche (nom/école depuis le sondage).
+                            onPointerDown stoppe systématiquement pour tous les types de tuiles :
+                            évite les déplacements accidentels quand on clique sur le nom d'un groupe. */}
                         <p
                           className="text-[10px] font-semibold leading-tight truncate"
                           style={{
                             color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isEnsemble ? '#7c3aed' : isHorsDispo ? '#f97316' : color,
-                            cursor: onViewStudent && lesson._studentId && !estSelectablePourGroupe ? 'pointer' : undefined,
+                            cursor: onViewStudent && (lesson._studentId || lesson._responseId) && !estSelectablePourGroupe ? 'pointer' : undefined,
                           }}
-                          onPointerDown={onViewStudent && lesson._studentId && !estSelectablePourGroupe ? (e) => e.stopPropagation() : undefined}
-                          onClick={onViewStudent && lesson._studentId && !estSelectablePourGroupe ? (e) => { e.stopPropagation(); onViewStudent(lesson) } : undefined}
-                          title={onViewStudent && lesson._studentId && !estSelectablePourGroupe ? 'Voir les contacts' : undefined}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={onViewStudent && (lesson._studentId || lesson._responseId) && !estSelectablePourGroupe ? (e) => { e.stopPropagation(); onViewStudent(lesson) } : undefined}
+                          title={onViewStudent && (lesson._studentId || lesson._responseId) && !estSelectablePourGroupe ? 'Voir les contacts' : undefined}
                         >
                           {lesson.studentName || 'Élève'}
                         </p>
@@ -1164,8 +1168,10 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         </button>
                       )}
 
-                      {/* Fiche élève — sur propositions et tuiles hors-dispo */}
-                      {onViewStudent && (isEnvisage || isConflit || isHorsDispo) && lesson._studentId && !estSelectablePourGroupe && (
+                      {/* Fiche élève — sur toutes les tuiles avec un élève identifiable :
+                          _studentId (lié) OU _responseId (sondage sans compte).
+                          isGroupe/isEnsemble exclus naturellement (pas de _responseId individuel). */}
+                      {onViewStudent && (isEnvisage || isConflit || isHorsDispo) && (lesson._studentId || lesson._responseId) && !estSelectablePourGroupe && (
                         <button
                           type="button"
                           aria-label="Voir la fiche élève"

@@ -451,10 +451,15 @@ function formatDisposPDF(availabilities) {
   for (const jour of ORDRE_JOURS) {
     const slots = availabilities[jour]
     if (!Array.isArray(slots) || slots.length === 0) continue
+    // Tri chronologique avant fusion : la DB ne garantit pas l'ordre des créneaux.
+    // Sans ce tri, "14:00–14:30, 09:00–09:30" produirait deux blocs au lieu d'un seul
+    // si les plages sont contigus mais mal ordonnées — et l'affichage serait incohérent.
+    // hhmm() est une déclaration de fonction (hoistée) définie plus bas dans ce fichier.
+    const sorted = [...slots].sort((a, b) => hhmm(a.split('–')[0].trim()) - hhmm(b.split('–')[0].trim()))
     // Fusionne les plages contigus pour ne pas afficher "09:00–09:15, 09:15–09:30"
     const blocs = []
     let debut = null, fin = null
-    for (const slot of slots) {
+    for (const slot of sorted) {
       const [start, end] = slot.split('–').map((s) => s.trim())
       if (!debut) { debut = start; fin = end; continue }
       // Contigu si le début du nouveau = la fin du précédent

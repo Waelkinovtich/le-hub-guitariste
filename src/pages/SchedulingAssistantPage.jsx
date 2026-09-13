@@ -2172,22 +2172,33 @@ export default function SchedulingAssistantPage() {
    * et les affiche dans un panneau modal sans naviguer vers la fiche complète.
    */
   const handleShowContact = useCallback(async (lesson) => {
-    if (!lesson._studentId) return
-    setContactCard({ lesson, student: null })
-    setContactLoading(true)
-    try {
-      const { data } = await supabase
-        .from('students')
-        .select('id, first_name, last_name, email, phone, student_phone, parent1_name, parent1_phone, parent1_email, parent2_name, parent2_phone, parent2_email, school_name, level')
-        .eq('id', lesson._studentId)
-        .single()
-      setContactCard({ lesson, student: data ?? null })
-    } catch {
+    // Branche 1 : élève lié à un compte → fiche complète depuis la table students
+    if (lesson._studentId) {
       setContactCard({ lesson, student: null })
-    } finally {
-      setContactLoading(false)
+      setContactLoading(true)
+      try {
+        const { data } = await supabase
+          .from('students')
+          .select('id, first_name, last_name, email, phone, student_phone, parent1_name, parent1_phone, parent1_email, parent2_name, parent2_phone, parent2_email, school_name, level')
+          .eq('id', lesson._studentId)
+          .single()
+        setContactCard({ lesson, student: data ?? null })
+      } catch {
+        setContactCard({ lesson, student: null })
+      } finally {
+        setContactLoading(false)
+      }
+      return
     }
-  }, [])
+    // Branche 2 : répondant sans compte élève lié (_studentId null, _responseId présent).
+    // La réponse au sondage est déjà en mémoire — pas de requête supplémentaire.
+    // La carte affichera nom + école depuis lesson, et les coordonnées si elles figurent
+    // dans survey_responses (sinon "Aucune coordonnée enregistrée" — cohérent avec branche 1).
+    if (lesson._responseId) {
+      const response = responses.find((r) => r.id === lesson._responseId) ?? null
+      setContactCard({ lesson, student: response })
+    }
+  }, [responses])
 
   /**
    * T7 — Édition d'un créneau réservé directement depuis la grille du Planning intelligent.
