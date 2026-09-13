@@ -41,6 +41,14 @@ function durationToSlots(minutes) {
   return Math.max(1, Math.round(minutes / 15))
 }
 
+// Calcule l'heure de fin au format "HH:MM" à partir d'une heure de début et d'une durée en minutes.
+function addMinutesToTime(timeStr, minutes) {
+  if (!timeStr || !minutes) return null
+  const [h, m] = timeStr.split(':').map(Number)
+  const total  = h * 60 + m + minutes
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+}
+
 // Calcule l'index de colonne et le nombre total de colonnes UNIQUEMENT pour les
 // leçons en conflit qui se chevauchent entre elles. Seules les leçons conflit
 // participent à ce calcul — les cours réels et propositions conservent leur
@@ -1002,6 +1010,9 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   return dayLessons.map((lesson) => {
                   const startSlot    = timeToSlot(lesson.lessonTime)
                   const slotCount    = durationToSlots(lesson.durationMinutes ?? 45)
+                  // Heure de fin calculée pour l'affichage "HH:MM–HH:MM" sur la tuile.
+                  const startTime    = lesson.timeLabel ?? lesson.lessonTime
+                  const endTime      = addMinutesToTime(startTime, lesson.durationMinutes ?? 45)
                   const color        = lessonColor(lesson)
                   const isEnvisage   = lesson.planningStatus === 'envisage'
                   const isConflit    = lesson.planningStatus === 'conflit'
@@ -1086,6 +1097,10 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                             élève lié a aussi droit à la fiche (nom/école depuis le sondage).
                             onPointerDown stoppe systématiquement pour tous les types de tuiles :
                             évite les déplacements accidentels quand on clique sur le nom d'un groupe. */}
+                        {/* Nom de l'élève.
+                            slotCount=1 (15 min, 18 px) : heure de début–fin accolée sur la même
+                            ligne en span pour éviter tout débordement vertical sur une tuile si étroite.
+                            slotCount>=2 : heure sur une ligne séparée (voir bloc ci-dessous). */}
                         <p
                           className="text-[10px] font-semibold leading-tight truncate"
                           style={{
@@ -1097,10 +1112,15 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           title={onViewStudent && (lesson._studentId || lesson._responseId) && !estSelectablePourGroupe ? 'Voir les contacts' : undefined}
                         >
                           {lesson.studentName || 'Élève'}
+                          {slotCount === 1 && endTime && (
+                            <span className="font-normal opacity-70 text-[8px]"> {startTime}–{endTime}</span>
+                          )}
                         </p>
-                        {slotCount >= 3 && (
-                          <p className="text-[9px] leading-tight opacity-70" style={{ color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isEnsemble ? '#7c3aed' : isHorsDispo ? '#f97316' : color }}>
-                            {lesson.timeLabel} · {lesson.durationMinutes} min
+                        {/* Heure début–fin sur ligne séparée — dès 30 min (2 slots) pour avoir assez de hauteur.
+                            Format "HH:MM–HH:MM" plus lisible que "HH:MM · N min" car montre directement la fin. */}
+                        {slotCount >= 2 && endTime && (
+                          <p className={`leading-tight opacity-70 truncate ${slotCount === 2 ? 'text-[8px]' : 'text-[9px]'}`} style={{ color: isChevauchement ? '#f97316' : isConflitSelected ? '#a855f7' : isConflit ? '#ef4444' : isGroupe ? '#10b981' : isEnsemble ? '#7c3aed' : isHorsDispo ? '#f97316' : color }}>
+                            {startTime}–{endTime}
                           </p>
                         )}
                         {/* Icône avertissement hors-dispo — mode déplacement libre */}
