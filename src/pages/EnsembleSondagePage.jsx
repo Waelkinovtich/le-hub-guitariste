@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { Music2, Check, ChevronRight, ChevronLeft, Loader2, AlertCircle } from 'lucide-react'
 import { supabasePublic as supabase } from '../lib/supabase'
+import { trierSlotsDesLignes } from '../utils/creneauxSort'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -39,9 +40,11 @@ const NIVEAUX_ENSEMBLE = [
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// Trie les lignes d'emploi du temps par ordre de jour canonique
+// Trie les lignes par ordre de jour canonique ET leurs créneaux chronologiquement
 function trierLignesSchedule(rows) {
-  return [...rows].sort((a, b) => ORDER_JOURS.indexOf(a.day) - ORDER_JOURS.indexOf(b.day))
+  return trierSlotsDesLignes(
+    [...rows].sort((a, b) => ORDER_JOURS.indexOf(a.day) - ORDER_JOURS.indexOf(b.day))
+  )
 }
 
 // Calcule les étapes selon si la personne est déjà élève

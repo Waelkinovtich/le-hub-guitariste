@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Plus, Copy, Check, Link2, Loader2, Trash2, AlertCircle, School, Filter } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { trierSlotsDesLignes } from '../utils/creneauxSort'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -17,9 +18,11 @@ function buildUrl(token) {
   return `${window.location.origin}/sondage-ensemble/${token}`
 }
 
-// Trie les lignes d'emploi du temps par ordre de jour canonique
+// Trie les lignes par ordre de jour canonique ET leurs créneaux chronologiquement
 function trierLignesSchedule(rows) {
-  return [...rows].sort((a, b) => ORDER_JOURS.indexOf(a.day) - ORDER_JOURS.indexOf(b.day))
+  return trierSlotsDesLignes(
+    [...rows].sort((a, b) => ORDER_JOURS.indexOf(a.day) - ORDER_JOURS.indexOf(b.day))
+  )
 }
 
 // Compte le total de créneaux dans un objet { jour: [slots] }

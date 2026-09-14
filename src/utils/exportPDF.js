@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { LESSON_STATUSES } from './lessonStatus'
+import { slotStartMinutes } from './creneauxSort'
 
 // ─── Constantes de mise en page PDF ──────────────────────────────────────────
 // Source : charte graphique interne — unités en points (pt), format A4.
@@ -455,7 +456,7 @@ function formatDisposPDF(availabilities) {
     // Sans ce tri, "14:00–14:30, 09:00–09:30" produirait deux blocs au lieu d'un seul
     // si les plages sont contigus mais mal ordonnées — et l'affichage serait incohérent.
     // hhmm() est une déclaration de fonction (hoistée) définie plus bas dans ce fichier.
-    const sorted = [...slots].sort((a, b) => hhmm(a.split('–')[0].trim()) - hhmm(b.split('–')[0].trim()))
+    const sorted = [...slots].sort((a, b) => slotStartMinutes(a) - slotStartMinutes(b))
     // Fusionne les plages contigus pour ne pas afficher "09:00–09:15, 09:15–09:30"
     const blocs = []
     let debut = null, fin = null

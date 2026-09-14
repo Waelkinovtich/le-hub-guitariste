@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home, Link2, Link, Merge, Search, X, UserPlus, CheckCircle2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { trierSlots, slotStartMinutes } from '../utils/creneauxSort'
 import HelpTooltip from '../components/HelpTooltip'
 import PhoneActions from '../components/PhoneActions'
 import EmailActions from '../components/EmailActions'
@@ -18,7 +19,9 @@ function fmtAvailabilities(avail) {
   const entries = Object.entries(avail).sort(([a], [b]) => ORDRE.indexOf(a) - ORDRE.indexOf(b))
   return entries.map(([jour, slots]) => ({
     jour,
-    slots: Array.isArray(slots) ? slots : [],
+    // Tri chronologique : les disponibilités sont stockées dans l'ordre de clic,
+    // pas nécessairement dans l'ordre horaire.
+    slots: trierSlots(Array.isArray(slots) ? slots : []),
   }))
 }
 
@@ -407,6 +410,9 @@ function SlotAssignPanel({ response, onConfirmed, onClose }) {
   const jours = Object.entries(avail)
     .sort(([a], [b]) => ORDRE.indexOf(a) - ORDRE.indexOf(b))
     .filter(([, slots]) => Array.isArray(slots) && slots.length > 0)
+    // Tri chronologique des créneaux dans chaque jour — les disponibilités sont
+    // stockées dans l'ordre de clic, pas nécessairement dans l'ordre horaire.
+    .map(([jour, slots]) => [jour, trierSlots(slots)])
 
   const handleSlotClick = (jour, slot, slotsForDay) => {
     const idx = slotsForDay.indexOf(slot)
@@ -430,7 +436,9 @@ function SlotAssignPanel({ response, onConfirmed, onClose }) {
     // not yet selected — must be adjacent
     if (idx === maxIdx + 1 || idx === minIdx - 1) {
       if (selection.slots.length >= 4) return // max 4 slots
-      setSelection({ day: jour, slots: [...selection.slots, slot].sort((a, b) => slotsForDay.indexOf(a) - slotsForDay.indexOf(b)) })
+      // Tri chronologique pour garantir l'ordre des slots sélectionnés indépendamment
+      // de l'ordre dans slotsForDay (qui peut être affecté par des données DB non triées)
+      setSelection({ day: jour, slots: [...selection.slots, slot].sort((a, b) => slotStartMinutes(a) - slotStartMinutes(b)) })
     } else {
       // not adjacent — reset to this slot
       setSelection({ day: jour, slots: [slot] })

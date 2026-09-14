@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { Guitar, ChevronRight, ChevronLeft, Check, Loader2, AlertCircle, Plus, Trash2 } from 'lucide-react'
 import { supabasePublic as supabase } from '../lib/supabase'
 import { REGLE_PAR_DUREE } from '../utils/slotDurationRules'
+import { trierSlots, trierSlotsDesLignes } from '../utils/creneauxSort'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -26,24 +27,8 @@ const USAGES_TUTEUR = ['Organisation', 'Documents pédagogiques', 'Les deux']
 const ROLES_TUTEUR = ['Père', 'Mère', 'Autre']
 const CURRENT_YEAR = '2026-2027'
 
-// Convertit "H:MM" ou "HH:MM" en minutes depuis minuit pour un tri numérique fiable.
-// Comparaison lexicographique sur des chaînes serait incorrecte si l'heure n'est pas
-// paddée ("9:00" < "17:00" échouerait en tri alphabétique : "9" > "1").
-function slotStartMinutes(slot) {
-  const [h, m] = slot.split('–')[0].split(':').map(Number)
-  return h * 60 + (m || 0)
-}
-
-// Trie un tableau de créneaux "HH:MM–HH:MM" par heure de début croissante.
-// Pur et sans mutation : renvoie un nouveau tableau.
-function trierSlots(slots) {
-  return [...(slots ?? [])].sort((a, b) => slotStartMinutes(a) - slotStartMinutes(b))
-}
-
-// Applique trierSlots sur le champ slots de chaque ligne school_schedule.
-function trierLignesSchedule(rows) {
-  return (rows ?? []).map(row => ({ ...row, slots: trierSlots(row.slots) }))
-}
+// trierSlots et trierSlotsDesLignes importés depuis src/utils/creneauxSort.js
+// (source unique de vérité pour le tri chronologique des créneaux dans tout le projet)
 
 function generateAllSlots() {
   const slots = []
@@ -825,7 +810,7 @@ export default function SondagePage() {
         // Tri chronologique à la réception : la DB renvoie les slots dans l'ordre
         // d'insertion, potentiellement incohérent si des créneaux ont été ajoutés
         // en plusieurs fois ou par fusion de lignes.
-        setSchoolSchedules(trierLignesSchedule(data))
+        setSchoolSchedules(trierSlotsDesLignes(data))
         // Toutes les lignes partagent la même valeur — on prend la première non-vide
         const durations = (data ?? []).find((r) => r.available_slot_durations?.length)?.available_slot_durations ?? [30]
         setSchoolDurations(durations)
@@ -852,7 +837,7 @@ export default function SondagePage() {
       .select('day, slots')
       .eq('school_name', schoolName)
       .eq('school_year', CURRENT_YEAR)
-    setSuppSchedules(prev => ({ ...prev, [i]: trierLignesSchedule(data) }))
+    setSuppSchedules(prev => ({ ...prev, [i]: trierSlotsDesLignes(data) }))
     setSuppLoading(prev => ({ ...prev, [i]: false }))
   }
 
