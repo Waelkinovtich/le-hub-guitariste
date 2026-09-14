@@ -27,6 +27,9 @@ const sondageLinksEnsemble = [
 const sondageLinksDivers = [
   { to: '/admin/messages',          icon: MessageSquare, label: 'Modèles de messages' },
 ]
+const absencesLinks = [
+  { to: '/admin/absences', icon: ClipboardCheck, label: 'Absences élèves' },
+]
 
 const planningLinks = [
   { to: '/professeur/planning',       icon: Calendar, label: 'Vue du planning' },
@@ -155,6 +158,7 @@ function SondagesDropdown({ badges = {} }) {
     || location.pathname.startsWith('/admin/envoyer')
     || location.pathname.startsWith('/admin/messages')
     || location.pathname.startsWith('/admin/ensemble')
+    || location.pathname.startsWith('/admin/absences')
   const [open, setOpen] = useState(isActive)
 
   return (
@@ -192,6 +196,12 @@ function SondagesDropdown({ badges = {} }) {
             links={sondageLinksEnsemble}
             badgeFn={(link) => link.to === '/admin/ensemble/reponses' ? <NavBadge count={badges.ensemble} /> : null}
           />
+
+          {/* ── Absences ─────────────────────────────────────────────────── */}
+          <p className="px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+            Absences
+          </p>
+          <SubSectionLinks links={absencesLinks} />
 
           {/* ── Divers ───────────────────────────────────────────────────── */}
           <p className="px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">

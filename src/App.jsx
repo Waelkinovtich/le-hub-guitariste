@@ -49,6 +49,8 @@ const WorkTimePage           = lazy(() => import('./pages/WorkTimePage'))
 const EnsembleSondagePage    = lazy(() => import('./pages/EnsembleSondagePage'))
 const EnsembleLinksPage      = lazy(() => import('./pages/EnsembleLinksPage'))
 const EnsembleResponsesPage  = lazy(() => import('./pages/EnsembleResponsesPage'))
+const AbsencePage            = lazy(() => import('./pages/AbsencePage'))
+const AbsencesPage           = lazy(() => import('./pages/teacher/AbsencesPage'))
 
 // ─── Écran de chargement (fallback Suspense) ──────────────────────────────────
 // Spinner minimaliste inline — identique au spinner d'AppShell —, importé ici
@@ -133,6 +135,7 @@ function AppShell() {
             <Route path="temps-travail" element={<WorkTimePage />} />
             <Route path="ensemble/liens" element={<EnsembleLinksPage />} />
             <Route path="ensemble/reponses" element={<EnsembleResponsesPage />} />
+            <Route path="absences" element={<AbsencesPage />} />
           </Route>
 
           <Route path="/eleve" element={<ProtectedRoute requiredRole="student"><Layout /></ProtectedRoute>}>
@@ -146,6 +149,7 @@ function AppShell() {
           <Route path="/sondage/:token" element={<SondagePage />} />
           <Route path="/sondage-rapide/:token" element={<QuickSurveyPage />} />
           <Route path="/creneau/:token" element={<CreneauPage />} />
+          <Route path="/absence/:token" element={<AbsencePage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
