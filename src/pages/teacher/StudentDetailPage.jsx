@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useCallback, useState, useEffect } from 'react'
-import { ArrowLeft, Pencil, Trash2, Phone, Mail, NotebookPen, Send, Plus, X, ChevronDown, ChevronUp, Loader2, AlertCircle, Check } from 'lucide-react'
+import { ArrowLeft, Pencil, Trash2, Phone, Mail, NotebookPen, Send, Plus, X, ChevronDown, ChevronUp, Loader2, AlertCircle, Check, TrendingUp as TrendingUpIcon } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import {
@@ -18,6 +18,8 @@ import EmailActions from '../../components/EmailActions'
 import DicteeAudio from '../../components/DicteeAudio'
 import { getSchoolColor } from '../../utils/schoolColors'
 import StudentGroupHistory from '../groupes/StudentGroupHistory'
+import { calculerTauxAbsence } from '../../utils/absenceStats'
+import { currentSchoolYear, schoolYearRange } from '../../context/PeriodContext'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -601,6 +603,44 @@ export default function StudentDetailPage() {
   // Contextes en état local — mis à jour après reload pour rafraîchir AddStudentModal
   const [contexts, setContexts] = useState([])
 
+  // ── Taux d'absence : chargement asynchrone, indépendant du load principal ──
+  // Deux requêtes légères (lesson_date + status uniquement).
+  const [statsAbsence, setStatsAbsence] = useState(null)
+  // { eleve: ReturnType<calculerTauxAbsence>, general: ReturnType<calculerTauxAbsence>, annee: string }
+
+  useEffect(() => {
+    if (!user?.id || !id) return
+    // Plage de l'année scolaire courante (ex : 1er août 2026 → 31 juillet 2027)
+    const annee = currentSchoolYear()
+    const [debut, fin] = schoolYearRange(annee)
+    const pad = (n) => String(n).padStart(2, '0')
+    const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    const debutISO = isoDate(debut)
+    const finISO   = isoDate(fin)
+
+    Promise.all([
+      // Cours de CET élève sur l'année scolaire
+      supabase.from('lessons')
+        .select('lesson_date, status')
+        .eq('student_id', id)
+        .eq('teacher_id', user.id)
+        .gte('lesson_date', debutISO)
+        .lte('lesson_date', finISO),
+      // Tous les cours du professeur sur la même période (pour la moyenne générale)
+      supabase.from('lessons')
+        .select('lesson_date, status')
+        .eq('teacher_id', user.id)
+        .gte('lesson_date', debutISO)
+        .lte('lesson_date', finISO),
+    ]).then(([{ data: eleveData }, { data: globalData }]) => {
+      setStatsAbsence({
+        eleve:   calculerTauxAbsence(eleveData ?? []),
+        general: calculerTauxAbsence(globalData ?? []),
+        annee,
+      })
+    }).catch(() => { /* erreur réseau : section simplement absente */ })
+  }, [user?.id, id])
+
   const load = useCallback(async () => {
     const [students, schools, ctxData] = await Promise.all([
       fetchTeacherStudents(user.id),
@@ -767,6 +807,93 @@ export default function StudentDetailPage() {
           </div>
         </div>
       </Section>
+
+      {/* ── Taux d'absence individuel ─────────────────────────────────────── */}
+      {statsAbsence && (
+        <Section
+          title={`Absences — ${statsAbsence.annee}`}
+          help="Calculé sur les cours émargés (présent/absent/excusé). Les cours non encore émargés sont exclus."
+        >
+          {statsAbsence.eleve.nbCours === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Aucun cours émargé pour cet élève sur l'année scolaire en cours.
+            </p>
+          ) : (() => {
+            const { taux: tauxE, nbCours, nbAbsences } = statsAbsence.eleve
+            const { taux: tauxG } = statsAbsence.general
+            // Écart en points de pourcentage (null si l'un des deux taux est null)
+            const ecart = tauxE !== null && tauxG !== null ? tauxE - tauxG : null
+
+            // Couleur et libellé de l'indicateur d'écart
+            let ecartColor = 'text-muted-foreground'
+            let ecartLabel = '—'
+            if (ecart !== null) {
+              if (ecart > 10) {
+                ecartColor = 'text-orange-400'
+                ecartLabel = `+${ecart} points au-dessus de la moyenne`
+              } else if (ecart > 5) {
+                ecartColor = 'text-yellow-400'
+                ecartLabel = `+${ecart} points au-dessus de la moyenne`
+              } else if (ecart <= -5) {
+                ecartColor = 'text-emerald-400'
+                ecartLabel = `${ecart} points en dessous de la moyenne`
+              } else {
+                ecartColor = 'text-muted-foreground'
+                ecartLabel = 'Dans la moyenne (±5 points)'
+              }
+            }
+
+            return (
+              <div className="space-y-4">
+                {/* Chiffres clés */}
+                <div className="flex flex-wrap gap-6">
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Taux d'absence</p>
+                    <p className={`text-2xl font-bold ${
+                      tauxE >= 30 ? 'text-orange-400'
+                      : tauxE >= 15 ? 'text-yellow-400'
+                      : 'text-emerald-400'
+                    }`}>
+                      {tauxE} %
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Absences</p>
+                    <p className="text-2xl font-bold text-foreground">{nbAbsences}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Cours émargés</p>
+                    <p className="text-2xl font-bold text-foreground">{nbCours}</p>
+                  </div>
+                </div>
+
+                {/* Comparaison à la moyenne générale */}
+                <div className="rounded-xl bg-surface p-3 border border-border-subtle flex items-start gap-3">
+                  <TrendingUpIcon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">
+                      Moyenne générale (tous élèves) :{' '}
+                      <span className="font-medium text-foreground">
+                        {tauxG !== null ? `${tauxG} %` : 'Aucune donnée'}
+                      </span>
+                      {statsAbsence.general.nbCours > 0 && (
+                        <span className="ml-1 text-muted">
+                          sur {statsAbsence.general.nbCours} cours
+                        </span>
+                      )}
+                    </p>
+                    {ecart !== null && (
+                      <p className={`text-xs font-medium mt-0.5 ${ecartColor}`}>
+                        {ecartLabel}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+        </Section>
+      )}
 
       {paidByThis && paidByThis.length > 0 && (
         <Section title="Paie aussi les cours de">

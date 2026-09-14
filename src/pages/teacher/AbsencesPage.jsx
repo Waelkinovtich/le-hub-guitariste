@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Copy, Check, RefreshCw, AlertCircle, ChevronDown, ChevronUp, X, CheckCircle2 } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Copy, Check, RefreshCw, AlertCircle, ChevronDown, ChevronUp, X, CheckCircle2, BarChart2 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
+import { calculerTauxAbsence } from '../../utils/absenceStats'
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 
@@ -166,10 +168,16 @@ function StudentSummaryRow({ student, declarations }) {
 // ─── Page principale ──────────────────────────────────────────────────────────
 
 export default function AbsencesPage() {
-  const { user } = useAuth()
+  const { user }   = useAuth()
+  const { period } = usePeriod()
 
   const [token,      setToken]      = useState(null)
   const [linkLoading, setLinkLoading] = useState(true)
+
+  // ── Données d'émargement pour le calcul du taux ──────────────────────────
+  // Uniquement lesson_date + status : requête très légère (~2 colonnes).
+  const [allLessons,    setAllLessons]    = useState([])
+  const [lessonsLoading, setLessonsLoading] = useState(true)
 
   const [declarations, setDeclarations] = useState([])
   const [declLoading,  setDeclLoading]  = useState(true)
@@ -212,6 +220,19 @@ export default function AbsencesPage() {
 
   useEffect(() => { loadOrCreateLink() }, [loadOrCreateLink])
 
+  // ── Chargement des cours (émargement réel) ───────────────────────────────
+  // Séparé des déclarations : ce sont deux systèmes distincts.
+  useEffect(() => {
+    if (!user?.id) return
+    setLessonsLoading(true)
+    supabase
+      .from('lessons')
+      .select('lesson_date, status')
+      .eq('teacher_id', user.id)
+      .then(({ data }) => setAllLessons(data ?? []))
+      .finally(() => setLessonsLoading(false))
+  }, [user?.id])
+
   // ── Chargement des déclarations avec jointure sur students ───────────────
   useEffect(() => {
     if (!user?.id) return
@@ -249,6 +270,12 @@ export default function AbsencesPage() {
     return true
   })
 
+  // ── Taux d'absence général filtré par la période de la sidebar ──────────
+  const tauxGeneral = useMemo(() => {
+    const lessonsFiltres = filterLessonsByPeriod(allLessons, period)
+    return calculerTauxAbsence(lessonsFiltres)
+  }, [allLessons, period])
+
   // ── Récapitulatif par élève ───────────────────────────────────────────────
   const byStudent = {}
   for (const d of declarations) {
@@ -264,6 +291,50 @@ export default function AbsencesPage() {
       <h1 className="font-display text-2xl mb-6">Absences élèves</h1>
 
       <AbsenceLinkCard token={token} loading={linkLoading} onRegenerate={loadOrCreateLink} />
+
+      {/* ── Taux d'absence général (émargement) ─────────────────────────── */}
+      {/* Données issues de lessons.status, PAS des déclarations élèves.    */}
+      <div className="rounded-xl border border-border-subtle bg-surface-raised p-4 mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <BarChart2 className="w-4 h-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">Taux d'absence — émargement réel</h2>
+          <span className="ml-auto text-xs text-muted-foreground">
+            {period.mode === 'toutes' ? 'Toutes les années' : 'Selon la période de la barre latérale'}
+          </span>
+        </div>
+
+        {lessonsLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            Calcul en cours…
+          </div>
+        ) : tauxGeneral.nbCours === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Aucun cours émargé sur cette période.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-6">
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Taux d'absence</p>
+              <p className={`text-3xl font-bold ${
+                tauxGeneral.taux >= 30 ? 'text-orange-400'
+                : tauxGeneral.taux >= 15 ? 'text-yellow-400'
+                : 'text-emerald-400'
+              }`}>
+                {tauxGeneral.taux} %
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Absences</p>
+              <p className="text-3xl font-bold text-foreground">{tauxGeneral.nbAbsences}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Cours émargés</p>
+              <p className="text-3xl font-bold text-foreground">{tauxGeneral.nbCours}</p>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* ── Onglets ─────────────────────────────────────────────────────── */}
       <div className="flex gap-1 mb-4 border-b border-border-subtle">

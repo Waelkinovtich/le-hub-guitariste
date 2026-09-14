@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react'
-import { Users, Calendar, BookOpen, TrendingUp } from 'lucide-react'
+import { Users, Calendar, BookOpen, TrendingUp, UserX } from 'lucide-react'
 import HelpTooltip from '../../components/HelpTooltip'
 import StatCard from '../../components/StatCard'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
@@ -8,6 +8,7 @@ import { useFetch } from '../../hooks/useFetch'
 import { fetchTeacherStudents } from '../../services/students'
 import { fetchUpcomingLessons, fetchLessonsInRange } from '../../services/lessons'
 import { endOfWeek, startOfWeek, toISODate } from '../../utils/format'
+import { calculerTauxAbsence } from '../../utils/absenceStats'
 
 const statIcons = [Users, Calendar, BookOpen, TrendingUp]
 
@@ -71,6 +72,9 @@ export default function TeacherDashboard() {
   const recentStudents = data.students.slice(0, 4)
   const upcoming = data.upcoming.slice(0, 4)
 
+  // Calcul du taux d'absence de la semaine (cours émargés uniquement)
+  const absenceSemaine = calculerTauxAbsence(data.weekLessons)
+
   return (
     <div className="p-6 sm:p-8 max-w-7xl">
       <header className="mb-8">
@@ -81,11 +85,44 @@ export default function TeacherDashboard() {
         <p className="text-muted-foreground mt-1">Vue d&apos;ensemble de votre activité pédagogique</p>
       </header>
 
-      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
         {stats.map((stat, i) => (
           <StatCard key={stat.label} {...stat} icon={statIcons[i]} />
         ))}
       </div>
+
+      {/* ── Encart absences hebdomadaires ──────────────────────────────────── */}
+      {/* N'apparaît que si au moins un cours est émargé cette semaine */}
+      {absenceSemaine.nbCours > 0 && (
+        <div className="glass-panel rounded-2xl p-5 mb-8 flex flex-wrap items-center gap-6">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-orange-500/10 flex items-center justify-center">
+              <UserX className="w-4 h-4 text-orange-400" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Absences cette semaine</p>
+              <p className="text-xl font-bold text-foreground">{absenceSemaine.nbAbsences}</p>
+            </div>
+          </div>
+          <div className="h-8 w-px bg-border-subtle hidden sm:block" />
+          <div>
+            <p className="text-xs text-muted-foreground">Taux d'absence</p>
+            <p className={`text-xl font-bold ${
+              absenceSemaine.taux === null ? 'text-muted-foreground'
+              : absenceSemaine.taux >= 30 ? 'text-orange-400'
+              : absenceSemaine.taux >= 15 ? 'text-yellow-400'
+              : 'text-emerald-400'
+            }`}>
+              {absenceSemaine.taux === null ? '—' : `${absenceSemaine.taux} %`}
+            </p>
+          </div>
+          <div className="h-8 w-px bg-border-subtle hidden sm:block" />
+          <p className="text-xs text-muted-foreground">
+            Sur {absenceSemaine.nbCours} cours émargé{absenceSemaine.nbCours > 1 ? 's' : ''} cette semaine
+          </p>
+        </div>
+      )}
+
 
       <div className="grid lg:grid-cols-5 gap-6">
         <section className="lg:col-span-3 glass-panel rounded-2xl p-6">
