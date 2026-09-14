@@ -22,8 +22,13 @@ export function useLongPressAction() {
     clearTimeout(timerRef.current)
   }, [])
 
-  const onPointerDown = useCallback(() => {
+  const onPointerDown = useCallback((e) => {
     clearTimer()
+    // Sur tactile/stylet, bloque la sélection de texte native du navigateur
+    // (qui s'activerait aussi après ~500 ms d'appui, entrant en conflit avec
+    // notre menu). Sur souris (mouse), on laisse la sélection se faire
+    // normalement — d'où l'absence de select-none dans LongPressMenu.
+    if (e.pointerType !== 'mouse') e.preventDefault()
     timerRef.current = setTimeout(() => setOpen(true), DUREE_APPUI_LONG_MS)
   }, [clearTimer])
 

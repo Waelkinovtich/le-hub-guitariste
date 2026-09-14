@@ -44,7 +44,7 @@ export default function LongPressMenu({ label, title, actions }) {
         aria-expanded={open}
         title={title}
         onKeyDown={handleKeyDownTrigger}
-        className="cursor-default select-none focus:outline-none focus-visible:underline focus-visible:text-guitar-400"
+        className="cursor-default focus:outline-none focus-visible:underline focus-visible:text-guitar-400"
       >
         {label}
       </span>

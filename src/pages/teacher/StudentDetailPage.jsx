@@ -20,6 +20,7 @@ import { getSchoolColor } from '../../utils/schoolColors'
 import StudentGroupHistory from '../groupes/StudentGroupHistory'
 import { calculerTauxAbsence } from '../../utils/absenceStats'
 import { currentSchoolYear, schoolYearRange } from '../../context/PeriodContext'
+import AbsenceDeclarationRow from '../../components/AbsenceDeclarationRow'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -608,6 +609,10 @@ export default function StudentDetailPage() {
   const [statsAbsence, setStatsAbsence] = useState(null)
   // { eleve: ReturnType<calculerTauxAbsence>, general: ReturnType<calculerTauxAbsence>, annee: string }
 
+  // ── Déclarations d'absence pour cet élève ────────────────────────────────
+  const [declsEleve,   setDeclsEleve]   = useState([])
+  const [declsLoading, setDeclsLoading] = useState(true)
+
   useEffect(() => {
     if (!user?.id || !id) return
     // Plage de l'année scolaire courante (ex : 1er août 2026 → 31 juillet 2027)
@@ -640,6 +645,27 @@ export default function StudentDetailPage() {
       })
     }).catch(() => { /* erreur réseau : section simplement absente */ })
   }, [user?.id, id])
+
+  // ── Chargement des déclarations d'absence de cet élève ───────────────────
+  useEffect(() => {
+    if (!user?.id || !id) return
+    setDeclsLoading(true)
+    supabase
+      .from('absence_declarations')
+      .select('id, lesson_date, lesson_time, lesson_school, declared_at, excused, excused_manual, cancelled_at')
+      .eq('student_id', id)
+      .eq('teacher_id', user.id)
+      .order('lesson_date', { ascending: false })
+      .then(({ data }) => setDeclsEleve(data ?? []))
+      .finally(() => setDeclsLoading(false))
+  }, [user?.id, id])
+
+  // Mise à jour locale après toggle excused (même pattern que AbsencesPage)
+  function handleExcusedChange(declId, newExcused, newManual) {
+    setDeclsEleve((prev) =>
+      prev.map((d) => d.id === declId ? { ...d, excused: newExcused, excused_manual: newManual } : d)
+    )
+  }
 
   const load = useCallback(async () => {
     const [students, schools, ctxData] = await Promise.all([
@@ -892,6 +918,37 @@ export default function StudentDetailPage() {
               </div>
             )
           })()}
+        </Section>
+      )}
+
+      {/* ── Déclarations d'absence de l'élève ──────────────────────────────── */}
+      {!declsLoading && declsEleve.length > 0 && (
+        <Section
+          title="Déclarations d'absence"
+          help="Absences déclarées par l'élève via le lien de déclaration. Le statut peut être modifié manuellement ci-dessous."
+        >
+          <div className="overflow-x-auto -mx-1">
+            <table className="w-full text-left min-w-[600px]">
+              <thead>
+                <tr className="border-b border-border-subtle text-xs text-muted-foreground uppercase tracking-wide">
+                  <th className="py-2 pr-4 pl-1 font-semibold">Cours</th>
+                  <th className="py-2 pr-4 font-semibold">Déclarée le</th>
+                  <th className="py-2 pr-4 font-semibold">Statut</th>
+                  <th className="py-2 pr-4 font-semibold">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {declsEleve.map((d) => (
+                  <AbsenceDeclarationRow
+                    key={d.id}
+                    decl={d}
+                    onExcusedChange={handleExcusedChange}
+                    showStudentName={false}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Section>
       )}
 

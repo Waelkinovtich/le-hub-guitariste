@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Copy, Check, RefreshCw, AlertCircle, ChevronDown, ChevronUp, X, CheckCircle2, BarChart2 } from 'lucide-react'
+import { Copy, Check, RefreshCw, AlertCircle, ChevronDown, ChevronUp, X, BarChart2 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
 import { calculerTauxAbsence } from '../../utils/absenceStats'
+import AbsenceDeclarationRow from '../../components/AbsenceDeclarationRow'
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
 
@@ -18,13 +19,6 @@ function formatTime(timeStr) {
   if (!timeStr) return '—'
   const [h, m] = timeStr.split(':')
   return m === '00' ? `${h}h` : `${h}h${m}`
-}
-
-function formatDatetime(isoStr) {
-  if (!isoStr) return '—'
-  return new Date(isoStr).toLocaleString('fr-FR', {
-    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  })
 }
 
 // ─── Composant : lien de déclaration ─────────────────────────────────────────
@@ -79,37 +73,6 @@ function AbsenceLinkCard({ token, loading, onRegenerate }) {
   )
 }
 
-// ─── Composant : ligne de déclaration dans le tableau ────────────────────────
-
-function DeclarationRow({ decl }) {
-  const passe   = new Date(decl.lesson_date + 'T' + (decl.lesson_time ?? '00:00:00')) <= new Date()
-  const annulee = !!decl.cancelled_at
-
-  return (
-    <tr className={`border-b border-border-subtle ${annulee || passe ? 'opacity-50' : ''}`}>
-      <td className="py-2.5 pr-4 text-sm font-medium">{decl.student_name}</td>
-      <td className="py-2.5 pr-4 text-sm capitalize text-muted-foreground">{formatDate(decl.lesson_date)}</td>
-      <td className="py-2.5 pr-4 text-sm text-muted-foreground">{formatTime(decl.lesson_time)}</td>
-      <td className="py-2.5 pr-4 text-xs text-muted-foreground">{decl.lesson_school ?? '—'}</td>
-      <td className="py-2.5 pr-4">
-        {annulee ? (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-surface-overlay text-muted-foreground border border-border-subtle">
-            <X className="w-2.5 h-2.5" /> Annulée
-          </span>
-        ) : decl.excused ? (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            <CheckCircle2 className="w-2.5 h-2.5" /> Excusée
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-orange-500/10 text-orange-400 border border-orange-500/20">
-            <AlertCircle className="w-2.5 h-2.5" /> Non excusée
-          </span>
-        )}
-      </td>
-      <td className="py-2.5 text-xs text-muted-foreground">{formatDatetime(decl.declared_at)}</td>
-    </tr>
-  )
-}
 
 // ─── Composant : récapitulatif par élève ─────────────────────────────────────
 
@@ -242,7 +205,7 @@ export default function AbsencesPage() {
       .from('absence_declarations')
       .select(`
         id, lesson_date, lesson_time, lesson_school,
-        declared_at, excused, cancelled_at,
+        declared_at, excused, excused_manual, cancelled_at,
         student:students(id, first_name, last_name)
       `)
       .eq('teacher_id', user.id)
@@ -275,6 +238,14 @@ export default function AbsencesPage() {
     const lessonsFiltres = filterLessonsByPeriod(allLessons, period)
     return calculerTauxAbsence(lessonsFiltres)
   }, [allLessons, period])
+
+  // ── Mise à jour locale après toggle excused ──────────────────────────────
+  // Évite un rechargement complet : synchronise uniquement la ligne modifiée.
+  function handleExcusedChange(id, newExcused, newManual) {
+    setDeclarations((prev) =>
+      prev.map((d) => d.id === id ? { ...d, excused: newExcused, excused_manual: newManual } : d)
+    )
+  }
 
   // ── Récapitulatif par élève ───────────────────────────────────────────────
   const byStudent = {}
@@ -402,19 +373,25 @@ export default function AbsencesPage() {
           <p className="text-sm text-muted-foreground py-8 text-center">Aucune déclaration trouvée.</p>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-border-subtle">
-            <table className="w-full text-left min-w-[700px]">
+            <table className="w-full text-left min-w-[800px]">
               <thead>
                 <tr className="border-b border-border-subtle bg-surface-raised text-xs text-muted-foreground uppercase tracking-wide">
                   <th className="py-2.5 pr-4 pl-4 font-semibold">Élève</th>
-                  <th className="py-2.5 pr-4 font-semibold">Date du cours</th>
-                  <th className="py-2.5 pr-4 font-semibold">Heure</th>
-                  <th className="py-2.5 pr-4 font-semibold">Lieu</th>
-                  <th className="py-2.5 pr-4 font-semibold">Statut</th>
+                  <th className="py-2.5 pr-4 font-semibold">Cours (date · heure · lieu)</th>
                   <th className="py-2.5 pr-4 font-semibold">Déclarée le</th>
+                  <th className="py-2.5 pr-4 font-semibold">Statut</th>
+                  <th className="py-2.5 pr-4 font-semibold">Action</th>
                 </tr>
               </thead>
-              <tbody className="pl-4">
-                {filtered.map((d) => <DeclarationRow key={d.id} decl={d} />)}
+              <tbody>
+                {filtered.map((d) => (
+                  <AbsenceDeclarationRow
+                    key={d.id}
+                    decl={d}
+                    onExcusedChange={handleExcusedChange}
+                    showStudentName
+                  />
+                ))}
               </tbody>
             </table>
           </div>
