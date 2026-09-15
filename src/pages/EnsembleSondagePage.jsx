@@ -47,15 +47,19 @@ function trierLignesSchedule(rows) {
   )
 }
 
-// Calcule les étapes selon si la personne est déjà élève
-function getStepIds(estDejaEleve) {
-  if (estDejaEleve === true) return ['identite', 'disponibilites']
-  return ['identite', 'instrument', 'disponibilites']
+// Calcule les étapes selon si la personne est déjà élève ET selon le mode du lien
+// mode='fixe' → dernière étape = 'confirmation' (choix binaire présent/absent)
+// mode='choix' → dernière étape = 'disponibilites' (comportement actuel)
+function getStepIds(estDejaEleve, tokenMode) {
+  const derniereEtape = tokenMode === 'fixe' ? 'confirmation' : 'disponibilites'
+  if (estDejaEleve === true) return ['identite', derniereEtape]
+  return ['identite', 'instrument', derniereEtape]
 }
 const STEP_LABELS = {
   identite:       'Identité',
   instrument:     'Instrument & Compétences',
   disponibilites: 'Disponibilités',
+  confirmation:   'Confirmation',
 }
 
 // ─── Helpers UI ───────────────────────────────────────────────────────────────
@@ -329,6 +333,63 @@ function StepDisponibilites({ data, onChange, scheduleJours }) {
   )
 }
 
+/** Affiche l'horaire fixe annoncé par le professeur et demande une confirmation de présence. */
+function StepConfirmation({ data, onChange, creneauxProposes }) {
+  // Extrait le premier (et unique) créneau du token en mode fixe
+  const info = useMemo(() => {
+    if (!creneauxProposes) return null
+    const entries = Object.entries(creneauxProposes)
+    if (entries.length === 0) return null
+    const [jour, slots] = entries[0]
+    const slot = slots?.[0]
+    if (!slot) return null
+    const [debut, fin] = slot.split('–')
+    return { jour, debut: debut?.trim(), fin: fin?.trim() }
+  }, [creneauxProposes])
+
+  if (!info) {
+    return (
+      <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 px-4 py-3">
+        <p className="text-sm text-amber-400">Aucun horaire fixe défini pour ce lien. Contactez votre professeur.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-xl border border-guitar-600/30 bg-guitar-600/5 px-5 py-4">
+        <p className="text-sm text-muted-foreground mb-1">La répétition aura lieu</p>
+        <p className="text-xl font-semibold">
+          {info.jour} · {info.debut} – {info.fin}
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        <p className="text-sm font-medium">Pouvez-vous être présent(e) ?</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[
+            { v: true,  label: '✅ Je confirme ma présence' },
+            { v: false, label: '❌ Je ne suis pas disponible' },
+          ].map(({ v, label }) => (
+            <button
+              key={String(v)}
+              type="button"
+              onClick={() => onChange({ ...data, confirme_presence: v })}
+              className={`px-4 py-4 rounded-xl border text-sm text-left font-medium transition-all ${
+                data.confirme_presence === v
+                  ? 'border-guitar-600 bg-guitar-600/10 text-guitar-400'
+                  : 'border-border-subtle bg-surface-raised text-muted-foreground hover:border-border'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── État initial du formulaire ───────────────────────────────────────────────
 
 const defaultForm = {
@@ -341,6 +402,7 @@ const defaultForm = {
   solfege_rythmique: null, harmonie: null,
   experience_groupe: null, experience_groupe_duree: '',
   availabilities: {},
+  confirme_presence: null, // mode='fixe' : true = présent, false = absent
 }
 
 // ─── Validation par étape ─────────────────────────────────────────────────────
@@ -349,6 +411,7 @@ function validerEtape(stepId, form) {
   if (stepId === 'identite') return form.prenom.trim() && form.nom.trim() && form.est_deja_eleve !== null
   if (stepId === 'instrument') return form.instrument && form.niveau && (form.instrument !== 'Autre' || form.instrument_autre.trim())
   if (stepId === 'disponibilites') return Object.keys(form.availabilities).length > 0
+  if (stepId === 'confirmation') return form.confirme_presence !== null
   return true
 }
 
@@ -358,6 +421,7 @@ export default function EnsembleSondagePage() {
   const { token } = useParams()
   const [status,          setStatus]          = useState('loading')
   const [tokenRow,        setTokenRow]        = useState(null)
+  const [tokenMode,       setTokenMode]       = useState('choix') // 'choix' | 'fixe' — chargé en Phase 2b
   const [scheduleJours,   setScheduleJours]   = useState(null) // null = chargement, [] = libre
   const [creneauxProposes, setCreneauxProposes] = useState(null) // null = non chargé / restriction absente
   const [stepIdx,         setStepIdx]         = useState(0)
@@ -365,8 +429,8 @@ export default function EnsembleSondagePage() {
   const [submitting,      setSubmitting]       = useState(false)
   const [submitError,     setSubmitError]     = useState('')
 
-  // Étapes dynamiques selon est_deja_eleve
-  const stepIds = useMemo(() => getStepIds(form.est_deja_eleve), [form.est_deja_eleve])
+  // Étapes dynamiques selon est_deja_eleve ET le mode du lien
+  const stepIds = useMemo(() => getStepIds(form.est_deja_eleve, tokenMode), [form.est_deja_eleve, tokenMode])
 
   // Priorité : creneaux_proposes (restriction prof) > school_schedules > créneaux libres
   // creneaux_proposes format : { "Mardi": ["17:00–17:30", ...] } (même structure qu'availabilities)
@@ -425,26 +489,27 @@ export default function EnsembleSondagePage() {
         setScheduleJours([]) // pas d'école liée → créneaux libres
       }
 
-      // Phase 2b : restriction de créneaux définie sur ce token par le professeur.
-      // SELECT séparé car creneaux_proposes n'existe qu'après migration-enrichissement-sondage-ensemble.sql.
+      // Phase 2b : colonnes enrichies (creneaux_proposes + mode).
+      // SELECT séparé car ces colonnes n'existent qu'après migration-enrichissement + migration-mode-fixe.
       // Erreur ignorée silencieusement (colonne absente pre-migration → comportement par défaut inchangé).
       supabase
         .from('ensemble_tokens')
-        .select('creneaux_proposes')
+        .select('creneaux_proposes, mode')
         .eq('id', data.id)
         .maybeSingle()
         .then(({ data: cpRow }) => {
           if (cpRow?.creneaux_proposes) setCreneauxProposes(cpRow.creneaux_proposes)
+          if (cpRow?.mode)              setTokenMode(cpRow.mode)
         })
-        .catch(() => { /* colonne absente pre-migration — pas de restriction */ })
+        .catch(() => { /* colonnes absentes pre-migration — comportement par défaut */ })
     }
     checkToken()
   }, [token])
 
-  // Réinitialiser stepIdx si les étapes changent (bascule élève ↔ externe)
+  // Réinitialiser stepIdx si les étapes changent (bascule élève ↔ externe, ou chargement mode du token)
   useEffect(() => {
     setStepIdx(0)
-  }, [form.est_deja_eleve])
+  }, [form.est_deja_eleve, tokenMode])
 
   // ── Soumission ────────────────────────────────────────────────────────────
 
@@ -483,11 +548,17 @@ export default function EnsembleSondagePage() {
         finalParticipantId = participantId
       }
 
+      // Mode fixe : confirme_presence=true → on enregistre le créneau fixe, false → réponse vide
+      // Mode choix : on enregistre les créneaux cochés normalement
+      const availabilities = tokenMode === 'fixe'
+        ? (form.confirme_presence === true ? (creneauxProposes ?? {}) : {})
+        : form.availabilities
+
       const { error: rErr } = await supabase.from('ensemble_responses').insert({
         teacher_id:     tokenRow.teacher_id,
         token_id:       tokenRow.id,
         participant_id: finalParticipantId,
-        availabilities: form.availabilities,
+        availabilities,
         status:         'attente',
       })
       if (rErr) throw rErr
@@ -568,6 +639,7 @@ export default function EnsembleSondagePage() {
     identite:       <StepIdentite       data={form} onChange={setForm} />,
     instrument:     <StepInstrument     data={form} onChange={setForm} />,
     disponibilites: <StepDisponibilites data={form} onChange={setForm} scheduleJours={effectiveScheduleJours} />,
+    confirmation:   <StepConfirmation   data={form} onChange={setForm} creneauxProposes={creneauxProposes} />,
   }
 
   return (
