@@ -31,6 +31,27 @@ function totalCreneauxProposes(cp) {
   return Object.values(cp).reduce((s, arr) => s + arr.length, 0)
 }
 
+// Convertit [{day, start, end}] → { jour: ["HH:MM–HH:MM", ...] }
+function creneauxManuelsToMap(manuels) {
+  const map = {}
+  for (const { day, start, end } of manuels) {
+    const slot = `${start}–${end}`
+    map[day] = [...(map[day] ?? []), slot]
+  }
+  return map
+}
+
+// Fusionne les créneaux cochés depuis school_schedules et les créneaux ajoutés manuellement
+// dans la même structure { jour: [slots] }
+function fusionnerCreneaux(coches, manuels) {
+  const manuelsMap = creneauxManuelsToMap(manuels)
+  const fusion = { ...coches }
+  for (const [jour, slots] of Object.entries(manuelsMap)) {
+    fusion[jour] = [...(fusion[jour] ?? []), ...slots]
+  }
+  return fusion
+}
+
 const inputCls = 'w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600 transition-colors'
 const selectCls = inputCls + ' cursor-pointer'
 
@@ -58,6 +79,94 @@ function CopyButton({ url }) {
       {copied ? <Check className="w-3.5 h-3.5 text-guitar-400" /> : <Copy className="w-3.5 h-3.5" />}
       {copied ? 'Copié !' : 'Copier'}
     </button>
+  )
+}
+
+// ─── Ajout manuel de créneaux libres ─────────────────────────────────────────
+
+/**
+ * Permet d'ajouter des créneaux libres (sans contrainte school_schedules).
+ * manuels  : [{day, start, end}] — liste courante
+ * onAdd    : fonction appelée avec {day, start, end}
+ * onRemove : fonction appelée avec l'index à supprimer
+ */
+function AjoutCreneauManuel({ manuels, onAdd, onRemove }) {
+  const [jour,  setJour]  = useState(ORDER_JOURS[0])
+  const [debut, setDebut] = useState('')
+  const [fin,   setFin]   = useState('')
+  const [err,   setErr]   = useState('')
+
+  function handleAjouter() {
+    setErr('')
+    if (!debut || !fin) { setErr('Heure de début et de fin requises'); return }
+    if (debut >= fin)   { setErr("L'heure de fin doit être après l'heure de début"); return }
+    // Déduplication : évite d'ajouter deux fois le même créneau
+    if (manuels.some((m) => m.day === jour && m.start === debut && m.end === fin)) {
+      setErr('Ce créneau existe déjà'); return
+    }
+    onAdd({ day: jour, start: debut, end: fin })
+    setDebut('')
+    setFin('')
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <select
+          value={jour}
+          onChange={(e) => setJour(e.target.value)}
+          className={selectCls + ' flex-1 min-w-[120px]'}
+        >
+          {ORDER_JOURS.map((j) => <option key={j} value={j}>{j}</option>)}
+        </select>
+        <input
+          type="time"
+          value={debut}
+          onChange={(e) => setDebut(e.target.value)}
+          className={inputCls + ' flex-1 min-w-[100px]'}
+          aria-label="Heure de début"
+        />
+        <span className="text-xs text-muted-foreground shrink-0">→</span>
+        <input
+          type="time"
+          value={fin}
+          onChange={(e) => setFin(e.target.value)}
+          className={inputCls + ' flex-1 min-w-[100px]'}
+          aria-label="Heure de fin"
+        />
+        <button
+          type="button"
+          onClick={handleAjouter}
+          className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/30 text-guitar-400 text-xs font-medium hover:bg-guitar-600/20 transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Ajouter
+        </button>
+      </div>
+      {err && <p className="text-xs text-red-400">{err}</p>}
+
+      {manuels.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {manuels.map((m, i) => (
+            <span
+              key={i}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs border border-guitar-600/40 bg-guitar-600/10 text-guitar-400"
+            >
+              <span className="font-medium">{m.day}</span>
+              <span>{m.start}–{m.end}</span>
+              <button
+                type="button"
+                onClick={() => onRemove(i)}
+                className="ml-0.5 hover:text-red-400 transition-colors leading-none"
+                title="Supprimer ce créneau"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -190,7 +299,8 @@ export default function EnsembleLinksPage() {
   const [formType,          setFormType]          = useState('generique')
   const [formLabel,         setFormLabel]         = useState('')
   const [formSchoolId,      setFormSchoolId]      = useState('')
-  const [formCreneaux,      setFormCreneaux]      = useState({}) // créneaux restreints sélectionnés
+  const [formCreneaux,      setFormCreneaux]      = useState({}) // créneaux restreints sélectionnés (school_schedules)
+  const [creneauxManuels,   setCreneauxManuels]   = useState([]) // créneaux libres ajoutés manuellement
   const [formSchoolSchedule, setFormSchoolSchedule] = useState([]) // créneaux complets de l'école choisie
   const [loadingSchedule,   setLoadingSchedule]   = useState(false)
   const [formErr,           setFormErr]           = useState('')
@@ -276,8 +386,10 @@ export default function EnsembleLinksPage() {
     setFormErr('')
     setSaving(true)
     const ecole = schools.find((s) => s.id === formSchoolId)
-    // Null si aucun créneau sélectionné → tous proposés (comportement par défaut)
-    const creneauxProposes = Object.keys(formCreneaux).length > 0 ? formCreneaux : null
+    // Fusionne créneaux cochés (school_schedules) + créneaux libres ajoutés manuellement
+    // Null si aucun → tous les créneaux de l'école seront proposés (comportement par défaut)
+    const fusion = fusionnerCreneaux(formCreneaux, creneauxManuels)
+    const creneauxProposes = Object.keys(fusion).length > 0 ? fusion : null
     // Tentative 1 : INSERT avec toutes les colonnes (disponibles après migration)
     const insertEnrichi = {
       teacher_id:        user.id,
@@ -318,6 +430,7 @@ export default function EnsembleLinksPage() {
     setFormType('generique')
     setFormSchoolId('')
     setFormCreneaux({})
+    setCreneauxManuels([])
   }
 
   // ── Suppression ─────────────────────────────────────────────────────────────
@@ -434,6 +547,21 @@ export default function EnsembleLinksPage() {
             />
           </div>
         )}
+
+        {/* Section créneaux manuels — toujours visible, indépendante de l'école */}
+        <div className="border-t border-border-subtle pt-4 space-y-3">
+          <div>
+            <p className="text-xs font-medium text-foreground">Ajouter un créneau spécifique à ce lien</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Libre — aucune contrainte de l'emploi du temps de l'école. Se cumule avec les créneaux cochés ci-dessus.
+            </p>
+          </div>
+          <AjoutCreneauManuel
+            manuels={creneauxManuels}
+            onAdd={(c) => setCreneauxManuels((prev) => [...prev, c])}
+            onRemove={(i) => setCreneauxManuels((prev) => prev.filter((_, idx) => idx !== i))}
+          />
+        </div>
 
         {formErr && <p className="text-xs text-red-400">{formErr}</p>}
 
