@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Plus, Copy, Check, Link2, Loader2, Trash2, AlertCircle, School, Filter, Calendar } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Plus, Copy, Check, Link2, Loader2, Trash2, AlertCircle, School, Filter, Calendar, Pencil, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { trierSlotsDesLignes } from '../utils/creneauxSort'
@@ -50,6 +50,35 @@ function fusionnerCreneaux(coches, manuels) {
     fusion[jour] = [...(fusion[jour] ?? []), ...slots]
   }
   return fusion
+}
+
+// Inverse de fusionnerCreneaux : redistribue creneaux_proposes existant en deux états distincts.
+// Slots présents dans l'emploi du temps de l'école → formCreneaux (coches).
+// Slots absents de l'école (ajoutés manuellement) → creneauxManuels [{day, start, end}].
+// Utilisé lors du pré-remplissage du formulaire d'édition.
+function separerCreneaux(creneauxProposes, scheduleJours) {
+  const coches  = {}
+  const manuels = []
+  if (!creneauxProposes) return { coches, manuels }
+
+  // Index des slots école par jour pour recherche O(1)
+  const slotsEcoleParJour = {}
+  for (const { day, slots } of scheduleJours) {
+    slotsEcoleParJour[day] = new Set(slots)
+  }
+
+  for (const [jour, slots] of Object.entries(creneauxProposes)) {
+    for (const slot of slots) {
+      if (slotsEcoleParJour[jour]?.has(slot)) {
+        coches[jour] = [...(coches[jour] ?? []), slot]
+      } else {
+        // Slot hors emploi du temps : décompose "HH:MM–HH:MM" en {day, start, end}
+        const [start, end] = slot.split('–')
+        manuels.push({ day: jour, start: start?.trim() ?? '', end: end?.trim() ?? '' })
+      }
+    }
+  }
+  return { coches, manuels }
 }
 
 const inputCls = 'w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600 transition-colors'
@@ -295,7 +324,14 @@ export default function EnsembleLinksPage() {
   const [erreur,  setErreur]  = useState(null)
   const [saving,  setSaving]  = useState(false)
 
-  // Formulaire de création
+  // Null = formulaire de création ; string = id du token en cours d'édition
+  const [editingTokenId, setEditingTokenId] = useState(null)
+  // Incrémenté pour forcer le rechargement de l'emploi du temps même si formSchoolId ne change pas
+  const [schoolLoadKey,  setSchoolLoadKey]  = useState(0)
+  // Creneaux_proposes à redistribuer après chargement de l'école (mode édition)
+  const preFillRef = useRef(null)
+
+  // Formulaire (création et édition)
   const [formType,          setFormType]          = useState('generique')
   const [formLabel,         setFormLabel]         = useState('')
   const [formSchoolId,      setFormSchoolId]      = useState('')
@@ -354,35 +390,99 @@ export default function EnsembleLinksPage() {
   }, [user])
 
   // ── Chargement de l'emploi du temps quand l'école sélectionnée change ────────
+  // schoolLoadKey permet de forcer ce rechargement même si formSchoolId n'a pas changé
+  // (utile quand on édite deux tokens consécutifs de la même école).
 
   useEffect(() => {
     if (!formSchoolId) {
       setFormSchoolSchedule([])
-      setFormCreneaux({})
+      // En mode édition sans école, preFillRef est déjà consommé dans ouvrirEdition
+      if (!preFillRef.current) setFormCreneaux({})
       return
     }
     const ecole = schools.find((s) => s.id === formSchoolId)
     if (!ecole) return
     let cancelled = false
     setLoadingSchedule(true)
-    setFormCreneaux({}) // réinitialise la sélection quand l'école change
     supabase
       .from('school_schedules')
       .select('day, slots')
       .eq('school_name', ecole.name)
       .eq('school_year', CURRENT_YEAR)
       .then(({ data }) => {
-        if (!cancelled) {
-          setFormSchoolSchedule(trierLignesSchedule(data ?? []))
-          setLoadingSchedule(false)
+        if (cancelled) return
+        const schedule = trierLignesSchedule(data ?? [])
+        setFormSchoolSchedule(schedule)
+
+        // Consomme le pré-remplissage si on vient d'ouvrir l'édition d'un token
+        const pending = preFillRef.current
+        preFillRef.current = null
+        if (pending) {
+          const { coches, manuels } = separerCreneaux(pending, schedule)
+          setFormCreneaux(coches)
+          setCreneauxManuels(manuels)
+        } else {
+          setFormCreneaux({})
         }
+        setLoadingSchedule(false)
       })
     return () => { cancelled = true }
-  }, [formSchoolId, schools])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formSchoolId, schools, schoolLoadKey])
 
-  // ── Création d'un token ─────────────────────────────────────────────────────
+  // ── Réinitialisation du formulaire ─────────────────────────────────────────
 
-  async function handleCreer(e) {
+  function annulerEdition() {
+    setEditingTokenId(null)
+    setFormLabel('')
+    setFormType('generique')
+    setFormMode('choix')
+    setFormSchoolId('')
+    setFormCreneaux({})
+    setCreneauxManuels([])
+    setFormErr('')
+    preFillRef.current = null
+  }
+
+  // ── Ouverture du formulaire d'édition pré-rempli ──────────────────────────
+
+  function ouvrirEdition(token) {
+    setEditingTokenId(token.id)
+    setFormLabel(token.label ?? '')
+    setFormType(token.token_type)
+    setFormMode(token.mode ?? 'choix')
+    setFormErr('')
+
+    if (token.school_id) {
+      // Avec école : le useEffect chargera le schedule puis distribuera creneaux_proposes
+      preFillRef.current = token.creneaux_proposes ?? null
+      setFormSchoolId(token.school_id)
+      // Force le rechargement même si l'école était déjà sélectionnée
+      setSchoolLoadKey((k) => k + 1)
+    } else {
+      // Sans école : tous les slots de creneaux_proposes sont manuels
+      preFillRef.current = null
+      setFormSchoolId('')
+      setFormSchoolSchedule([])
+      setFormCreneaux({})
+      const manuels = []
+      if (token.creneaux_proposes) {
+        for (const [jour, slots] of Object.entries(token.creneaux_proposes)) {
+          for (const slot of slots) {
+            const [start, end] = slot.split('–')
+            manuels.push({ day: jour, start: start?.trim() ?? '', end: end?.trim() ?? '' })
+          }
+        }
+      }
+      setCreneauxManuels(manuels)
+    }
+
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // ── Création ou mise à jour d'un token ─────────────────────────────────────
+
+  async function handleSauvegarder(e) {
     e.preventDefault()
     setFormErr('')
     setSaving(true)
@@ -392,6 +492,37 @@ export default function EnsembleLinksPage() {
     const fusion = fusionnerCreneaux(formCreneaux, creneauxManuels)
     const creneauxProposes = Object.keys(fusion).length > 0 ? fusion : null
 
+    // ── Branche UPDATE (édition d'un lien existant) ──────────────────────────
+    if (editingTokenId) {
+      // token et token_type ne sont jamais modifiés — seuls les métadonnées et créneaux changent
+      const updatePayload = {
+        label:             formLabel.trim() || null,
+        school_id:         formSchoolId || null,
+        school_name:       ecole?.name ?? null,
+        creneaux_proposes: creneauxProposes,
+        mode:              formMode,
+      }
+      let { error } = await supabase.from('ensemble_tokens').update(updatePayload).eq('id', editingTokenId)
+
+      // Dégradation si colonne mode absente (migration-mode-fixe non encore appliquée)
+      if (error?.code === '42703') {
+        const { mode: _m, ...updateSansMode } = updatePayload
+        const r2 = await supabase.from('ensemble_tokens').update(updateSansMode).eq('id', editingTokenId)
+        error = r2.error
+      }
+
+      setSaving(false)
+      if (error) { setFormErr(error.message); return }
+
+      // Mise à jour locale (évite re-fetch)
+      setTokens((prev) => prev.map((t) =>
+        t.id === editingTokenId ? { ...t, ...updatePayload } : t
+      ))
+      annulerEdition()
+      return
+    }
+
+    // ── Branche INSERT (création d'un nouveau lien) ──────────────────────────
     const SEL = 'id, token, token_type, label, used_at, created_at'
     // Tentative 1 : INSERT complet (toutes colonnes disponibles après migration-mode-fixe)
     const insertComplet = {
@@ -407,12 +538,10 @@ export default function EnsembleLinksPage() {
 
     if (error?.code === '42703') {
       // Tentative 2 : colonne mode absente (migration-mode-fixe non encore appliquée)
-      // creneaux_proposes conservé — seule la colonne mode est retirée
       const { mode: _m, ...insertSansMode } = insertComplet
       const r2 = await supabase.from('ensemble_tokens').insert(insertSansMode).select(SEL).single()
       if (r2.error?.code === '42703') {
-        // Tentative 3 : aucune colonne enrichie (migration-enrichissement non encore appliquée)
-        // Perte inévitable de creneaux_proposes et mode — comportement pre-migration
+        // Tentative 3 : aucune colonne enrichie — comportement pre-migration
         const r3 = await supabase
           .from('ensemble_tokens')
           .insert({ teacher_id: user.id, token_type: formType, label: formLabel.trim() || null })
@@ -428,7 +557,6 @@ export default function EnsembleLinksPage() {
 
     setSaving(false)
     if (error) { setFormErr(error.message); return }
-    // Attache les valeurs localement (évite un re-fetch)
     const newToken = {
       ...data,
       school_id:         formSchoolId || null,
@@ -437,12 +565,7 @@ export default function EnsembleLinksPage() {
       mode:              formMode,
     }
     setTokens((prev) => [newToken, ...prev])
-    setFormLabel('')
-    setFormType('generique')
-    setFormMode('choix')
-    setFormSchoolId('')
-    setFormCreneaux({})
-    setCreneauxManuels([])
+    annulerEdition()
   }
 
   // ── Suppression ─────────────────────────────────────────────────────────────
@@ -455,6 +578,11 @@ export default function EnsembleLinksPage() {
   }
 
   // ── Rendu ───────────────────────────────────────────────────────────────────
+
+  // Calculé une fois pour la validation mode fixe (utilisé dans le JSX)
+  const fusionCourante    = fusionnerCreneaux(formCreneaux, creneauxManuels)
+  const nbFusionCourante  = Object.values(fusionCourante).reduce((s, a) => s + a.length, 0)
+  const bloqueFixe        = formMode === 'fixe' && nbFusionCourante !== 1
 
   if (loading) {
     return (
@@ -484,11 +612,26 @@ export default function EnsembleLinksPage() {
         </div>
       )}
 
-      {/* ── Formulaire de création ──────────────────────────────────────── */}
-      <form onSubmit={handleCreer} className="glass-panel rounded-xl p-5 space-y-4 border border-border">
-        <p className="text-sm font-medium">Créer un lien</p>
+      {/* ── Formulaire de création / édition ───────────────────────────── */}
+      <form onSubmit={handleSauvegarder} className="glass-panel rounded-xl p-5 space-y-4 border border-border">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium">
+            {editingTokenId ? 'Modifier le lien' : 'Créer un lien'}
+          </p>
+          {editingTokenId && (
+            <button
+              type="button"
+              onClick={annulerEdition}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+              Annuler
+            </button>
+          )}
+        </div>
 
-        {/* Type */}
+        {/* Type — non modifiable en édition (l'URL partagée dépend du comportement individuel/générique) */}
+        {!editingTokenId && (
         <div className="space-y-1.5">
           <label className="text-xs text-muted-foreground">Type de lien</label>
           <div className="grid grid-cols-2 gap-3">
@@ -512,6 +655,7 @@ export default function EnsembleLinksPage() {
             ))}
           </div>
         </div>
+        )}
 
         {/* Libellé */}
         <div className="space-y-1.5">
@@ -576,73 +720,60 @@ export default function EnsembleLinksPage() {
         </div>
 
         {/* Mode du lien — placé après les créneaux pour que le professeur sache combien il en a */}
-        {(() => {
-          const fusion = fusionnerCreneaux(formCreneaux, creneauxManuels)
-          const nbFusion = Object.values(fusion).reduce((s, a) => s + a.length, 0)
-          const avertirFixe = formMode === 'fixe' && nbFusion !== 1
-
-          return (
-            <div className="border-t border-border-subtle pt-4 space-y-3">
-              <div>
-                <label className="text-xs text-muted-foreground flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5" />
-                  Mode du lien
-                </label>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[
-                  { value: 'choix', label: 'Sondage de disponibilités', desc: 'Les participants choisissent parmi plusieurs créneaux' },
-                  { value: 'fixe',  label: 'Horaire fixe à confirmer',  desc: 'Vous annoncez un créneau — ils confirment leur présence' },
-                ].map(({ value, label, desc }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setFormMode(value)}
-                    className={`px-4 py-3 rounded-xl border text-sm text-left transition-all ${
-                      formMode === value
-                        ? 'border-guitar-600 bg-guitar-600/10 text-guitar-400'
-                        : 'border-border-subtle bg-surface-raised text-muted-foreground hover:border-border'
-                    }`}
-                  >
-                    <p className="font-medium">{label}</p>
-                    <p className="text-xs mt-0.5 opacity-70">{desc}</p>
-                  </button>
-                ))}
-              </div>
-              {/* Avertissement mode fixe : exactement 1 créneau requis */}
-              {avertirFixe && (
-                <div className="flex items-start gap-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/25 px-3 py-2 rounded-lg">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  <span>
-                    {nbFusion === 0
-                      ? 'En mode horaire fixe, sélectionnez exactement 1 créneau (cochés ou manuel) avant de créer le lien.'
-                      : `En mode horaire fixe, un seul créneau est autorisé — vous en avez sélectionné ${nbFusion}. Retirez les créneaux en trop.`
-                    }
-                  </span>
-                </div>
-              )}
+        <div className="border-t border-border-subtle pt-4 space-y-3">
+          <div>
+            <label className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5" />
+              Mode du lien
+            </label>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {[
+              { value: 'choix', label: 'Sondage de disponibilités', desc: 'Les participants choisissent parmi plusieurs créneaux' },
+              { value: 'fixe',  label: 'Horaire fixe à confirmer',  desc: 'Vous annoncez un créneau — ils confirment leur présence' },
+            ].map(({ value, label, desc }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setFormMode(value)}
+                className={`px-4 py-3 rounded-xl border text-sm text-left transition-all ${
+                  formMode === value
+                    ? 'border-guitar-600 bg-guitar-600/10 text-guitar-400'
+                    : 'border-border-subtle bg-surface-raised text-muted-foreground hover:border-border'
+                }`}
+              >
+                <p className="font-medium">{label}</p>
+                <p className="text-xs mt-0.5 opacity-70">{desc}</p>
+              </button>
+            ))}
+          </div>
+          {/* Avertissement mode fixe : exactement 1 créneau requis — réutilise bloqueFixe */}
+          {bloqueFixe && (
+            <div className="flex items-start gap-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/25 px-3 py-2 rounded-lg">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>
+                {nbFusionCourante === 0
+                  ? 'En mode horaire fixe, sélectionnez exactement 1 créneau (cochés ou manuel) avant de valider.'
+                  : `En mode horaire fixe, un seul créneau est autorisé — vous en avez sélectionné ${nbFusionCourante}. Retirez les créneaux en trop.`
+                }
+              </span>
             </div>
-          )
-        })()}
+          )}
+        </div>
 
         {formErr && <p className="text-xs text-red-400">{formErr}</p>}
 
-        {/* Bloque la soumission si mode fixe et ≠ 1 créneau */}
-        {(() => {
-          const fusion = fusionnerCreneaux(formCreneaux, creneauxManuels)
-          const nbFusion = Object.values(fusion).reduce((s, a) => s + a.length, 0)
-          const bloqueFixe = formMode === 'fixe' && nbFusion !== 1
-          return (
         <button
           type="submit"
           disabled={saving || bloqueFixe}
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-guitar-600 text-white text-sm font-medium hover:bg-guitar-500 transition-colors disabled:opacity-50"
         >
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-          Créer le lien
+          {saving
+            ? <Loader2 className="w-4 h-4 animate-spin" />
+            : editingTokenId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />
+          }
+          {editingTokenId ? 'Enregistrer les modifications' : 'Créer le lien'}
         </button>
-          )
-        })()}
       </form>
 
       {/* ── Liste des tokens ────────────────────────────────────────────── */}
@@ -700,6 +831,18 @@ export default function EnsembleLinksPage() {
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   {!isUsed && <CopyButton url={url} />}
+                  <button
+                    type="button"
+                    onClick={() => ouvrirEdition(t)}
+                    className={`p-1.5 rounded-lg transition-colors ${
+                      editingTokenId === t.id
+                        ? 'text-guitar-400 bg-guitar-600/10'
+                        : 'text-muted-foreground hover:text-guitar-400 hover:bg-guitar-600/10'
+                    }`}
+                    title="Modifier ce lien"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => handleSupprimer(t.id)}
