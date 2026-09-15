@@ -336,6 +336,7 @@ export default function EnsembleLinksPage() {
   const [formLabel,         setFormLabel]         = useState('')
   const [formSchoolId,      setFormSchoolId]      = useState('')
   const [formMode,           setFormMode]          = useState('choix') // 'choix' | 'fixe'
+  const [formEcoleActive,   setFormEcoleActive]   = useState(true) // toggle "Proposer les créneaux habituels de cette école"
   const [formCreneaux,      setFormCreneaux]      = useState({}) // créneaux restreints sélectionnés (school_schedules)
   const [creneauxManuels,   setCreneauxManuels]   = useState([]) // créneaux libres ajoutés manuellement
   const [formSchoolSchedule, setFormSchoolSchedule] = useState([]) // créneaux complets de l'école choisie
@@ -419,9 +420,12 @@ export default function EnsembleLinksPage() {
         preFillRef.current = null
         if (pending) {
           const { coches, manuels } = separerCreneaux(pending, schedule)
+          // Si le lien n'avait que des créneaux manuels → toggle "Non" automatique
+          setFormEcoleActive(Object.keys(coches).length > 0)
           setFormCreneaux(coches)
           setCreneauxManuels(manuels)
         } else {
+          setFormEcoleActive(true)
           setFormCreneaux({})
         }
         setLoadingSchedule(false)
@@ -438,6 +442,7 @@ export default function EnsembleLinksPage() {
     setFormType('generique')
     setFormMode('choix')
     setFormSchoolId('')
+    setFormEcoleActive(true)
     setFormCreneaux({})
     setCreneauxManuels([])
     setFormErr('')
@@ -460,10 +465,11 @@ export default function EnsembleLinksPage() {
       // Force le rechargement même si l'école était déjà sélectionnée
       setSchoolLoadKey((k) => k + 1)
     } else {
-      // Sans école : tous les slots de creneaux_proposes sont manuels
+      // Sans école : tous les slots de creneaux_proposes sont manuels — toggle non pertinent, reset à true
       preFillRef.current = null
       setFormSchoolId('')
       setFormSchoolSchedule([])
+      setFormEcoleActive(true)
       setFormCreneaux({})
       const manuels = []
       if (token.creneaux_proposes) {
@@ -488,8 +494,9 @@ export default function EnsembleLinksPage() {
     setSaving(true)
     const ecole = schools.find((s) => s.id === formSchoolId)
     // Fusionne créneaux cochés (school_schedules) + créneaux libres ajoutés manuellement
+    // Si toggle école désactivé, formCreneaux ignoré — seuls les créneaux manuels comptent
     // Null si aucun → tous les créneaux de l'école seront proposés (comportement par défaut)
-    const fusion = fusionnerCreneaux(formCreneaux, creneauxManuels)
+    const fusion = fusionnerCreneaux(formEcoleActive ? formCreneaux : {}, creneauxManuels)
     const creneauxProposes = Object.keys(fusion).length > 0 ? fusion : null
 
     // ── Branche UPDATE (édition d'un lien existant) ──────────────────────────
@@ -580,7 +587,7 @@ export default function EnsembleLinksPage() {
   // ── Rendu ───────────────────────────────────────────────────────────────────
 
   // Calculé une fois pour la validation mode fixe (utilisé dans le JSX)
-  const fusionCourante    = fusionnerCreneaux(formCreneaux, creneauxManuels)
+  const fusionCourante    = fusionnerCreneaux(formEcoleActive ? formCreneaux : {}, creneauxManuels)
   const nbFusionCourante  = Object.values(fusionCourante).reduce((s, a) => s + a.length, 0)
   const bloqueFixe        = formMode === 'fixe' && nbFusionCourante !== 1
 
@@ -691,16 +698,53 @@ export default function EnsembleLinksPage() {
         {/* Sélecteur de créneaux — n'apparaît que si une école est choisie */}
         {formSchoolId && (
           <div className="border-t border-border-subtle pt-4 space-y-3">
-            <div className="flex items-center gap-1.5">
-              <Filter className="w-3.5 h-3.5 text-muted-foreground" />
-              <p className="text-xs text-muted-foreground font-medium">Filtrer les créneaux proposés</p>
-              {loadingSchedule && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+            {/* Toggle : inclure ou non les créneaux habituels de l'école */}
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-1.5">
+                <School className="w-3.5 h-3.5 text-muted-foreground" />
+                <p className="text-xs font-medium text-foreground">Proposer les créneaux habituels de cette école</p>
+                {loadingSchedule && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+              </div>
+              <div className="flex shrink-0 rounded-lg border border-border-subtle overflow-hidden text-xs">
+                <button
+                  type="button"
+                  onClick={() => setFormEcoleActive(true)}
+                  className={`px-2.5 py-1 transition-colors ${
+                    formEcoleActive
+                      ? 'bg-guitar-600/15 text-guitar-400 font-medium'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Oui
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setFormEcoleActive(false); setFormCreneaux({}) }}
+                  className={`px-2.5 py-1 transition-colors border-l border-border-subtle ${
+                    !formEcoleActive
+                      ? 'bg-guitar-600/15 text-guitar-400 font-medium'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Non
+                </button>
+              </div>
             </div>
-            <SelecteurCreneaux
-              scheduleJours={formSchoolSchedule}
-              value={formCreneaux}
-              onChange={setFormCreneaux}
-            />
+
+            {/* Liste des créneaux école — masquée si toggle Non */}
+            {formEcoleActive && (
+              <>
+                <div className="flex items-center gap-1.5">
+                  <Filter className="w-3.5 h-3.5 text-muted-foreground" />
+                  <p className="text-xs text-muted-foreground font-medium">Filtrer les créneaux proposés</p>
+                </div>
+                <SelecteurCreneaux
+                  scheduleJours={formSchoolSchedule}
+                  value={formCreneaux}
+                  onChange={setFormCreneaux}
+                />
+              </>
+            )}
           </div>
         )}
 
