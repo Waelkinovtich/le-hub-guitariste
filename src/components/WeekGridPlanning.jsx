@@ -651,13 +651,9 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
     if (m.currentDay === m.origDay && m.currentStartSlot === m.origStartSlot) return
 
     // Vérification de chevauchement avec les cours existants.
-    // En mode allowOverlap (planning provisoire), le dépôt est autorisé même en cas de
-    // chevauchement — la grille l'affiche en orange pour inviter à résoudre avant validation.
+    // Le déplacement réussit TOUJOURS même en cas de chevauchement — le signal orange
+    // informe sans bloquer, quelle que soit la page appelante.
     if (hasOverlap(lessonsByDay, m.lesson.id, m.currentDay, m.currentStartSlot, m.slotCount)) {
-      if (!allowOverlap) {
-        showMoveError('Ce créneau est déjà occupé par un autre cours.')
-        return
-      }
       // Mode cascade : délègue au parent qui recalcule un créneau alternatif pour la leçon déplacée.
       if (cascadeEnabled && onCascadeRequest) {
         const displaced = findOverlappingLesson(lessonsByDay, m.lesson.id, m.currentDay, m.currentStartSlot, m.slotCount)
@@ -668,8 +664,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
           return
         }
       }
-      // Mode provisoire sans cascade : avertissement temporaire visible 2 s
-      showMoveError('Chevauchement temporaire — résolvez-le avant d\'acter le planning.')
+      // Information visuelle uniquement — jamais de blocage
+      showMoveError('Chevauchement — ce créneau est déjà occupé par un autre cours.')
     }
     // Les créneaux réservés (écoles) restent bloquants en toutes circonstances.
     if (hasReservedOverlap(reservedByDay, m.currentDay, m.currentStartSlot, m.slotCount)) {

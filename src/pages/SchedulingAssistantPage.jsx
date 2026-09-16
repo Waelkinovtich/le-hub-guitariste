@@ -728,6 +728,7 @@ export default function SchedulingAssistantPage() {
   // Fiche contact rapide d'un élève (T5)
   const [contactCard, setContactCard] = useState(null)  // { lesson, student: {...} } | null
   const [contactLoading, setContactLoading] = useState(false)
+  const [confirmingContact, setConfirmingContact] = useState(false)
 
   useEffect(() => {
     if (!user?.id) return
@@ -1447,9 +1448,8 @@ export default function SchedulingAssistantPage() {
     const weekIsos = new Set(weekDays.map((d) => d.iso))
     const coursReels = existingLessons
       .filter((l) => weekIsos.has(l.lessonDate))
-      // Les cours de groupe (planningStatus:'groupe') sont déplaçables — T1.
-      // Tous les autres cours réels restent en lecture seule.
-      .map((l) => ({ ...l, nonMovable: l.planningStatus !== 'groupe' }))
+      // Tous les cours réels (individuels et groupes) sont déplaçables depuis la grille.
+      // handleMoveProposal route correctement selon le type (groupe, individuel réel, proposition).
     // Exclure les propositions masquées par l'utilisateur via le bouton Supprimer
     const proposalsFiltres = proposalLessons.filter((l) => !hiddenResponseIds.has(l._responseId))
     const conflitsFiltres  = conflictLessons.filter((l) => !hiddenResponseIds.has(l._responseId))
@@ -1594,6 +1594,26 @@ export default function SchedulingAssistantPage() {
       return
     }
 
+    // ── Branche cours individuel réel (déjà persisté, sans _responseId) ────────
+    // Un cours validé n'a ni _responseId ni _groupId — on UPDATE directement lessons.
+    // topic/notes ne sont pas chargés dans ce contexte donc on n'y touche pas.
+    if (!lesson._responseId && !lesson._groupId && lesson.id) {
+      const { error: updErr } = await supabase
+        .from('lessons')
+        .update({ lesson_date: newDate, lesson_time: newTime, duration_minutes: durationMinutes })
+        .eq('id', lesson.id)
+      if (updErr) throw new Error(updErr.message)
+
+      setExistingLessons((prev) =>
+        prev.map((l) =>
+          l.id === lesson.id
+            ? { ...l, lessonDate: newDate, lessonTime: newTime, timeLabel: newTime, durationMinutes }
+            : l
+        )
+      )
+      return
+    }
+
     // ── Branche cours individuel (comportement existant) ─────────────────────
     const responseId = lesson._responseId
     const response   = responses.find((r) => r.id === responseId)
@@ -1623,12 +1643,11 @@ export default function SchedulingAssistantPage() {
       }
     }
 
-    if (estHorsDispo && !freeMoveEnabled) {
-      // Mode normal : bloquer le déplacement hors disponibilités
-      throw new Error(`Créneau non déclaré disponible par ${response.first_name || 'cet élève'} — déplacement annulé. Activez « Déplacement libre » pour forcer.`)
-    }
+    // Le déplacement réussit TOUJOURS, disponibilités déclarées ou non.
+    // outsideAvailIds est toujours mis à jour pour l'indicateur orange — le toggle
+    // « Déplacement libre » ne sert plus qu'à effacer ces indicateurs manuellement.
 
-    // En mode déplacement libre, on track les IDs hors dispo pour signalisation orange.
+    // Track des IDs hors dispo pour signalisation orange.
     setOutsideAvailIds((prev) => {
       const next = new Set(prev)
       if (estHorsDispo) next.add(responseId)
@@ -2281,6 +2300,46 @@ export default function SchedulingAssistantPage() {
     setActingPlan(false)
     if (erreurs.length > 0) setActError('Erreurs : ' + erreurs.join(' | '))
   }, [selectedIds, responses, proposalOverrides, proposalsMap, teacherInfo])
+
+  // ── Valider un créneau directement depuis la fiche élève (contactCard) ─────
+  // Réutilise buildLessonRows avec la position ACTUELLE du créneau dans la grille.
+  const handleConfirmContact = useCallback(async () => {
+    if (!contactCard?.lesson || confirmingContact) return
+    const { lesson } = contactCard
+    if (!lesson._responseId) return
+
+    const response = responses.find((r) => r.id === lesson._responseId)
+    if (!response) return
+
+    const nomJour = JOURS_FR[new Date(lesson.lessonDate + 'T12:00:00').getDay()]
+    const proposal = {
+      day:           nomJour,
+      startTime:     lesson.lessonTime,
+      durationMinutes: lesson.durationMinutes,
+      // candidateDate requis par buildLessonRows pour la première occurrence
+      candidateDate: lesson.lessonDate,
+    }
+
+    setConfirmingContact(true)
+    try {
+      const [, endYear] = currentSchoolYear().split('-').map(Number)
+      const rows = buildLessonRows(teacherInfo.id, response, proposal, `${endYear}-06-30`)
+      const { error: insErr } = await supabase.from('lessons').insert(rows)
+      if (insErr) throw new Error(insErr.message)
+
+      await supabase
+        .from('survey_responses')
+        .update({ status: 'confirme', assigned_day: proposal.day, assigned_time: proposal.startTime })
+        .eq('id', lesson._responseId)
+
+      setResponses((prev) => prev.filter((r) => r.id !== lesson._responseId))
+      setContactCard(null)
+    } catch (e) {
+      alert('Erreur : ' + e.message)
+    } finally {
+      setConfirmingContact(false)
+    }
+  }, [contactCard, confirmingContact, responses, teacherInfo])
 
   // ── Label de navigation semaine ────────────────────────────────────────────
   const labelSemaine = useMemo(() => {
@@ -3260,6 +3319,19 @@ export default function SchedulingAssistantPage() {
               </div>
             ) : (
               <p className="text-xs text-muted-foreground italic">Fiche élève introuvable (student_id manquant).</p>
+            )}
+
+            {/* Bouton valider le créneau affiché (propositions non encore actées) */}
+            {contactCard.lesson._responseId &&
+              (contactCard.lesson.planningStatus === 'envisage' || contactCard.lesson.planningStatus === 'conflit') && (
+              <button
+                type="button"
+                onClick={handleConfirmContact}
+                disabled={confirmingContact}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {confirmingContact ? 'Validation…' : 'Valider ce créneau'}
+              </button>
             )}
 
             {/* Lien vers la fiche complète */}
