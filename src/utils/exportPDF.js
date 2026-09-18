@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { LESSON_STATUSES } from './lessonStatus'
-import { slotStartMinutes } from './creneauxSort'
+import { slotStartMinutes, trierSlots } from './creneauxSort'
 
 // ─── Constantes de mise en page PDF ──────────────────────────────────────────
 // Source : charte graphique interne — unités en points (pt), format A4.
@@ -456,7 +456,7 @@ function formatDisposPDF(availabilities) {
     // Sans ce tri, "14:00–14:30, 09:00–09:30" produirait deux blocs au lieu d'un seul
     // si les plages sont contigus mais mal ordonnées — et l'affichage serait incohérent.
     // hhmm() est une déclaration de fonction (hoistée) définie plus bas dans ce fichier.
-    const sorted = [...slots].sort((a, b) => slotStartMinutes(a) - slotStartMinutes(b))
+    const sorted = trierSlots(slots)
     // Fusionne les plages contigus pour ne pas afficher "09:00–09:15, 09:15–09:30"
     const blocs = []
     let debut = null, fin = null
@@ -499,14 +499,16 @@ export function exportPlanningPDF({
   teacherName, teacherPhone, teacherEmail, teacherAddress,
 }) {
   // ── Constantes de mise en page grille ────────────────────────────────────────
-  const HEURE_DEBUT  = 8    // 8h00
-  const HEURE_FIN    = 19   // 19h00 — limite à 19h pour tenir 8mm/tranche sur A4 paysage
-  const NB_TRANCHES  = (HEURE_FIN - HEURE_DEBUT) * 2  // tranches de 30 min
+  // HEURE_DEBUT / HEURE_FIN sont recalculées dynamiquement après construction de lessonsByJour.
+  // Valeurs initiales utilisées uniquement si aucune leçon n'est présente.
+  let HEURE_DEBUT  = 8    // 8h00 par défaut
+  let HEURE_FIN    = 19   // 19h00 par défaut
+  let NB_TRANCHES  = (HEURE_FIN - HEURE_DEBUT) * 2  // tranches de 30 min
   const COL_HEURE_W  = 16   // largeur colonne "Heure" (mm)
   const HEADER_ROW_H = 9    // hauteur ligne d'en-tête des jours (mm)
   const ROW_H        = 8    // hauteur d'une tranche de 30 min (mm) — espace pour annotation manuelle
   const MARGIN       = 10   // marge gauche/droite page paysage (mm)
-  // Calcul vérifié : gridY(26) + header(9) + 22×8(176) = 211mm ≈ A4 paysage hauteur 210mm ✓
+  // NB_TRANCHES est dynamique (recalculé après lessonsByJour) — la hauteur totale s'adapte.
 
   // ── Ordre des jours ─────────────────────────────────────────────────────────
   // JOURS_JS : ordre de Date.getDay() — 0=Dimanche, 1=Lundi, ..., 6=Samedi.
@@ -529,6 +531,30 @@ export function exportPlanningPDF({
     if (!l.lessonDate) continue
     const nomJour = isoToJourFR(l.lessonDate)   // ← correction T1 : JOURS_JS indexé par getDay()
     if (lessonsByJour[nomJour]) lessonsByJour[nomJour].push(l)
+  }
+
+  // ── Plage horaire dynamique — calculée depuis les cours réels ────────────────
+  // On scanne toutes les leçons pour trouver le premier début et la dernière fin,
+  // puis on ajoute une marge de confort de 30 min avant/après.
+  {
+    let minMin = Infinity
+    let maxMin = -Infinity
+    for (const j of joursOrdonnes) {
+      for (const l of lessonsByJour[j]) {
+        const startMin = hhmm(l.lessonTime ?? l.timeLabel)
+        const durée    = l.durationMinutes ?? 30
+        if (startMin < minMin) minMin = startMin
+        if (startMin + durée > maxMin) maxMin = startMin + durée
+      }
+    }
+    if (minMin !== Infinity) {
+      // Marge de 30 min avant/après, arrondie à la demi-heure, clampée entre 6h et 23h
+      const debutAvecMarge = Math.max(6 * 60, Math.floor((minMin - 30) / 30) * 30)
+      const finAvecMarge   = Math.min(23 * 60, Math.ceil((maxMin + 30) / 30) * 30)
+      HEURE_DEBUT = debutAvecMarge / 60
+      HEURE_FIN   = finAvecMarge   / 60
+      NB_TRANCHES = (HEURE_FIN - HEURE_DEBUT) * 2
+    }
   }
 
   // ── Page 1 — Grille paysage ───────────────────────────────────────────────────
@@ -616,7 +642,7 @@ export function exportPlanningPDF({
     for (const l of lessonsByJour[jour]) {
       const startMin = hhmm(l.lessonTime ?? l.timeLabel)
       const durée    = l.durationMinutes ?? 30
-      const offsetT  = (startMin - HEURE_DEBUT * 60) / 30  // tranches 30min depuis 8h
+      const offsetT  = (startMin - HEURE_DEBUT * 60) / 30  // tranches 30min depuis HEURE_DEBUT
       if (offsetT < 0 || offsetT >= NB_TRANCHES) continue
       // blockH laisse 2mm de blanc sous le bloc pour l'annotation manuelle
       const blockH = Math.min((durée / 30) * ROW_H, (NB_TRANCHES - offsetT) * ROW_H) - 2

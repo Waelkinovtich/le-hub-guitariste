@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Users, Music2, Check, Loader2, AlertCircle, ChevronDown, ChevronUp, Sparkles, X, Link, Search, Trash2, Eye } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { trierSlots } from '../utils/creneauxSort'
 
 // ─── Algorithme de suggestion de groupes ──────────────────────────────────────
 
@@ -63,7 +64,7 @@ function DisponibilitesDetail({ availabilities }) {
         <div key={jour} className="flex flex-wrap gap-1 items-center">
           <span className="text-xs font-medium text-muted-foreground w-20 shrink-0">{jour}</span>
           <div className="flex flex-wrap gap-1">
-            {(availabilities[jour] ?? []).map((slot) => (
+            {trierSlots(availabilities[jour] ?? []).map((slot) => (
               <span key={slot} className="text-xs px-1.5 py-0.5 rounded bg-surface-overlay border border-border-subtle">{slot}</span>
             ))}
           </div>

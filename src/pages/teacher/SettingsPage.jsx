@@ -1331,7 +1331,7 @@ export default function SettingsPage() {
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <h2 className="font-semibold">Réglages du Planning intelligent</h2>
+              <h2 className="font-semibold">Réglages de l'assistant planning</h2>
               <HelpTooltip texte="Ces curseurs pondèrent les facteurs du moteur de propositions. Un curseur à 0 désactive complètement le critère." position="right" />
             </div>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -1422,7 +1422,7 @@ export default function SettingsPage() {
           <div>
             <div className="flex items-center gap-1.5">
               <h2 className="font-semibold">Préférences de planification</h2>
-              <HelpTooltip texte="Ces préférences influencent le score des propositions du Planning intelligent. Elles n'éliminent jamais une proposition : un créneau sur un jour à éviter reste proposé, mais moins bien classé." position="right" />
+              <HelpTooltip texte="Ces préférences influencent le score des propositions de l'assistant planning. Elles n'éliminent jamais une proposition : un créneau sur un jour à éviter reste proposé, mais moins bien classé." position="right" />
             </div>
             <p className="text-sm text-muted-foreground">Jours à éviter et jour de proximité préféré</p>
           </div>
@@ -1433,7 +1433,7 @@ export default function SettingsPage() {
           <div>
             <p className="text-sm font-medium mb-2">
               Jours à éviter
-              <span className="ml-2 text-xs text-muted-foreground font-normal">— malus de −2 pts dans le Planning intelligent</span>
+              <span className="ml-2 text-xs text-muted-foreground font-normal">— malus de −2 pts dans l'assistant planning</span>
             </p>
             <div className="flex flex-wrap gap-2 mb-3">
               {['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'].map((jour) => {

@@ -32,8 +32,8 @@ const absencesLinks = [
 ]
 
 const planningLinks = [
-  { to: '/professeur/planning',       icon: Calendar, label: 'Vue du planning' },
-  { to: '/admin/planning-intelligent', icon: Brain,    label: 'Planning intelligent' },
+  { to: '/professeur/planning',       icon: Calendar, label: 'Planning' },
+  { to: '/admin/planning-intelligent', icon: Brain,    label: 'Assistant planning' },
 ]
 
 const ecolesLinks = [

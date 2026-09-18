@@ -975,6 +975,7 @@ function FusionPanel({ source, onClose, onConfirmMatch, onFused, sourceLabel = '
               placeholder="Rechercher par nom, prénom, école…"
               value={recherche}
               onChange={(e) => setRecherche(e.target.value)}
+              autoComplete="off"
               className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-border-subtle bg-surface-raised text-sm placeholder:text-muted-foreground focus:outline-none focus:border-guitar-500"
             />
           </div>

@@ -310,7 +310,7 @@ export default function SendSurveyPage() {
       <div className="mb-8">
         <div className="flex items-center gap-2 mb-1">
           <h1 className="font-display text-3xl text-foreground">Envoyer le sondage</h1>
-          <HelpTooltip texte="Une fois les réponses reçues, allez dans Planning intelligent : l'application vous propose des créneaux adaptés aux disponibilités déclarées par les élèves." />
+          <HelpTooltip texte="Une fois les réponses reçues, allez dans l'assistant planning : l'application vous propose des créneaux adaptés aux disponibilités déclarées par les élèves." />
         </div>
         <p className="text-sm text-muted-foreground">
           Générez un lien unique par destinataire pour le sondage d'inscription.

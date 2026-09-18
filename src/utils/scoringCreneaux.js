@@ -2,6 +2,7 @@
 // Toutes les fonctions sont pures (pas d'effet de bord) pour être testables
 // indépendamment du JSX qui les consomme.
 import { isVacances } from './vacances'
+import { trierSlots } from './creneauxSort'
 
 export const JOURS_FR = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi']
 
@@ -71,7 +72,7 @@ export function intersectionDisponibilitesCollectives(members) {
     for (let i = 1; i < sets.length; i++) {
       inter = new Set([...inter].filter((s) => sets[i].has(s)))
     }
-    if (inter.size > 0) result[jour] = [...inter].sort()
+    if (inter.size > 0) result[jour] = trierSlots([...inter])
   }
   return result
 }

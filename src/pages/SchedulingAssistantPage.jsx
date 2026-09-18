@@ -106,7 +106,9 @@ function buildLessonRows(teacherId, response, proposal, endDate) {
     const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
     rows.push({
       teacher_id:       teacherId,
-      student_id:       response.student_id,
+      // matched_student_id est renseigné par "Créer la fiche" / "Fusionner" dans SurveyResultsPage.
+      // student_id (colonne historique) reste NULL pour la plupart des élèves — on préfère matched.
+      student_id:       response.matched_student_id ?? response.student_id,
       lesson_date:      iso,
       lesson_time:      proposal.startTime,
       duration_minutes: proposal.durationMinutes,
@@ -739,8 +741,10 @@ export default function SchedulingAssistantPage() {
         if (!tInfo?.id) { setError('Profil introuvable'); setLoading(false); return }
         setTeacherInfo(tInfo)
 
-        const today = new Date().toISOString().slice(0, 10)
-        const inFourWeeks = new Date(Date.now() + 28 * 86400000).toISOString().slice(0, 10)
+        // Borne basse : lundi de la semaine courante — pas seulement aujourd'hui.
+        // Raison : un cours validé lundi reste visible le reste de la semaine après rechargement.
+        const lundiSemaine = computeWeekDays(0)[0].iso
+        const inFourWeeks  = new Date(Date.now() + 28 * 86400000).toISOString().slice(0, 10)
 
         const [respRes, lessonsRes, schoolsRes, reservedSlotsData, groupsRes] = await Promise.all([
           // neq('confirme') exclut silencieusement les NULL en Postgres (NULL != 'confirme' → NULL).
@@ -748,7 +752,8 @@ export default function SchedulingAssistantPage() {
           supabase.from('survey_responses').select('*')
             .or('status.neq.confirme,status.is.null')
             .order('submitted_at', { ascending: false }),
-          supabase.from('lessons').select('id, lesson_date, lesson_time, duration_minutes, student_id, students(school_name, level)').eq('teacher_id', tInfo.id).gte('lesson_date', today).lte('lesson_date', inFourWeeks),
+          // first_name/last_name inclus pour afficher le nom élève sans rechargement.
+          supabase.from('lessons').select('id, lesson_date, lesson_time, duration_minutes, student_id, students(first_name, last_name, school_name, level)').eq('teacher_id', tInfo.id).gte('lesson_date', lundiSemaine).lte('lesson_date', inFourWeeks),
           // latitude + longitude pour le bonus de proximité domicile + durées de créneaux disponibles
           supabase.from('schools').select('id, name, current_weekly_hours, desired_weekly_hours, latitude, longitude, available_slot_durations').eq('teacher_id', tInfo.id),
           fetchReservedSlots(tInfo.id),
@@ -848,7 +853,10 @@ export default function SchedulingAssistantPage() {
           lessonTime:      l.lesson_time,
           timeLabel:       l.lesson_time,
           durationMinutes: l.duration_minutes,
-          studentName:     null,  // non affiché dans la grille — ce sont les cours existants en fond
+          // Nom élève depuis la jointure — null si student_id est NULL (correction en attente).
+          studentName:     l.students
+            ? `${l.students.first_name ?? ''} ${l.students.last_name ?? ''}`.trim() || null
+            : null,
         }))
 
         setResponses(enrichedResponses)
@@ -2273,6 +2281,8 @@ export default function SchedulingAssistantPage() {
     const endDate     = `${endYear}-06-30`
     const erreurs = []
 
+    const newLessonRows = []
+
     for (const responseId of selectedIds) {
       const response = responses.find((r) => r.id === responseId)
       if (!response) continue
@@ -2281,7 +2291,9 @@ export default function SchedulingAssistantPage() {
 
       try {
         const rows = buildLessonRows(teacherInfo.id, response, proposal, endDate)
-        const { error: insErr } = await supabase.from('lessons').insert(rows)
+        const { data: inserted, error: insErr } = await supabase
+          .from('lessons').insert(rows)
+          .select('id, lesson_date, lesson_time, duration_minutes, student_id')
         if (insErr) throw new Error(insErr.message)
 
         await supabase
@@ -2289,11 +2301,31 @@ export default function SchedulingAssistantPage() {
           .update({ status: 'confirme', assigned_day: proposal.day, assigned_time: proposal.startTime })
           .eq('id', responseId)
 
+        if (inserted?.length) {
+          const studentName = `${response.first_name ?? ''} ${response.last_name ?? ''}`.trim() || null
+          for (const l of inserted) {
+            newLessonRows.push({
+              ...l,
+              lessonDate:      l.lesson_date,
+              lessonTime:      l.lesson_time,
+              timeLabel:       l.lesson_time,
+              durationMinutes: l.duration_minutes,
+              schoolName:      null,
+              studentName,
+              planningStatus:  'confirme',
+            })
+          }
+        }
+
         // Retire la réponse actée sans rechargement réseau
         setResponses((prev) => prev.filter((r) => r.id !== responseId))
       } catch (e) {
         erreurs.push(`${response.first_name || 'Élève'} : ${e.message}`)
       }
+    }
+
+    if (newLessonRows.length > 0) {
+      setExistingLessons((prev) => [...prev, ...newLessonRows])
     }
 
     setSelectedIds(new Set())
@@ -2324,13 +2356,35 @@ export default function SchedulingAssistantPage() {
     try {
       const [, endYear] = currentSchoolYear().split('-').map(Number)
       const rows = buildLessonRows(teacherInfo.id, response, proposal, `${endYear}-06-30`)
-      const { error: insErr } = await supabase.from('lessons').insert(rows)
+
+      // .select() récupère les IDs insérés pour mise à jour optimiste de existingLessons
+      const { data: inserted, error: insErr } = await supabase
+        .from('lessons').insert(rows)
+        .select('id, lesson_date, lesson_time, duration_minutes, student_id')
       if (insErr) throw new Error(insErr.message)
 
       await supabase
         .from('survey_responses')
         .update({ status: 'confirme', assigned_day: proposal.day, assigned_time: proposal.startTime })
         .eq('id', lesson._responseId)
+
+      // Ajouter les cours insérés à existingLessons → restent visibles dans la grille sans rechargement
+      if (inserted?.length) {
+        const studentName = `${response.first_name ?? ''} ${response.last_name ?? ''}`.trim() || null
+        setExistingLessons((prev) => [
+          ...prev,
+          ...(inserted.map((l) => ({
+            ...l,
+            lessonDate:      l.lesson_date,
+            lessonTime:      l.lesson_time,
+            timeLabel:       l.lesson_time,
+            durationMinutes: l.duration_minutes,
+            schoolName:      null,
+            studentName,
+            planningStatus:  'confirme',
+          }))),
+        ])
+      }
 
       setResponses((prev) => prev.filter((r) => r.id !== lesson._responseId))
       setContactCard(null)
@@ -2361,7 +2415,7 @@ export default function SchedulingAssistantPage() {
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Planning intelligent</h1>
+              <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Assistant planning</h1>
               <HelpTooltip texte="Génère des propositions de créneaux en croisant vos disponibilités, celles des élèves et les contraintes de chaque école. Configurez les créneaux dans la page Créneaux écoles." position="bottom" />
             </div>
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
