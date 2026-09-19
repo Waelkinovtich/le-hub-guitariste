@@ -10,6 +10,7 @@ import { computeAllProposals, computeProposals, scoreCandidate, parseStartTime, 
 import { currentSchoolYear } from '../services/schools'
 import { fetchReservedSlots, updateReservedSlot } from '../services/reservedSlots'
 import { exportPlanningPDF } from '../utils/exportPDF'
+import { trierSlots } from '../utils/creneauxSort'
 
 // ─── Persistance de session (sessionStorage) ──────────────────────────────────
 // Conserve les ajustements manuels (glisser-déposer) entre les changements de vue,
@@ -88,6 +89,34 @@ function computeWeekDays(offset) {
     const iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
     return { iso, label: LABELS[d.getDay()], dayNum: d.getDate(), isToday: iso === todayIso }
   })
+}
+
+// ─── Affichage des disponibilités déclarées ───────────────────────────────────
+
+/**
+ * Transforme un objet availabilities en liste de blocs lisibles par jour.
+ * Fusionne les créneaux contigus de 15 min : "09:00–09:15, 09:15–09:30" → "09:00–09:30".
+ * Retourne [] si pas de disponibilités.
+ */
+function mergerCreneauxDispos(availabilities) {
+  if (!availabilities || typeof availabilities !== 'object') return []
+  const ORDRE = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+  const result = []
+  for (const jour of ORDRE) {
+    const slots = availabilities[jour]
+    if (!Array.isArray(slots) || slots.length === 0) continue
+    const sorted = trierSlots(slots)
+    const blocs = []
+    let debut = null, fin = null
+    for (const slot of sorted) {
+      const [s, e] = slot.split('–')
+      if (!debut) { debut = s; fin = e; continue }
+      if (s === fin) { fin = e } else { blocs.push(`${debut}–${fin}`); debut = s; fin = e }
+    }
+    if (debut) blocs.push(`${debut}–${fin}`)
+    result.push({ jour, blocs })
+  }
+  return result
 }
 
 // ─── Helper partagé : génération des lignes de cours récurrents ──────────────
@@ -2199,19 +2228,31 @@ export default function SchedulingAssistantPage() {
    * et les affiche dans un panneau modal sans naviguer vers la fiche complète.
    */
   const handleShowContact = useCallback(async (lesson) => {
-    // Branche 1 : élève lié à un compte → fiche complète depuis la table students
+    // Branche 1 : élève lié à un compte → fiche complète depuis students,
+    // + réponse de sondage la plus récente pour afficher ses disponibilités déclarées.
     if (lesson._studentId) {
-      setContactCard({ lesson, student: null })
+      setContactCard({ lesson, student: null, surveyResponse: null })
       setContactLoading(true)
       try {
-        const { data } = await supabase
-          .from('students')
-          .select('id, first_name, last_name, email, phone, student_phone, parent1_name, parent1_phone, parent1_email, parent2_name, parent2_phone, parent2_email, school_name, level')
-          .eq('id', lesson._studentId)
-          .single()
-        setContactCard({ lesson, student: data ?? null })
+        // Deux requêtes en parallèle : fiche élève + dernière réponse de sondage liée
+        const [{ data: studentData }, { data: surveyData }] = await Promise.all([
+          supabase
+            .from('students')
+            .select('id, first_name, last_name, email, phone, student_phone, parent1_name, parent1_phone, parent1_email, parent2_name, parent2_phone, parent2_email, school_name, level')
+            .eq('id', lesson._studentId)
+            .single(),
+          // matched_student_id est renseigné lors de la création/fusion de la fiche élève
+          supabase
+            .from('survey_responses')
+            .select('id, availabilities, school_name, status, assigned_day, assigned_time')
+            .eq('matched_student_id', lesson._studentId)
+            .order('submitted_at', { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+        ])
+        setContactCard({ lesson, student: studentData ?? null, surveyResponse: surveyData ?? null })
       } catch {
-        setContactCard({ lesson, student: null })
+        setContactCard({ lesson, student: null, surveyResponse: null })
       } finally {
         setContactLoading(false)
       }
@@ -3374,6 +3415,39 @@ export default function SchedulingAssistantPage() {
             ) : (
               <p className="text-xs text-muted-foreground italic">Fiche élève introuvable (student_id manquant).</p>
             )}
+
+            {/* Disponibilités déclarées lors du sondage ─────────────────────────
+                Sources :
+                  - cours validé (Branche 1) → contactCard.surveyResponse.availabilities
+                  - proposition non actée (Branche 2) → contactCard.student.availabilities
+                Affiché pour les deux cas ; si aucune source → message explicite. */}
+            {!contactLoading && (() => {
+              const avail = contactCard.surveyResponse?.availabilities
+                         ?? contactCard.student?.availabilities
+                         ?? null
+              const blocs = mergerCreneauxDispos(avail)
+              return (
+                <div className="border-t border-border-subtle pt-3 space-y-1.5">
+                  <p className="text-xs text-muted font-medium uppercase tracking-wider">Disponibilités déclarées</p>
+                  {blocs.length > 0 ? (
+                    <div className="space-y-0.5">
+                      {blocs.map(({ jour, blocs: plages }) => (
+                        <p key={jour} className="text-xs text-foreground">
+                          <span className="font-medium w-20 inline-block">{jour}</span>
+                          {plages.join(' · ')}
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground italic">
+                      {avail === null
+                        ? 'Disponibilités non renseignées (élève ajouté hors sondage)'
+                        : 'Aucun créneau déclaré dans le sondage'}
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
 
             {/* Bouton valider le créneau affiché (propositions non encore actées) */}
             {contactCard.lesson._responseId &&
