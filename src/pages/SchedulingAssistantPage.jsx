@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Loader2, CalendarDays, AlertCircle, AlertTriangle, Check, Brain, Clock, School, LayoutGrid, List, ChevronLeft, ChevronRight, Save, Bookmark, BookmarkCheck, SquareCheckBig, Lock, LockOpen, RefreshCw, Layers, SlidersHorizontal, Trash2, Users, CheckCircle2, ChevronDown, ChevronUp, Phone, Mail, UserRound, ExternalLink, Edit2, Music2, Printer } from 'lucide-react'
@@ -696,6 +696,12 @@ export default function SchedulingAssistantPage() {
   const [lockedIds, setLockedIds]           = useState(() => new Set(sessionInit?.lockedIds ?? []))
   // ID de la réponse en cours de drag — pour calculer les zones valides à surligner
   const [draggedResponseId, setDraggedResponseId] = useState(null)
+  // Disponibilités d'un cours VALIDÉ en cours de drag (réponse confirmée absente du state responses).
+  // Peuplé par handleDragStart via cache ou requête async ; réinitialisé à null par handleDragEnd.
+  const [draggedStudentAvail, setDraggedStudentAvail] = useState(null)
+  // Cache { studentId → availabilities } — évite les requêtes répétées.
+  // Alimenté par handleShowContact (clic) et handleDragStart (premier drag sans clic préalable).
+  const studentAvailCacheRef = useRef({})
   // Données du cours de groupe en cours de drag — pour intersection des disponibilités membres
   const [draggedGroup, setDraggedGroup] = useState(null)  // { _groupId, _memberAvailabilities }
 
@@ -1026,7 +1032,21 @@ export default function SchedulingAssistantPage() {
       return zones
     }
 
-    // Cours individuel en drag
+    // Cours validé individuel en drag — disponibilités récupérées via matched_student_id
+    // (la réponse confirmée n'est plus dans le state responses en mémoire)
+    if (draggedStudentAvail) {
+      const zones = []
+      for (const [dayName, slots] of Object.entries(draggedStudentAvail)) {
+        const iso = isoParJour[dayName]
+        if (!iso || !Array.isArray(slots)) continue
+        for (const slot of slots) {
+          zones.push({ date: iso, startTime: parseStartTime(slot), durationMinutes: 15 })
+        }
+      }
+      return zones
+    }
+
+    // Proposition non encore actée en drag
     if (!draggedResponseId) return []
     const response = responses.find((r) => r.id === draggedResponseId)
     if (!response) return []
@@ -1041,7 +1061,7 @@ export default function SchedulingAssistantPage() {
       }
     }
     return zones
-  }, [draggedResponseId, draggedGroup, responses, weekDays])
+  }, [draggedResponseId, draggedGroup, draggedStudentAvail, responses, weekDays])
 
   // ── Statistiques de placement ──────────────────────────────────────────────
   // Distingue les réponses placées (au moins une proposition trouvée) des non placées
@@ -1139,11 +1159,32 @@ export default function SchedulingAssistantPage() {
   }, [responses, proposalsMap, proposalOverrides])
 
   // Notifié par WeekGridPlanning quand un drag commence
-  const handleDragStart = useCallback((lesson) => {
+  const handleDragStart = useCallback(async (lesson) => {
     if (lesson.planningStatus === 'groupe' && lesson._groupId) {
       setDraggedGroup({ _groupId: lesson._groupId, _memberAvailabilities: lesson._memberAvailabilities ?? [] })
     } else if (lesson._responseId) {
+      // Proposition non encore actée — réponse disponible dans le state responses
       setDraggedResponseId(lesson._responseId)
+    } else if (lesson._studentId) {
+      // Cours validé — réponse confirmée absente du state responses.
+      // On utilise le cache alimenté par handleShowContact (clic préalable = instant),
+      // ou une requête directe en DB au premier drag.
+      const cached = studentAvailCacheRef.current[lesson._studentId]
+      if (cached !== undefined) {
+        setDraggedStudentAvail(cached)
+      } else {
+        const { data } = await supabase
+          .from('survey_responses')
+          .select('availabilities')
+          .eq('matched_student_id', lesson._studentId)
+          .order('submitted_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        const avail = data?.availabilities ?? {}
+        // Mise en cache pour les drags suivants
+        studentAvailCacheRef.current[lesson._studentId] = avail
+        setDraggedStudentAvail(avail)
+      }
     }
   }, [])
 
@@ -1151,6 +1192,7 @@ export default function SchedulingAssistantPage() {
   const handleDragEnd = useCallback(() => {
     setDraggedResponseId(null)
     setDraggedGroup(null)
+    setDraggedStudentAvail(null)
   }, [])
 
   // ── Sauvegarde d'un snapshot de planning provisoire en base ──────────────────
@@ -2250,6 +2292,10 @@ export default function SchedulingAssistantPage() {
             .limit(1)
             .maybeSingle(),
         ])
+        // Alimente le cache de disponibilités — utile si un drag suit ce clic (surlignage immédiat)
+        if (surveyData?.availabilities) {
+          studentAvailCacheRef.current[lesson._studentId] = surveyData.availabilities
+        }
         setContactCard({ lesson, student: studentData ?? null, surveyResponse: surveyData ?? null })
       } catch {
         setContactCard({ lesson, student: null, surveyResponse: null })
