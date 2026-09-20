@@ -150,6 +150,31 @@ function buildLessonRows(teacherId, response, proposal, endDate) {
   return rows
 }
 
+/**
+ * Transforme une ligne brute de la table `lessons` (ou résultat d'un INSERT .select())
+ * en objet tuile prêt pour WeekGridPlanning / existingLessons.
+ * SOURCE UNIQUE — appelée par tous les chemins qui alimentent existingLessons pour les
+ * cours individuels confirmés : chargement initial DB, handleActerSelection,
+ * handleConfirmContact. Un correctif ici se propage partout.
+ *
+ * @param {object} dbRow       Ligne brute (lesson_date, lesson_time, …)
+ * @param {string|null} studentName  Nom affiché sur la tuile
+ * @param {string|null} schoolName   Couleur / regroupement école
+ */
+function mapLessonRowToGrille(dbRow, studentName, schoolName) {
+  return {
+    ...dbRow,                            // id, recurrence_group, student_id, …
+    schoolName:      schoolName ?? null,
+    lessonDate:      dbRow.lesson_date,
+    lessonTime:      dbRow.lesson_time,
+    timeLabel:       dbRow.lesson_time,
+    durationMinutes: dbRow.duration_minutes,
+    studentName:     studentName ?? null,
+    _studentId:      dbRow.student_id ?? null,
+    planningStatus:  'confirme',
+  }
+}
+
 // ─── Composants ───────────────────────────────────────────────────────────────
 
 // ScoreBadge importé depuis components/ScoreBadge.jsx.
@@ -882,21 +907,13 @@ export default function SchedulingAssistantPage() {
           }
         })
 
-        const mappedLessons = (lessonsRes.data ?? []).map((l) => ({
-          ...l,
-          schoolName:      l.students?.school_name ?? null,
-          lessonDate:      l.lesson_date,
-          lessonTime:      l.lesson_time,
-          timeLabel:       l.lesson_time,
-          durationMinutes: l.duration_minutes,
-          // Nom élève depuis la jointure — null si student_id est NULL (correction en attente).
-          studentName:     l.students
-            ? `${l.students.first_name ?? ''} ${l.students.last_name ?? ''}`.trim() || null
-            : null,
-          // _studentId : alias avec underscore requis par WeekGridPlanning (onViewStudent, drag highlight).
-          // Le spread ...l expose student_id (nom brut DB) mais pas _studentId → bouton contact invisible.
-          _studentId:      l.student_id ?? null,
-        }))
+        const mappedLessons = (lessonsRes.data ?? []).map((l) =>
+          mapLessonRowToGrille(
+            l,
+            l.students ? `${l.students.first_name ?? ''} ${l.students.last_name ?? ''}`.trim() || null : null,
+            l.students?.school_name ?? null,
+          )
+        )
 
         setResponses(enrichedResponses)
         setExistingLessons(mappedLessons)
@@ -2397,7 +2414,7 @@ export default function SchedulingAssistantPage() {
         const rows = buildLessonRows(teacherInfo.id, response, proposal, endDate)
         const { data: inserted, error: insErr } = await supabase
           .from('lessons').insert(rows)
-          .select('id, lesson_date, lesson_time, duration_minutes, student_id')
+          .select('id, lesson_date, lesson_time, duration_minutes, student_id, recurrence_group')
         if (insErr) throw new Error(insErr.message)
 
         await supabase
@@ -2408,17 +2425,7 @@ export default function SchedulingAssistantPage() {
         if (inserted?.length) {
           const studentName = `${response.first_name ?? ''} ${response.last_name ?? ''}`.trim() || null
           for (const l of inserted) {
-            newLessonRows.push({
-              ...l,
-              lessonDate:      l.lesson_date,
-              lessonTime:      l.lesson_time,
-              timeLabel:       l.lesson_time,
-              durationMinutes: l.duration_minutes,
-              schoolName:      null,
-              studentName,
-              planningStatus:  'confirme',
-              _studentId:      l.student_id ?? null,
-            })
+            newLessonRows.push(mapLessonRowToGrille(l, studentName, null))
           }
         }
 
@@ -2465,7 +2472,7 @@ export default function SchedulingAssistantPage() {
       // .select() récupère les IDs insérés pour mise à jour optimiste de existingLessons
       const { data: inserted, error: insErr } = await supabase
         .from('lessons').insert(rows)
-        .select('id, lesson_date, lesson_time, duration_minutes, student_id')
+        .select('id, lesson_date, lesson_time, duration_minutes, student_id, recurrence_group')
       if (insErr) throw new Error(insErr.message)
 
       await supabase
@@ -2478,17 +2485,7 @@ export default function SchedulingAssistantPage() {
         const studentName = `${response.first_name ?? ''} ${response.last_name ?? ''}`.trim() || null
         setExistingLessons((prev) => [
           ...prev,
-          ...(inserted.map((l) => ({
-            ...l,
-            lessonDate:      l.lesson_date,
-            lessonTime:      l.lesson_time,
-            timeLabel:       l.lesson_time,
-            durationMinutes: l.duration_minutes,
-            schoolName:      null,
-            studentName,
-            planningStatus:  'confirme',
-            _studentId:      l.student_id ?? null,
-          }))),
+          ...inserted.map((l) => mapLessonRowToGrille(l, studentName, null)),
         ])
       }
 
