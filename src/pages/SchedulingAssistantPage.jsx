@@ -892,6 +892,9 @@ export default function SchedulingAssistantPage() {
           studentName:     l.students
             ? `${l.students.first_name ?? ''} ${l.students.last_name ?? ''}`.trim() || null
             : null,
+          // _studentId : alias avec underscore requis par WeekGridPlanning (onViewStudent, drag highlight).
+          // Le spread ...l expose student_id (nom brut DB) mais pas _studentId → bouton contact invisible.
+          _studentId:      l.student_id ?? null,
         }))
 
         setResponses(enrichedResponses)
@@ -2400,6 +2403,7 @@ export default function SchedulingAssistantPage() {
               schoolName:      null,
               studentName,
               planningStatus:  'confirme',
+              _studentId:      l.student_id ?? null,
             })
           }
         }
@@ -2469,6 +2473,7 @@ export default function SchedulingAssistantPage() {
             schoolName:      null,
             studentName,
             planningStatus:  'confirme',
+            _studentId:      l.student_id ?? null,
           }))),
         ])
       }
