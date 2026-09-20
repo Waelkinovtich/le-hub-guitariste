@@ -174,6 +174,16 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
             .insert({ student_id: lesson._studentId, school_name: lesson.schoolName || null, duree_cours_minutes: selected })
           if (insErr) throw new Error(insErr.message)
         }
+
+        // Cours validé — propage la durée sur toute la série de leçons (recurrence_group)
+        // ou sur cette occurrence uniquement si la série n'est pas connue.
+        if (lesson.planningStatus === 'confirme' && lesson.id) {
+          const q = supabase.from('lessons').update({ duration_minutes: selected })
+          const { error: lessonErr } = lesson.recurrence_group
+            ? await q.eq('recurrence_group', lesson.recurrence_group)
+            : await q.eq('id', String(lesson.id))
+          if (lessonErr) throw new Error(lessonErr.message)
+        }
       } else if (lesson._groupSessionId) {
         // Cours de groupe : met à jour la séance ET le groupe parent pour cohérence
         const { error: sessErr } = await supabase
@@ -1013,6 +1023,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   const isEnvisage   = lesson.planningStatus === 'envisage'
                   const isConflit    = lesson.planningStatus === 'conflit'
                   const isGroupe     = lesson.planningStatus === 'groupe'
+                  const isConfirme   = lesson.planningStatus === 'confirme'
                   // Disponibilité ensemble — visualisation non définitive, fond violet hachuré
                   const isEnsemble   = lesson.planningStatus === 'ensemble'
                   const isBeingMoved = movePreview?.lessonId === lesson.id
@@ -1202,8 +1213,8 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         </button>
                       )}
 
-                      {/* Modifier la durée — cours individuels et cours de groupe */}
-                      {((isEnvisage || isConflit) && lesson._responseId || isGroupe && lesson._groupSessionId) && !estSelectablePourGroupe && (
+                      {/* Modifier la durée — propositions, cours validés individuels, cours de groupe */}
+                      {((isEnvisage || isConflit) && lesson._responseId || isGroupe && lesson._groupSessionId || isConfirme && lesson._studentId) && !estSelectablePourGroupe && (
                         <button
                           type="button"
                           aria-label="Modifier la durée du cours"

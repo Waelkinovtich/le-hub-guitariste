@@ -788,7 +788,8 @@ export default function SchedulingAssistantPage() {
             .or('status.neq.confirme,status.is.null')
             .order('submitted_at', { ascending: false }),
           // first_name/last_name inclus pour afficher le nom élève sans rechargement.
-          supabase.from('lessons').select('id, lesson_date, lesson_time, duration_minutes, student_id, students(first_name, last_name, school_name, level)').eq('teacher_id', tInfo.id).gte('lesson_date', lundiSemaine).lte('lesson_date', inFourWeeks),
+          // recurrence_group requis pour propager la modification de durée à toute la série.
+          supabase.from('lessons').select('id, lesson_date, lesson_time, duration_minutes, student_id, recurrence_group, students(first_name, last_name, school_name, level)').eq('teacher_id', tInfo.id).gte('lesson_date', lundiSemaine).lte('lesson_date', inFourWeeks),
           // latitude + longitude pour le bonus de proximité domicile + durées de créneaux disponibles
           supabase.from('schools').select('id, name, current_weekly_hours, desired_weekly_hours, latitude, longitude, available_slot_durations').eq('teacher_id', tInfo.id),
           fetchReservedSlots(tInfo.id),
@@ -2260,12 +2261,25 @@ export default function SchedulingAssistantPage() {
    */
   const handleDurationChange = useCallback((lesson, newMinutes) => {
     const responseId = lesson._responseId
-    if (!responseId) return
-    setResponses((prev) => prev.map((r) =>
-      r.id === responseId
-        ? { ...r, effective_duration_minutes: newMinutes, desired_duration_minutes: newMinutes }
-        : r
-    ))
+    if (responseId) {
+      // Proposition non confirmée — met à jour l'état local responses
+      setResponses((prev) => prev.map((r) =>
+        r.id === responseId
+          ? { ...r, effective_duration_minutes: newMinutes, desired_duration_minutes: newMinutes }
+          : r
+      ))
+    } else if (lesson.planningStatus === 'confirme') {
+      // Cours validé — met à jour existingLessons (DB déjà mis à jour par DurationEditPanel)
+      setExistingLessons((prev) => prev.map((l) => {
+        if (lesson.recurrence_group && l.recurrence_group === lesson.recurrence_group) {
+          return { ...l, durationMinutes: newMinutes, duration_minutes: newMinutes }
+        }
+        if (!lesson.recurrence_group && String(l.id) === String(lesson.id)) {
+          return { ...l, durationMinutes: newMinutes, duration_minutes: newMinutes }
+        }
+        return l
+      }))
+    }
   }, [])
 
   /**
