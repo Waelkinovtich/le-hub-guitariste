@@ -1214,7 +1214,11 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                       )}
 
                       {/* Modifier la durée — propositions, cours validés individuels, cours de groupe */}
-                      {((isEnvisage || isConflit) && lesson._responseId || isGroupe && lesson._groupSessionId || isConfirme && lesson._studentId) && !estSelectablePourGroupe && (
+                      {(
+                        ((isEnvisage || isConflit) && lesson._responseId)
+                        || (isGroupe && lesson._groupSessionId)
+                        || (isConfirme && lesson._studentId)
+                      ) && !estSelectablePourGroupe && (
                         <button
                           type="button"
                           aria-label="Modifier la durée du cours"
