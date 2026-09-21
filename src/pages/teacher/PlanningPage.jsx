@@ -316,6 +316,7 @@ export default function PlanningPage() {
             // lessonDate et lessonTime volontairement absents : l'utilisateur
             // choisit lui-même la nouvelle date dans la modale.
           })}
+          onDurationChange={() => reload()}
         />
       )}
       {view === 'semaine' && loading && <LoadingBlock label="Chargement du planning" />}

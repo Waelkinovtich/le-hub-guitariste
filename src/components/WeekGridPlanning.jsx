@@ -150,13 +150,17 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
     setSaving(true)
     setError('')
     try {
-      if (lesson._studentId) {
+      // _studentId : convention SchedulingAssistant ; studentId : convention PlanningPage (mapLesson)
+      const studentId = lesson._studentId || lesson.studentId || null
+      // recurrence_group : raw DB (via ...dbRow) ; recurrenceGroup : mapLesson camelCase
+      const recurrenceGroup = lesson.recurrence_group || lesson.recurrenceGroup || null
+      if (studentId) {
         // Cherche un contexte existant avant de créer (pas de contrainte unique garantie côté SQL)
         // PostgreSQL distingue NULL et '' : .eq('school_name', '') ne matche pas les lignes IS NULL.
         let ctxQuery = supabase
           .from('student_contexts')
           .select('id')
-          .eq('student_id', lesson._studentId)
+          .eq('student_id', studentId)
         ctxQuery = lesson.schoolName
           ? ctxQuery.eq('school_name', lesson.schoolName)
           : ctxQuery.is('school_name', null)
@@ -171,16 +175,15 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
         } else {
           const { error: insErr } = await supabase
             .from('student_contexts')
-            .insert({ student_id: lesson._studentId, school_name: lesson.schoolName || null, duree_cours_minutes: selected })
+            .insert({ student_id: studentId, school_name: lesson.schoolName || null, duree_cours_minutes: selected })
           if (insErr) throw new Error(insErr.message)
         }
 
-        // Cours validé — propage la durée sur toute la série de leçons (recurrence_group)
-        // ou sur cette occurrence uniquement si la série n'est pas connue.
+        // Cours validé — propage la durée sur toute la série (recurrenceGroup) ou occurrence seule
         if (lesson.planningStatus === 'confirme' && lesson.id) {
           const q = supabase.from('lessons').update({ duration_minutes: selected })
-          const { error: lessonErr } = lesson.recurrence_group
-            ? await q.eq('recurrence_group', lesson.recurrence_group)
+          const { error: lessonErr } = recurrenceGroup
+            ? await q.eq('recurrence_group', recurrenceGroup)
             : await q.eq('id', String(lesson.id))
           if (lessonErr) throw new Error(lessonErr.message)
         }
@@ -533,7 +536,9 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
   }, [localLessons])
 
   const lessonColor = useCallback((lesson) => {
-    if (!lesson.schoolName || lesson.lessonType === 'particulier') return CESU_COLOR
+    // schoolName prime sur lesson_type legacy : un élève d'école peut avoir lesson_type='particulier'
+    // si créé via le Planning intelligent sans mise à jour du champ legacy (non critique depuis student_contexts).
+    if (!lesson.schoolName) return CESU_COLOR
     return getSchoolColor(lesson.schoolName, allSchoolNames)
   }, [allSchoolNames])
 
@@ -1217,7 +1222,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                       {(
                         ((isEnvisage || isConflit) && lesson._responseId)
                         || (isGroupe && lesson._groupSessionId)
-                        || (isConfirme && lesson._studentId)
+                        || (isConfirme && (lesson._studentId || lesson.studentId))
                       ) && !estSelectablePourGroupe && (
                         <button
                           type="button"
