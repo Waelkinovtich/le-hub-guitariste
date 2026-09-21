@@ -72,18 +72,6 @@ export default function PlanningPage() {
     fetchReservedSlots(user.id).then(setReservedSlots).catch(() => {})
   }, [user.id])
 
-  // Exceptions de créneaux réservés : rechargées à chaque changement de plage (semaine)
-  useEffect(() => {
-    if (view !== 'semaine') return
-    fetchSlotExceptions(user.id, range.from, range.to).then(setReservedSlotExceptions).catch(() => {})
-  }, [user.id, range.from, range.to, view])
-
-  // Événements école : rechargés à chaque changement de semaine (T3)
-  useEffect(() => {
-    if (view !== 'semaine') return
-    fetchEventsInRange(user.id, range.from, range.to).then(setSchoolEvents).catch(() => {})
-  }, [user.id, range.from, range.to, view])
-
   const [icsRange, setIcsRange] = useState(() => {
     const yr = currentSchoolYear()
     const [y1, y2] = yr.split('-').map(Number)
@@ -128,6 +116,19 @@ export default function PlanningPage() {
     }
     return { from: toISODate(weekStart), to: toISODate(weekEnd) }
   }, [view, monthDate, weekStart, weekEnd, périodes, périodeIndex])
+
+  // Exceptions de créneaux réservés : rechargées à chaque changement de plage (semaine)
+  // Placé APRÈS la déclaration de `range` pour éviter la TDZ (range utilisé dans le tableau de dépendances)
+  useEffect(() => {
+    if (view !== 'semaine') return
+    fetchSlotExceptions(user.id, range.from, range.to).then(setReservedSlotExceptions).catch(() => {})
+  }, [user.id, range.from, range.to, view])
+
+  // Événements école : rechargés à chaque changement de semaine (T3)
+  useEffect(() => {
+    if (view !== 'semaine') return
+    fetchEventsInRange(user.id, range.from, range.to).then(setSchoolEvents).catch(() => {})
+  }, [user.id, range.from, range.to, view])
 
   const load = useCallback(() => {
     return fetchLessonsInRange({ teacherId: user.id, from: range.from, to: range.to })
