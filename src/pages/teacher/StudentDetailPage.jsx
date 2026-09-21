@@ -812,16 +812,34 @@ export default function StudentDetailPage() {
           </div>
         )}
 
-        {/* Niveau, instrument, progression */}
+        {/* Niveau, instrument */}
         <div className="grid sm:grid-cols-2 gap-4">
           <div>
-            <p className="text-xs text-muted-foreground mb-1">Niveau</p>
+            <p className="text-xs text-muted-foreground mb-1">Niveau (CMF)</p>
             <p className="text-sm">{student.level ?? '--'}</p>
+            {student.diplomas && (
+              <p className="text-xs text-muted-foreground mt-0.5">{student.diplomas}</p>
+            )}
           </div>
           <div>
             <p className="text-xs text-muted-foreground mb-1">Instrument</p>
             <p className="text-sm">{student.instrument ?? '--'}</p>
           </div>
+        </div>
+        {/* Années de pratique + adresse */}
+        <div className="grid sm:grid-cols-2 gap-4 mt-4">
+          {student.practiceYears != null && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Années de pratique</p>
+              <p className="text-sm">{student.practiceYears}</p>
+            </div>
+          )}
+          {student.address && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Adresse</p>
+              <p className="text-sm">{student.address}</p>
+            </div>
+          )}
         </div>
         <div className="mt-4">
           <p className="text-xs text-muted-foreground mb-2">Progression</p>
@@ -995,6 +1013,14 @@ export default function StudentDetailPage() {
       {hasParent1 && (
         <Section title={student.parent1Name || 'Parent / Tuteur 1'}>
           <div className="space-y-2">
+            {student.parent1Role && (
+              <p className="text-xs text-muted-foreground">
+                {student.parent1Role === 'Autre' && student.parent1RolePrecision
+                  ? student.parent1RolePrecision
+                  : student.parent1Role}
+                {student.parent1ContactPurpose && ` · ${student.parent1ContactPurpose}`}
+              </p>
+            )}
             <ContactLine icon={Phone} value={student.parent1Phone} phone />
             <ContactLine icon={Mail} value={student.parent1Email} email />
           </div>
@@ -1004,6 +1030,14 @@ export default function StudentDetailPage() {
       {hasParent2 && (
         <Section title={student.parent2Name || 'Parent / Tuteur 2'}>
           <div className="space-y-2">
+            {student.parent2Role && (
+              <p className="text-xs text-muted-foreground">
+                {student.parent2Role === 'Autre' && student.parent2RolePrecision
+                  ? student.parent2RolePrecision
+                  : student.parent2Role}
+                {student.parent2ContactPurpose && ` · ${student.parent2ContactPurpose}`}
+              </p>
+            )}
             <ContactLine icon={Phone} value={student.parent2Phone} phone />
             <ContactLine icon={Mail} value={student.parent2Email} email />
           </div>

@@ -2,8 +2,8 @@ import { supabase } from '../lib/supabase'
 import { TABLES } from '../lib/tables'
 import { fullName } from '../utils/format'
 
-// archived_at : requiert la migration migration-sondage-simulateur-archivage.sql (bloc T3)
-const STUDENT_COLUMNS = 'id, teacher_id, profile_id, first_name, last_name, email, phone, level, instrument, progress, lesson_type, school_name, school_id, birth_year, notes, parent1_name, parent1_phone, parent1_email, parent2_name, parent2_phone, parent2_email, student_phone, created_at, archived_at'
+// Colonnes SELECT — inclure toute nouvelle colonne ajoutée via migration
+const STUDENT_COLUMNS = 'id, teacher_id, profile_id, first_name, last_name, email, phone, level, instrument, progress, lesson_type, school_name, school_id, birth_year, notes, parent1_name, parent1_phone, parent1_email, parent2_name, parent2_phone, parent2_email, student_phone, created_at, archived_at, practice_years, diplomas, address, parent1_role, parent1_role_precision, parent1_contact_purpose, parent2_role, parent2_role_precision, parent2_contact_purpose'
 
 export function mapStudent(row) {
   if (!row) return null
@@ -30,11 +30,21 @@ export function mapStudent(row) {
     parent1Name: row.parent1_name ?? '',
     parent1Phone: row.parent1_phone ?? '',
     parent1Email: row.parent1_email ?? '',
-    parent2Name: row.parent2_name ?? '',
-    parent2Phone: row.parent2_phone ?? '',
-    parent2Email: row.parent2_email ?? '',
-    createdAt:  row.created_at,
-    archivedAt: row.archived_at ?? null,
+    parent2Name:             row.parent2_name ?? '',
+    parent2Phone:            row.parent2_phone ?? '',
+    parent2Email:            row.parent2_email ?? '',
+    // Champs pédagogiques/identité ajoutés pour parité avec le sondage
+    practiceYears:           row.practice_years ?? null,
+    diplomas:                row.diplomas ?? '',
+    address:                 row.address ?? '',
+    parent1Role:             row.parent1_role ?? '',
+    parent1RolePrecision:    row.parent1_role_precision ?? '',
+    parent1ContactPurpose:   row.parent1_contact_purpose ?? '',
+    parent2Role:             row.parent2_role ?? '',
+    parent2RolePrecision:    row.parent2_role_precision ?? '',
+    parent2ContactPurpose:   row.parent2_contact_purpose ?? '',
+    createdAt:               row.created_at,
+    archivedAt:              row.archived_at ?? null,
   }
 }
 
@@ -53,14 +63,58 @@ export async function fetchStudentByProfileId(profileId) {
   return mapStudent(data)
 }
 
+// Champs communs extraits pour éviter la duplication entre create et update
+function buildStudentPayload(input) {
+  return {
+    first_name:               input.firstName.trim(),
+    last_name:                input.lastName.trim(),
+    email:                    input.email?.trim() || null,
+    phone:                    input.phone?.trim() || null,
+    student_phone:            input.studentPhone?.trim() || null,
+    level:                    input.level?.trim() || null,
+    instrument:               input.instrument?.trim() || null,
+    progress:                 input.progress ?? 0,
+    lesson_type:              input.lessonType ?? 'particulier',
+    school_name:              input.schoolName?.trim() || null,
+    school_id:                input.schoolId ?? null,
+    birth_year:               input.birthYear ? Number(input.birthYear) : null,
+    notes:                    input.notes?.trim() || null,
+    parent1_name:             input.parent1Name?.trim() || null,
+    parent1_phone:            input.parent1Phone?.trim() || null,
+    parent1_email:            input.parent1Email?.trim() || null,
+    parent2_name:             input.parent2Name?.trim() || null,
+    parent2_phone:            input.parent2Phone?.trim() || null,
+    parent2_email:            input.parent2Email?.trim() || null,
+    // Champs pédagogiques — parité avec le sondage (migration-student-options-unification.sql)
+    practice_years:           input.practiceYears ? Number(input.practiceYears) : null,
+    diplomas:                 input.diplomas?.trim() || null,
+    address:                  input.address?.trim() || null,
+    parent1_role:             input.parent1Role?.trim() || null,
+    parent1_role_precision:   input.parent1RolePrecision?.trim() || null,
+    parent1_contact_purpose:  input.parent1ContactPurpose?.trim() || null,
+    parent2_role:             input.parent2Role?.trim() || null,
+    parent2_role_precision:   input.parent2RolePrecision?.trim() || null,
+    parent2_contact_purpose:  input.parent2ContactPurpose?.trim() || null,
+  }
+}
+
 export async function createStudent(teacherId, input) {
-  const { data, error } = await supabase.from(TABLES.students).insert({ teacher_id: teacherId, first_name: input.firstName.trim(), last_name: input.lastName.trim(), email: input.email?.trim() || null, phone: input.phone?.trim() || null, student_phone: input.studentPhone?.trim() || null, level: input.level?.trim() || null, instrument: input.instrument?.trim() || null, progress: input.progress ?? 0, lesson_type: input.lessonType ?? 'particulier', school_name: input.schoolName?.trim() || null, school_id: input.schoolId ?? null, birth_year: input.birthYear ? Number(input.birthYear) : null, notes: input.notes?.trim() || null, parent1_name: input.parent1Name?.trim() || null, parent1_phone: input.parent1Phone?.trim() || null, parent1_email: input.parent1Email?.trim() || null, parent2_name: input.parent2Name?.trim() || null, parent2_phone: input.parent2Phone?.trim() || null, parent2_email: input.parent2Email?.trim() || null }).select(STUDENT_COLUMNS).single()
+  const { data, error } = await supabase
+    .from(TABLES.students)
+    .insert({ teacher_id: teacherId, ...buildStudentPayload(input) })
+    .select(STUDENT_COLUMNS)
+    .single()
   if (error) throw new Error(error.message)
   return mapStudent(data)
 }
 
 export async function updateStudent(studentId, input) {
-  const { data, error } = await supabase.from(TABLES.students).update({ first_name: input.firstName.trim(), last_name: input.lastName.trim(), email: input.email?.trim() || null, phone: input.phone?.trim() || null, student_phone: input.studentPhone?.trim() || null, level: input.level?.trim() || null, instrument: input.instrument?.trim() || null, progress: input.progress ?? 0, lesson_type: input.lessonType ?? 'particulier', school_name: input.schoolName?.trim() || null, school_id: input.schoolId ?? null, birth_year: input.birthYear ? Number(input.birthYear) : null, notes: input.notes?.trim() || null, parent1_name: input.parent1Name?.trim() || null, parent1_phone: input.parent1Phone?.trim() || null, parent1_email: input.parent1Email?.trim() || null, parent2_name: input.parent2Name?.trim() || null, parent2_phone: input.parent2Phone?.trim() || null, parent2_email: input.parent2Email?.trim() || null }).eq('id', studentId).select(STUDENT_COLUMNS).single()
+  const { data, error } = await supabase
+    .from(TABLES.students)
+    .update(buildStudentPayload(input))
+    .eq('id', studentId)
+    .select(STUDENT_COLUMNS)
+    .single()
   if (error) throw new Error(error.message)
   return mapStudent(data)
 }

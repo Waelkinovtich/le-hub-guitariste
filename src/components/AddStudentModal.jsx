@@ -3,8 +3,8 @@ import { X, Loader2 } from 'lucide-react'
 import { createStudent, updateStudent, syncStudentContexts } from '../services/students'
 import { fetchTeacherSchools, findOrCreateSchool } from '../services/schools'
 import { getSchoolColor } from '../utils/schoolColors'
+import { NIVEAUX, INSTRUMENTS, ROLES_TUTEUR, USAGES_TUTEUR } from '../constants/studentOptions'
 
-const LEVELS = ['Debutant', 'Intermediaire', 'Avance']
 const currentYear = new Date().getFullYear()
 const YEARS = Array.from({ length: 80 }, (_, i) => currentYear - i)
 
@@ -48,22 +48,34 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
 
   // ── État général du formulaire ────────────────────────────────────────────
   const [form, setForm] = useState({
-    firstName:    student?.firstName    ?? '',
-    lastName:     student?.lastName     ?? '',
-    email:        student?.email        ?? '',
-    phone:        student?.phone        ?? '',
-    studentPhone: student?.studentPhone ?? '',
-    level:        student?.level        ?? '',
-    instrument:   student?.instrument   ?? '',
-    progress:     student?.progress     ?? 0,
-    birthYear:    student?.birthYear    ?? '',
-    notes:        student?.notes        ?? '',
-    parent1Name:  student?.parent1Name  ?? '',
-    parent1Phone: student?.parent1Phone ?? '',
-    parent1Email: student?.parent1Email ?? '',
-    parent2Name:  student?.parent2Name  ?? '',
-    parent2Phone: student?.parent2Phone ?? '',
-    parent2Email: student?.parent2Email ?? '',
+    firstName:             student?.firstName             ?? '',
+    lastName:              student?.lastName              ?? '',
+    email:                 student?.email                 ?? '',
+    phone:                 student?.phone                 ?? '',
+    studentPhone:          student?.studentPhone          ?? '',
+    level:                 student?.level                 ?? '',
+    instrument:            student?.instrument            ?? '',
+    progress:              student?.progress              ?? 0,
+    birthYear:             student?.birthYear             ?? '',
+    notes:                 student?.notes                 ?? '',
+    // Pédagogique
+    practiceYears:         student?.practiceYears         ?? '',
+    diplomas:              student?.diplomas              ?? '',
+    address:               student?.address               ?? '',
+    // Tuteur 1
+    parent1Name:           student?.parent1Name           ?? '',
+    parent1Phone:          student?.parent1Phone          ?? '',
+    parent1Email:          student?.parent1Email          ?? '',
+    parent1Role:           student?.parent1Role           ?? '',
+    parent1RolePrecision:  student?.parent1RolePrecision  ?? '',
+    parent1ContactPurpose: student?.parent1ContactPurpose ?? '',
+    // Tuteur 2
+    parent2Name:           student?.parent2Name           ?? '',
+    parent2Phone:          student?.parent2Phone          ?? '',
+    parent2Email:          student?.parent2Email          ?? '',
+    parent2Role:           student?.parent2Role           ?? '',
+    parent2RolePrecision:  student?.parent2RolePrecision  ?? '',
+    parent2ContactPurpose: student?.parent2ContactPurpose ?? '',
   })
 
   // ── État du contexte École ────────────────────────────────────────────────
@@ -229,10 +241,25 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
           <div>
             <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3">Parent / Tuteur 1</p>
             <div className="space-y-3">
-              <div>
-                <label className="block text-sm text-muted-foreground mb-1.5">Nom</label>
-                <input value={form.parent1Name} onChange={update('parent1Name')} placeholder="Ex : Mme Dupont (mère)" className={inputCls} />
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-muted-foreground mb-1.5">Prénom Nom</label>
+                  <input value={form.parent1Name} onChange={update('parent1Name')} placeholder="Ex : Marie Dupont" className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-sm text-muted-foreground mb-1.5">Rôle</label>
+                  <select value={form.parent1Role} onChange={update('parent1Role')} className={inputCls}>
+                    <option value="">--</option>
+                    {ROLES_TUTEUR.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
               </div>
+              {form.parent1Role === 'Autre' && (
+                <div>
+                  <label className="block text-sm text-muted-foreground mb-1.5">Précisez le rôle</label>
+                  <input value={form.parent1RolePrecision} onChange={update('parent1RolePrecision')} placeholder="Ex : Grand-parent, tuteur légal…" className={inputCls} />
+                </div>
+              )}
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-muted-foreground mb-1.5">Téléphone</label>
@@ -243,6 +270,13 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
                   <input type="email" value={form.parent1Email} onChange={update('parent1Email')} className={inputCls} />
                 </div>
               </div>
+              <div>
+                <label className="block text-sm text-muted-foreground mb-1.5">À contacter pour</label>
+                <select value={form.parent1ContactPurpose} onChange={update('parent1ContactPurpose')} className={inputCls}>
+                  <option value="">--</option>
+                  {USAGES_TUTEUR.map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
             </div>
           </div>
 
@@ -250,10 +284,25 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
           <div>
             <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3">Parent / Tuteur 2</p>
             <div className="space-y-3">
-              <div>
-                <label className="block text-sm text-muted-foreground mb-1.5">Nom</label>
-                <input value={form.parent2Name} onChange={update('parent2Name')} placeholder="Ex : M. Dupont (père)" className={inputCls} />
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-muted-foreground mb-1.5">Prénom Nom</label>
+                  <input value={form.parent2Name} onChange={update('parent2Name')} placeholder="Ex : Jean Dupont" className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-sm text-muted-foreground mb-1.5">Rôle</label>
+                  <select value={form.parent2Role} onChange={update('parent2Role')} className={inputCls}>
+                    <option value="">--</option>
+                    {ROLES_TUTEUR.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
               </div>
+              {form.parent2Role === 'Autre' && (
+                <div>
+                  <label className="block text-sm text-muted-foreground mb-1.5">Précisez le rôle</label>
+                  <input value={form.parent2RolePrecision} onChange={update('parent2RolePrecision')} placeholder="Ex : Grand-parent, tuteur légal…" className={inputCls} />
+                </div>
+              )}
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-muted-foreground mb-1.5">Téléphone</label>
@@ -263,6 +312,13 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
                   <label className="block text-sm text-muted-foreground mb-1.5">Email</label>
                   <input type="email" value={form.parent2Email} onChange={update('parent2Email')} className={inputCls} />
                 </div>
+              </div>
+              <div>
+                <label className="block text-sm text-muted-foreground mb-1.5">À contacter pour</label>
+                <select value={form.parent2ContactPurpose} onChange={update('parent2ContactPurpose')} className={inputCls}>
+                  <option value="">--</option>
+                  {USAGES_TUTEUR.map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
               </div>
             </div>
           </div>
@@ -401,18 +457,44 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
               </div>
             </div>
 
-            {/* Niveau, instrument, progression */}
+            {/* Niveau (cycles CMF), instrument, progression */}
             <div className="grid sm:grid-cols-2 gap-4 mt-4">
               <div>
-                <label className="block text-sm text-muted-foreground mb-1.5">Niveau</label>
+                <label className="block text-sm text-muted-foreground mb-1.5">Niveau (CMF)</label>
                 <select value={form.level} onChange={update('level')} className={inputCls}>
                   <option value="">--</option>
-                  {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+                  {NIVEAUX.map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm text-muted-foreground mb-1.5">Instrument</label>
-                <input value={form.instrument} onChange={update('instrument')} placeholder="Guitare folk, électrique…" className={inputCls} />
+                <select value={form.instrument} onChange={update('instrument')} className={inputCls}>
+                  <option value="">--</option>
+                  {INSTRUMENTS.map((i) => <option key={i} value={i}>{i}</option>)}
+                </select>
+              </div>
+            </div>
+            {/* Précision si niveau "Autre" (même comportement que le sondage) */}
+            {form.level === 'Autre / pas de cycle fédéral' && (
+              <div className="mt-3">
+                <label className="block text-sm text-muted-foreground mb-1.5">Précisez le niveau</label>
+                <input value={form.diplomas} onChange={update('diplomas')} placeholder="Ex : autodidacte, 5 ans de pratique…" className={inputCls} />
+              </div>
+            )}
+            {form.level && form.level !== 'Autre / pas de cycle fédéral' && (
+              <div className="mt-3">
+                <label className="block text-sm text-muted-foreground mb-1.5">Diplômes obtenus (optionnel)</label>
+                <input value={form.diplomas} onChange={update('diplomas')} placeholder="Ex : DEM guitare, CFEM…" className={inputCls} />
+              </div>
+            )}
+            <div className="grid sm:grid-cols-2 gap-4 mt-3">
+              <div>
+                <label className="block text-sm text-muted-foreground mb-1.5">Années de pratique</label>
+                <input type="number" min="0" max="99" value={form.practiceYears} onChange={update('practiceYears')} placeholder="0" className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-sm text-muted-foreground mb-1.5">Adresse</label>
+                <input value={form.address} onChange={update('address')} placeholder="Rue, ville…" className={inputCls} />
               </div>
             </div>
             <div className="mt-3">

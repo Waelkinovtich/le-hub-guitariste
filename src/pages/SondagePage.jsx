@@ -4,27 +4,14 @@ import { Guitar, ChevronRight, ChevronLeft, Check, Loader2, AlertCircle, Plus, T
 import { supabasePublic as supabase } from '../lib/supabase'
 import { REGLE_PAR_DUREE } from '../utils/slotDurationRules'
 import { trierSlots, trierSlotsDesLignes } from '../utils/creneauxSort'
+import { NIVEAUX, INSTRUMENTS, ROLES_TUTEUR, USAGES_TUTEUR } from '../constants/studentOptions'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
+// NIVEAUX, INSTRUMENTS, ROLES_TUTEUR, USAGES_TUTEUR → src/constants/studentOptions.js
+// (source unique partagée avec le formulaire professeur)
 
-// Nomenclature CMF (Confédération Musicale de France) — cycles officiels guitare
-const NIVEAUX = [
-  'Éveil',
-  'Initiation',
-  'Cycle 1 — 1re année',  'Cycle 1 — 2e année',  'Cycle 1 — 3e année',
-  'Cycle 2 — 1re année',  'Cycle 2 — 2e année',  'Cycle 2 — 3e année',
-  'Cycle 3 — 1re année',  'Cycle 3 — 2e année',  'Cycle 3 — 3e année',
-  'COP',
-  'DEM',
-  'Adulte loisir',
-  'Autre / pas de cycle fédéral',
-]
 const TRANSPORTS = ['À pied', 'Vélo', 'Voiture', 'Transport en commun']
 const FREQUENCES = ['1x/semaine', '2x/semaine', 'Toutes les 2 semaines']
-const INSTRUMENTS = ['Guitare folk', 'Guitare électrique', 'Guitare classique', 'Basse', 'Autre']
-const USAGES_TUTEUR = ['Organisation', 'Documents pédagogiques', 'Les deux']
-// Rôle du tuteur vis-à-vis de l'élève — "Autre" déclenche un champ texte libre
-const ROLES_TUTEUR = ['Père', 'Mère', 'Autre']
 const CURRENT_YEAR = '2026-2027'
 
 // trierSlots et trierSlotsDesLignes importés depuis src/utils/creneauxSort.js
