@@ -90,3 +90,61 @@ export async function deleteReservedSlot(slotId) {
     .eq('id', slotId)
   if (error) throw new Error(error.message)
 }
+
+// ─── Exceptions ponctuelles (T2) ──────────────────────────────────────────────
+// Permet de masquer ou déplacer un créneau réservé pour UNE date précise,
+// sans modifier la règle récurrente dans school_reserved_slots.
+
+/** Charge les exceptions sur une plage de dates (pour la semaine affichée). */
+export async function fetchSlotExceptions(teacherId, fromDate, toDate) {
+  const { data, error } = await supabase
+    .from('school_reserved_slot_exceptions')
+    .select('id, slot_id, exception_date, type, new_heure_debut, new_duree_minutes')
+    .eq('teacher_id', teacherId)
+    .gte('exception_date', fromDate)
+    .lte('exception_date', toDate)
+  if (error) {
+    // Fail silently si la table n'existe pas encore (migration non exécutée)
+    console.warn('fetchSlotExceptions: table absente ou erreur réseau', error.message)
+    return []
+  }
+  return (data ?? []).map((r) => ({
+    id:              r.id,
+    slotId:          r.slot_id,
+    exceptionDate:   r.exception_date,
+    type:            r.type,
+    newHeureDebut:   r.new_heure_debut   ?? null,
+    newDureeMinutes: r.new_duree_minutes ?? null,
+  }))
+}
+
+/**
+ * Crée ou remplace une exception pour (slot_id, exception_date).
+ * type='hidden'  → le créneau disparaît ce jour-là.
+ * type='moved'   → le créneau apparaît à newHeureDebut / newDureeMinutes.
+ */
+export async function upsertSlotException({ teacherId, slotId, exceptionDate, type, newHeureDebut, newDureeMinutes }) {
+  const { error } = await supabase
+    .from('school_reserved_slot_exceptions')
+    .upsert(
+      {
+        teacher_id:       teacherId,
+        slot_id:          slotId,
+        exception_date:   exceptionDate,
+        type,
+        new_heure_debut:   newHeureDebut   ?? null,
+        new_duree_minutes: newDureeMinutes ?? null,
+      },
+      { onConflict: 'slot_id,exception_date' }
+    )
+  if (error) throw new Error(error.message)
+}
+
+/** Supprime une exception (restaure le comportement par défaut pour cette date). */
+export async function deleteSlotException(exceptionId) {
+  const { error } = await supabase
+    .from('school_reserved_slot_exceptions')
+    .delete()
+    .eq('id', exceptionId)
+  if (error) throw new Error(error.message)
+}

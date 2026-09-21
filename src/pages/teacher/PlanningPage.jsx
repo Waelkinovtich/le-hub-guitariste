@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, useEffect } from 'react'
-import { Plus, Pencil, Trash2, ClipboardCheck, ChevronLeft, ChevronRight, Download, HelpCircle, Eye, EyeOff, Navigation } from 'lucide-react'
+import { Plus, Pencil, Trash2, ClipboardCheck, ChevronLeft, ChevronRight, Download, HelpCircle, Eye, EyeOff, Navigation, CalendarPlus } from 'lucide-react'
 import { downloadIcs } from '../../utils/icsExport'
 import { currentSchoolYear } from '../../services/schools'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
@@ -18,7 +18,8 @@ import YearView from "../../components/YearView"
 import WeekGridView from "../../components/WeekGridView"
 import MonthView from '../../components/MonthView'
 import WeekGridPlanning from '../../components/WeekGridPlanning'
-import { fetchReservedSlots } from '../../services/reservedSlots'
+import { fetchReservedSlots, fetchSlotExceptions, upsertSlotException, deleteSlotException } from '../../services/reservedSlots'
+import { fetchEventsInRange, createSchoolEvent } from '../../services/schoolEvents'
 
 const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: 'Mois' }, { value: 'période', label: 'Période scolaire' }, { value: 'année', label: 'Année' }]
@@ -47,6 +48,16 @@ export default function PlanningPage() {
   const [togglingId, setTogglingId] = useState(null)
   // Créneaux réservés (hebdomadaires, indépendants de la plage de dates)
   const [reservedSlots, setReservedSlots] = useState([])
+  // Exceptions ponctuelles sur les créneaux réservés (T2) — rechargées à chaque changement de semaine
+  const [reservedSlotExceptions, setReservedSlotExceptions] = useState([])
+
+  // Événements école (réunions, répétitions exceptionnelles) — T3
+  const [schoolEvents, setSchoolEvents] = useState([])
+  const [showCreateEvent, setShowCreateEvent] = useState(false)
+  // Formulaire de création d'événement
+  const [newEvent, setNewEvent] = useState({ title: '', eventDate: '', typeEvenement: 'reunion', schoolName: '', content: '' })
+  const [savingEvent, setSavingEvent] = useState(false)
+  const [eventError, setEventError] = useState('')
 
   // Coordonnées GPS des écoles indexées par nom (pour les boutons de navigation)
   const [schoolCoords, setSchoolCoords] = useState({})
@@ -60,6 +71,18 @@ export default function PlanningPage() {
     // Créneaux réservés chargés une seule fois (hebdomadaires, pas liés à la plage de dates)
     fetchReservedSlots(user.id).then(setReservedSlots).catch(() => {})
   }, [user.id])
+
+  // Exceptions de créneaux réservés : rechargées à chaque changement de plage (semaine)
+  useEffect(() => {
+    if (view !== 'semaine') return
+    fetchSlotExceptions(user.id, range.from, range.to).then(setReservedSlotExceptions).catch(() => {})
+  }, [user.id, range.from, range.to, view])
+
+  // Événements école : rechargés à chaque changement de semaine (T3)
+  useEffect(() => {
+    if (view !== 'semaine') return
+    fetchEventsInRange(user.id, range.from, range.to).then(setSchoolEvents).catch(() => {})
+  }, [user.id, range.from, range.to, view])
 
   const [icsRange, setIcsRange] = useState(() => {
     const yr = currentSchoolYear()
@@ -175,6 +198,39 @@ export default function PlanningPage() {
       : `https://maps.google.com/?q=${encodedName}`
   }
 
+  // Index des événements par date ISO pour l'affichage dans WeekGridPlanning (T3)
+  const eventsByDay = useMemo(() => {
+    const map = {}
+    for (const ev of schoolEvents) {
+      if (!map[ev.event_date]) map[ev.event_date] = []
+      map[ev.event_date].push(ev)
+    }
+    return map
+  }, [schoolEvents])
+
+  const handleCreateEvent = async (e) => {
+    e.preventDefault()
+    if (!newEvent.title.trim() || !newEvent.eventDate) { setEventError('Titre et date requis.'); return }
+    setSavingEvent(true); setEventError('')
+    try {
+      await createSchoolEvent({
+        teacherId:      user.id,
+        schoolName:     newEvent.schoolName || null,
+        title:          newEvent.title,
+        content:        newEvent.content,
+        eventDate:      newEvent.eventDate,
+        typeEvenement:  newEvent.typeEvenement,
+      })
+      setShowCreateEvent(false)
+      setNewEvent({ title: '', eventDate: '', typeEvenement: 'reunion', schoolName: '', content: '' })
+      fetchEventsInRange(user.id, range.from, range.to).then(setSchoolEvents).catch(() => {})
+    } catch (err) {
+      setEventError(err.message)
+    } finally {
+      setSavingEvent(false)
+    }
+  }
+
   const togglePlanningStatus = async (lesson) => {
     const next = lesson.planningStatus === 'envisage' ? 'confirme' : 'envisage'
     setTogglingId(lesson.id)
@@ -216,6 +272,12 @@ export default function PlanningPage() {
             {hideEnvisages ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             {hideEnvisages ? 'Envisagés masqués' : 'Envisagés visibles'}
           </button>
+          {view === 'semaine' && (
+            <button type="button" onClick={() => { setShowCreateEvent(true); setNewEvent((e) => ({ ...e, eventDate: toISODate(weekStart) })) }} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">
+              <CalendarPlus className="w-4 h-4" />
+              Événement
+            </button>
+          )}
           <button type="button" onClick={() => setShowIcsPanel((v) => !v)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">
             <Download className="w-4 h-4" />
             Exporter .ics
@@ -307,6 +369,7 @@ export default function PlanningPage() {
           weekDays={weekDays}
           lessons={displayedLessons}
           reservedSlots={reservedSlots}
+          eventsByDay={eventsByDay}
           onNewLesson={(draft) => setNewLessonDraft(draft)}
           onSelectLesson={(lesson) => setEditLesson(lesson)}
           onDuplicate={(lesson) => setDuplicateDraft({
@@ -317,6 +380,16 @@ export default function PlanningPage() {
             // choisit lui-même la nouvelle date dans la modale.
           })}
           onDurationChange={() => reload()}
+          reservedSlotExceptions={reservedSlotExceptions}
+          onSlotException={async ({ slotId, exceptionDate, type, newHeureDebut, newDureeMinutes, exceptionId }) => {
+            if (type === 'delete') {
+              await deleteSlotException(exceptionId)
+            } else {
+              await upsertSlotException({ teacherId: user.id, slotId, exceptionDate, type, newHeureDebut, newDureeMinutes })
+            }
+            // Recharge les exceptions pour la semaine affichée
+            fetchSlotExceptions(user.id, range.from, range.to).then(setReservedSlotExceptions).catch(() => {})
+          }}
         />
       )}
       {view === 'semaine' && loading && <LoadingBlock label="Chargement du planning" />}
@@ -434,6 +507,81 @@ export default function PlanningPage() {
           )}
         </>
       ) : null}
+
+      {/* Modal création d'événement école (T3) */}
+      {showCreateEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="glass-panel rounded-2xl p-6 w-full max-w-md space-y-4">
+            <h2 className="text-lg font-semibold">Nouvel événement</h2>
+            <form onSubmit={handleCreateEvent} className="space-y-3">
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Titre *</label>
+                <input
+                  type="text"
+                  value={newEvent.title}
+                  onChange={(e) => setNewEvent((ev) => ({ ...ev, title: e.target.value }))}
+                  placeholder="Ex : Réunion de rentrée, Répétition ensemble…"
+                  className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                  required
+                />
+              </div>
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="block text-xs text-muted-foreground mb-1">Date *</label>
+                  <input
+                    type="date"
+                    value={newEvent.eventDate}
+                    onChange={(e) => setNewEvent((ev) => ({ ...ev, eventDate: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                    required
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-xs text-muted-foreground mb-1">Type</label>
+                  <select
+                    value={newEvent.typeEvenement}
+                    onChange={(e) => setNewEvent((ev) => ({ ...ev, typeEvenement: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                  >
+                    <option value="reunion">Réunion</option>
+                    <option value="repetition">Répétition</option>
+                    <option value="concert">Concert</option>
+                    <option value="autre">Autre</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">École (optionnel)</label>
+                <input
+                  type="text"
+                  value={newEvent.schoolName}
+                  onChange={(e) => setNewEvent((ev) => ({ ...ev, schoolName: e.target.value }))}
+                  placeholder="Nom de l'école"
+                  className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Notes (optionnel)</label>
+                <textarea
+                  value={newEvent.content}
+                  onChange={(e) => setNewEvent((ev) => ({ ...ev, content: e.target.value }))}
+                  rows={2}
+                  className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600 resize-none"
+                />
+              </div>
+              {eventError && <p className="text-xs text-red-400">{eventError}</p>}
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={() => { setShowCreateEvent(false); setEventError('') }} className="flex-1 px-4 py-2.5 rounded-xl border border-border-subtle text-sm hover:bg-surface-overlay transition-colors">
+                  Annuler
+                </button>
+                <button type="submit" disabled={savingEvent} className="flex-1 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
+                  {savingEvent ? 'Enregistrement…' : 'Créer'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {showAddForm && <AddLessonModal teacherId={user.id} onClose={() => setShowAddForm(false)} onCreated={() => reload()} />}
       {newLessonDraft  && <AddLessonModal teacherId={user.id} lesson={newLessonDraft}  onClose={() => setNewLessonDraft(null)}  onCreated={() => { reload(); setNewLessonDraft(null) }} />}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { X, Loader2, UserPlus, ChevronLeft } from 'lucide-react'
 import { createLesson, updateLesson, createRecurringLessons } from '../services/lessons'
 import { fetchTeacherStudents, createStudent, fetchStudentContexts } from '../services/students'
@@ -6,6 +6,11 @@ import { fetchTeacherSchools } from '../services/schools'
 
 // Libellés affichés pour les contextes de cours
 const CTX_LABELS = { ecole: 'École de musique', cesu: 'Cours particulier (CESU)' }
+
+// Normalise pour la recherche : minuscules + sans accents (é→e, ç→c, etc.)
+function normalizeSearch(str) {
+  return (str ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+}
 
 export default function AddLessonModal({ teacherId, lesson, onClose, onCreated }) {
   const isEdit = Boolean(lesson?.id)
@@ -26,6 +31,32 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated }
   const [untilDate, setUntilDate] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+
+  // Recherche élève : texte libre, dropdown filtré insensible à la casse et aux accents
+  const [studentSearch, setStudentSearch] = useState('')
+  const [showStudentList, setShowStudentList] = useState(false)
+  const studentInputRef = useRef(null)
+  const studentListRef  = useRef(null)
+
+  // Filtre sur n'importe quelle partie du prénom OU du nom
+  const filteredStudents = useMemo(() => {
+    const q = normalizeSearch(studentSearch)
+    if (!q) return students
+    return students.filter((s) => {
+      const full  = normalizeSearch(s.name ?? '')
+      const first = normalizeSearch(s.firstName ?? '')
+      const last  = normalizeSearch(s.lastName  ?? '')
+      return full.includes(q) || first.includes(q) || last.includes(q)
+    })
+  }, [students, studentSearch])
+
+  // Synchronise le champ de recherche quand l'élève est déjà sélectionné (mode édition)
+  useEffect(() => {
+    if (lesson?.studentId) {
+      const found = students.find((s) => s.id === lesson.studentId)
+      if (found) setStudentSearch(found.name)
+    }
+  }, [students]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Création élève inline
   const [showNewStudent, setShowNewStudent] = useState(false)
@@ -213,20 +244,64 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated }
         ) : (
           /* ── Formulaire principal ───────────────────────────────────────── */
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
+            <div className="relative">
               <label className="block text-sm text-muted-foreground mb-1.5">Élève</label>
-              <select
-                value={form.studentId}
+              <input
+                ref={studentInputRef}
+                type="text"
+                value={studentSearch}
+                placeholder="Rechercher par prénom ou nom…"
+                autoComplete="off"
                 onChange={(e) => {
-                  if (e.target.value === '__new__') { setShowNewStudent(true); return }
-                  update('studentId')(e)
+                  setStudentSearch(e.target.value)
+                  setShowStudentList(true)
+                  // Réinitialise la sélection si l'utilisateur re-tape
+                  if (form.studentId) setForm((prev) => ({ ...prev, studentId: '' }))
+                }}
+                onFocus={() => setShowStudentList(true)}
+                onBlur={(e) => {
+                  // Ferme uniquement si le clic n'est pas dans la liste
+                  if (!studentListRef.current?.contains(e.relatedTarget)) {
+                    setShowStudentList(false)
+                  }
                 }}
                 className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
-              >
-                <option value="">Choisir un élève</option>
-                {students.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                <option value="__new__">+ Créer un nouvel élève…</option>
-              </select>
+              />
+              {showStudentList && (
+                <div
+                  ref={studentListRef}
+                  className="absolute left-0 right-0 top-full mt-1 z-30 glass-panel border border-border-subtle rounded-xl shadow-xl max-h-52 overflow-y-auto"
+                >
+                  {filteredStudents.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      tabIndex={0}
+                      onMouseDown={(e) => e.preventDefault()} // évite le blur sur l'input
+                      onClick={() => {
+                        setForm((prev) => ({ ...prev, studentId: s.id }))
+                        setStudentSearch(s.name)
+                        setShowStudentList(false)
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-sm hover:bg-surface-overlay transition-colors ${form.studentId === s.id ? 'text-guitar-400 font-medium' : ''}`}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                  {filteredStudents.length === 0 && (
+                    <p className="px-4 py-3 text-sm text-muted-foreground">Aucun résultat</p>
+                  )}
+                  <button
+                    type="button"
+                    tabIndex={0}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => { setShowNewStudent(true); setShowStudentList(false) }}
+                    className="w-full text-left px-4 py-2.5 text-sm text-guitar-400 hover:bg-surface-overlay transition-colors border-t border-border-subtle"
+                  >
+                    + Créer un nouvel élève…
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Sélecteur de contexte — affiché uniquement si l'élève a plusieurs contextes */}

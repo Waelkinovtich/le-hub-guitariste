@@ -108,14 +108,32 @@ function findOverlappingLesson(lessonsByDay, excludeId, targetDay, targetStart, 
 
 /**
  * Construit un index des créneaux réservés par date ISO, pour la semaine affichée.
- * Chaque créneau réservé est hebdomadaire (jourSemaine = 0..6 JS convention).
- * weekDays[i].iso → date ISO du jour. On filtre par jourSemaine.
+ * Applique les exceptions ponctuelles (T2) :
+ *   type='hidden' → le créneau est supprimé pour cette date
+ *   type='moved'  → le créneau apparaît avec un nouvel horaire/durée
  */
-function indexReservedByDay(reservedSlots, weekDays) {
+function indexReservedByDay(reservedSlots, weekDays, exceptions = []) {
+  // Index exceptions par "slotId|date" pour lookup O(1)
+  const exMap = {}
+  for (const ex of exceptions) {
+    exMap[`${ex.slotId}|${ex.exceptionDate}`] = ex
+  }
   const map = {}
   for (const day of weekDays) {
     const jourJs = new Date(day.iso + 'T12:00:00').getDay()  // évite les ambiguïtés de fuseau
-    map[day.iso] = (reservedSlots ?? []).filter((s) => s.jourSemaine === jourJs)
+    const daySlots = []
+    for (const s of (reservedSlots ?? [])) {
+      if (s.jourSemaine !== jourJs) continue
+      const ex = exMap[`${s.id}|${day.iso}`]
+      if (!ex) {
+        daySlots.push(s)
+      } else if (ex.type === 'moved') {
+        // Occurrence déplacée : mêmes métadonnées, horaire/durée de l'exception
+        daySlots.push({ ...s, heureDebut: ex.newHeureDebut, dureeMinutes: ex.newDureeMinutes, _exceptionId: ex.id })
+      }
+      // type='hidden' → pas de push (créneau masqué pour cette date)
+    }
+    map[day.iso] = daySlots
   }
   return map
 }
@@ -133,87 +151,91 @@ function hasReservedOverlap(reservedByDay, targetDay, targetStart, slotCount) {
 
 // ─── Panneau de modification de durée ────────────────────────────────────────
 /**
- * Approche de persistance (priorité décroissante) :
- *   1. Si l'élève est connu (_studentId) : met à jour student_contexts.duree_cours_minutes
- *      → durée contractuelle la plus haute priorité dans le moteur de scoring.
- *   2. Sinon : met à jour survey_responses.desired_duration_minutes (_responseId).
- * Après sauvegarde, appelle onSaved(newMinutes) pour que le parent
- * mette à jour responses[].effective_duration_minutes et déclenche le recalcul.
+ * Approche de persistance :
+ *   - Cours récurrent confirmé : demande d'abord la portée (occurrence seule ou série à partir de maintenant).
+ *     "Occurrence seule" → lessons par id + recurrence_group mis à NULL (détachement de la série).
+ *     "Série à partir de maintenant" → lessons par recurrence_group + gte(lesson_date) + student_contexts.
+ *   - Cours non récurrent / propositions / cours de groupe : sauvegarde directe sans confirmation.
  */
 function DurationEditPanel({ lesson, onClose, onSaved }) {
   const [selected, setSelected] = useState(lesson.durationMinutes ?? 30)
   const [saving,   setSaving]   = useState(false)
   const [error,    setError]    = useState('')
+  // 'idle' = sélection durée | 'confirm' = choix portée série (affiché après clic Enregistrer)
+  const [phase,    setPhase]    = useState('idle')
 
-  const handleSave = async () => {
-    if (selected === lesson.durationMinutes) { onClose(); return }
+  // Normalise les deux conventions de nommage (SchedulingAssistant vs PlanningPage)
+  const studentId       = lesson._studentId || lesson.studentId || null
+  const recurrenceGroup = lesson.recurrence_group || lesson.recurrenceGroup || null
+  // Cours récurrent confirmé : le choix de portée est obligatoire avant toute persistance
+  const isRecurring = Boolean(recurrenceGroup) && lesson.planningStatus === 'confirme'
+
+  const handleSave = async (scope) => {
     setSaving(true)
     setError('')
     try {
-      // _studentId : convention SchedulingAssistant ; studentId : convention PlanningPage (mapLesson)
-      const studentId = lesson._studentId || lesson.studentId || null
-      // recurrence_group : raw DB (via ...dbRow) ; recurrenceGroup : mapLesson camelCase
-      const recurrenceGroup = lesson.recurrence_group || lesson.recurrenceGroup || null
       if (studentId) {
-        // Cherche un contexte existant avant de créer (pas de contrainte unique garantie côté SQL)
-        // PostgreSQL distingue NULL et '' : .eq('school_name', '') ne matche pas les lignes IS NULL.
-        let ctxQuery = supabase
-          .from('student_contexts')
-          .select('id')
-          .eq('student_id', studentId)
-        ctxQuery = lesson.schoolName
-          ? ctxQuery.eq('school_name', lesson.schoolName)
-          : ctxQuery.is('school_name', null)
-        const { data: ctx } = await ctxQuery.maybeSingle()
-
-        if (ctx) {
-          const { error: updErr } = await supabase
-            .from('student_contexts')
-            .update({ duree_cours_minutes: selected })
-            .eq('id', ctx.id)
-          if (updErr) throw new Error(updErr.message)
-        } else {
-          const { error: insErr } = await supabase
-            .from('student_contexts')
-            .insert({ student_id: studentId, school_name: lesson.schoolName || null, duree_cours_minutes: selected })
-          if (insErr) throw new Error(insErr.message)
+        if (scope === 'future') {
+          // Durée contractuelle (student_contexts) : s'applique uniquement quand on modifie la série entière
+          let ctxQuery = supabase.from('student_contexts').select('id').eq('student_id', studentId)
+          ctxQuery = lesson.schoolName
+            ? ctxQuery.eq('school_name', lesson.schoolName)
+            : ctxQuery.is('school_name', null)
+          const { data: ctx } = await ctxQuery.maybeSingle()
+          if (ctx) {
+            const { error: updErr } = await supabase.from('student_contexts').update({ duree_cours_minutes: selected }).eq('id', ctx.id)
+            if (updErr) throw new Error(updErr.message)
+          } else {
+            const { error: insErr } = await supabase.from('student_contexts').insert({ student_id: studentId, school_name: lesson.schoolName || null, duree_cours_minutes: selected })
+            if (insErr) throw new Error(insErr.message)
+          }
         }
 
-        // Cours validé — propage la durée sur toute la série (recurrenceGroup) ou occurrence seule
         if (lesson.planningStatus === 'confirme' && lesson.id) {
-          const q = supabase.from('lessons').update({ duration_minutes: selected })
-          const { error: lessonErr } = recurrenceGroup
-            ? await q.eq('recurrence_group', recurrenceGroup)
-            : await q.eq('id', String(lesson.id))
-          if (lessonErr) throw new Error(lessonErr.message)
+          if (scope === 'single') {
+            // Occurrence seule : détache du groupe récurrent (recurrence_group → NULL) + modifie uniquement cette ligne
+            const { error: e } = await supabase.from('lessons')
+              .update({ duration_minutes: selected, recurrence_group: null })
+              .eq('id', String(lesson.id))
+            if (e) throw new Error(e.message)
+          } else {
+            // Série à partir de maintenant : jamais les occurrences passées (gte lesson_date)
+            const { error: e } = await supabase.from('lessons')
+              .update({ duration_minutes: selected })
+              .eq('recurrence_group', recurrenceGroup)
+              .gte('lesson_date', lesson.lessonDate)
+            if (e) throw new Error(e.message)
+          }
         }
       } else if (lesson._groupSessionId) {
         // Cours de groupe : met à jour la séance ET le groupe parent pour cohérence
-        const { error: sessErr } = await supabase
-          .from('group_sessions')
-          .update({ duration_minutes: selected })
-          .eq('id', lesson._groupSessionId)
+        const { error: sessErr } = await supabase.from('group_sessions').update({ duration_minutes: selected }).eq('id', lesson._groupSessionId)
         if (sessErr) throw new Error(sessErr.message)
         if (lesson._groupId) {
-          await supabase
-            .from('music_groups')
-            .update({ duration_minutes: selected })
-            .eq('id', lesson._groupId)
+          await supabase.from('music_groups').update({ duration_minutes: selected }).eq('id', lesson._groupId)
         }
       } else if (lesson._responseId) {
-        const { error: updErr } = await supabase
-          .from('survey_responses')
-          .update({ desired_duration_minutes: selected })
-          .eq('id', lesson._responseId)
+        const { error: updErr } = await supabase.from('survey_responses').update({ desired_duration_minutes: selected }).eq('id', lesson._responseId)
         if (updErr) throw new Error(updErr.message)
       }
       onSaved(selected)
     } catch (e) {
       setError(e.message)
-    } finally {
       setSaving(false)
     }
   }
+
+  // Clic "Enregistrer" : si cours récurrent → affiche le choix de portée ; sinon sauvegarde directement
+  const handleEnregistrer = () => {
+    if (selected === lesson.durationMinutes) { onClose(); return }
+    if (isRecurring) { setPhase('confirm'); return }
+    handleSave('single')
+  }
+
+  // Date formatée pour l'affichage dans le choix de portée
+  const dateLabel = lesson.lessonDate
+    ? new Date(lesson.lessonDate + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+    : ''
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -228,62 +250,195 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
             <X className="w-4 h-4" />
           </button>
         </div>
-        <p className="text-sm text-muted-foreground mb-5">
-          {lesson.studentName} —{' '}
-          {lesson._studentId
-            ? 'modifie la durée dans la fiche élève (priorité haute)'
-            : lesson._groupSessionId
-            ? 'modifie la durée de la séance de groupe'
-            : 'modifie la durée dans la réponse au sondage'}
-        </p>
 
-        <div className="grid grid-cols-3 gap-2 mb-5">
-          {DUREES_MODIFIABLES.map((d) => (
-            <button
-              key={d}
-              type="button"
-              onClick={() => setSelected(d)}
-              className={`py-2.5 rounded-xl text-sm font-medium border transition-all ${
-                selected === d
-                  ? 'guitar-gradient text-white border-transparent shadow-md shadow-guitar-600/20'
-                  : 'border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
-              }`}
-            >
-              {d} min
+        {phase === 'idle' ? (
+          <>
+            <p className="text-sm text-muted-foreground mb-5">
+              {lesson.studentName} —{' '}
+              {studentId
+                ? 'modifie la durée dans la fiche élève (priorité haute)'
+                : lesson._groupSessionId
+                ? 'modifie la durée de la séance de groupe'
+                : 'modifie la durée dans la réponse au sondage'}
+            </p>
+            <div className="grid grid-cols-3 gap-2 mb-5">
+              {DUREES_MODIFIABLES.map((d) => (
+                <button key={d} type="button" onClick={() => setSelected(d)}
+                  className={`py-2.5 rounded-xl text-sm font-medium border transition-all ${
+                    selected === d
+                      ? 'guitar-gradient text-white border-transparent shadow-md shadow-guitar-600/20'
+                      : 'border-border-subtle text-muted-foreground hover:border-border hover:text-foreground'
+                  }`}>
+                  {d} min
+                </button>
+              ))}
+            </div>
+            {error && <p className="text-xs text-guitar-400 bg-guitar-600/10 border border-guitar-600/20 rounded-lg px-3 py-2 mb-3">{error}</p>}
+            <div className="flex gap-2">
+              <button type="button" onClick={handleEnregistrer} disabled={saving}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-40">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
+                Enregistrer
+              </button>
+              <button type="button" onClick={onClose}
+                className="px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">
+                Annuler
+              </button>
+            </div>
+          </>
+        ) : (
+          // Phase de confirmation : cours récurrent — l'utilisateur choisit la portée de la modification
+          <>
+            <p className="text-sm text-muted-foreground mb-1">
+              {lesson.studentName} — <span className="font-medium text-foreground">{selected} min</span>
+            </p>
+            <p className="text-sm text-muted-foreground mb-5">
+              Ce cours fait partie d'une série récurrente. Quelle portée ?
+            </p>
+            <div className="space-y-2 mb-4">
+              <button type="button" onClick={() => handleSave('single')} disabled={saving}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-border-subtle hover:bg-surface-overlay transition-colors text-left disabled:opacity-40">
+                <Clock className="w-4 h-4 text-guitar-400 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium">Uniquement ce cours</p>
+                  <p className="text-xs text-muted-foreground">{dateLabel} — ce cours sera détaché de la série</p>
+                </div>
+              </button>
+              <button type="button" onClick={() => handleSave('future')} disabled={saving}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-border-subtle hover:bg-surface-overlay transition-colors text-left disabled:opacity-40">
+                <Clock className="w-4 h-4 text-orange-400 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium">Ce cours et tous les suivants</p>
+                  <p className="text-xs text-muted-foreground">À partir du {dateLabel} — les cours passés ne sont pas modifiés</p>
+                </div>
+              </button>
+            </div>
+            {error && <p className="text-xs text-guitar-400 bg-guitar-600/10 border border-guitar-600/20 rounded-lg px-3 py-2 mb-3">{error}</p>}
+            {saving && <div className="flex justify-center py-2"><Loader2 className="w-5 h-5 animate-spin text-guitar-400" /></div>}
+            <button type="button" onClick={() => setPhase('idle')}
+              className="w-full py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">
+              ← Revenir
             </button>
-          ))}
-        </div>
-
-        {error && (
-          <p className="text-xs text-guitar-400 bg-guitar-600/10 border border-guitar-600/20 rounded-lg px-3 py-2 mb-3">
-            {error}
-          </p>
+          </>
         )}
-
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-40"
-          >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
-            Enregistrer
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
-          >
-            Annuler
-          </button>
-        </div>
       </div>
     </div>
   )
 }
 
-// ─── Panneau d'édition créneau réservé (T7) ──────────────────────────────────
+// ─── Panneau d'édition d'occurrence de créneau réservé (T2) ──────────────────
+// Affiché quand l'utilisateur clique sur un créneau réservé dans le planning.
+// Propose deux options : masquer / déplacer pour CETTE DATE uniquement,
+// ou modifier la règle permanente (délègue à ReservedSlotEditPanel).
+function ReservedSlotOccurrencePanel({ slot, date, onClose, onHide, onMove, onEditPermanent, onRestoreDefault }) {
+  const [mode, setMode] = useState('ask') // 'ask' | 'move'
+  const [newTime, setNewTime] = useState(slot.heureDebut ?? '08:00')
+  const [newDuration, setNewDuration] = useState(slot.dureeMinutes ?? 60)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+  const hasException = Boolean(slot._exceptionId)
+
+  const dateLabel = date
+    ? new Date(date + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
+    : ''
+
+  const handleMove = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      await onMove({ slotId: slot.id, exceptionDate: date, newHeureDebut: newTime, newDureeMinutes: Number(newDuration) })
+      onClose()
+    } catch (e) { setError(e.message); setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onPointerDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="glass-panel rounded-2xl border border-border-subtle p-6 w-full max-w-sm mx-4 shadow-2xl space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">
+            {slot.libelle || slot.schoolName || 'Créneau réservé'}
+          </h3>
+          <button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-surface-overlay text-muted-foreground">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {mode === 'ask' ? (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">Pour le <span className="font-medium text-foreground">{dateLabel}</span> uniquement :</p>
+
+            {hasException && (
+              <button type="button" onClick={() => { onRestoreDefault(slot._exceptionId); onClose() }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border-subtle hover:bg-surface-overlay text-left text-sm">
+                ↩ Restaurer le créneau par défaut
+              </button>
+            )}
+
+            <button type="button" onClick={() => { onHide(); onClose() }}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border-subtle hover:bg-surface-overlay text-left text-sm">
+              <span>🚫</span>
+              <div>
+                <p className="font-medium">Masquer pour ce jour</p>
+                <p className="text-xs text-muted-foreground">Le créneau disparaît uniquement le {dateLabel}</p>
+              </div>
+            </button>
+
+            <button type="button" onClick={() => setMode('move')}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border-subtle hover:bg-surface-overlay text-left text-sm">
+              <span>⏱</span>
+              <div>
+                <p className="font-medium">Modifier l'horaire pour ce jour</p>
+                <p className="text-xs text-muted-foreground">La règle permanente reste inchangée</p>
+              </div>
+            </button>
+
+            <div className="border-t border-border-subtle pt-2">
+              <p className="text-xs text-muted-foreground mb-2">Règle permanente (toutes les semaines) :</p>
+              <button type="button" onClick={() => { onEditPermanent(); onClose() }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-guitar-600/30 hover:bg-guitar-600/10 text-left text-sm text-guitar-400">
+                <Edit2 className="w-3.5 h-3.5 shrink-0" />
+                Modifier la règle récurrente
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">Nouvel horaire pour le <span className="font-medium text-foreground">{dateLabel}</span> :</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Heure de début</label>
+                <input type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} step="900"
+                  className="w-full px-3 py-2 rounded-xl border border-border-subtle bg-surface-overlay text-sm focus:outline-none focus:ring-2 focus:ring-guitar-500/40" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Durée (min)</label>
+                <select value={newDuration} onChange={(e) => setNewDuration(Number(e.target.value))}
+                  className="w-full px-3 py-2 rounded-xl border border-border-subtle bg-surface-overlay text-sm focus:outline-none focus:ring-2 focus:ring-guitar-500/40">
+                  {[15, 30, 45, 60, 75, 90, 105, 120].map((d) => <option key={d} value={d}>{d} min</option>)}
+                </select>
+              </div>
+            </div>
+            {error && <p className="text-xs text-red-400">{error}</p>}
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={handleMove} disabled={saving}
+                className="flex-1 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+                {saving && <Loader2 className="w-3 h-3 animate-spin" />}
+                Enregistrer
+              </button>
+              <button type="button" onClick={() => setMode('ask')}
+                className="px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay">
+                ← Retour
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Panneau d'édition créneau réservé (règle permanente) ────────────────────
 
 const JOURS_SEMAINE = [
   { value: 1, label: 'Lundi' },
@@ -435,7 +590,7 @@ function ReservedSlotEditPanel({ slot, onClose, onSaved }) {
 // cascadeEnabled : quand true, un dépôt sur une proposition déplaçable déclenche onCascadeRequest.
 // onCascadeRequest(displacedLesson, newDay, newTime, durationMinutes) : intercepte le DnD
 //   pour que le parent recalcule un créneau alternatif pour la leçon déplacée.
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], validDropZones = [], onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, onDegrouper = null, allowOverlap = false, outsideAvailIds = null, originalProposalMap = null, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null, onEditReservedSlot = null }) {
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], reservedSlotExceptions = [], validDropZones = [], eventsByDay = {}, onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, onDegrouper = null, allowOverlap = false, outsideAvailIds = null, originalProposalMap = null, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null, onEditReservedSlot = null, onSlotException = null }) {
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -500,11 +655,13 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
   const [deleteLessonItem,   setDeleteLessonItem]   = useState(null)
   // Proposition dont on modifie la durée depuis la grille (ouvre DurationEditPanel)
   const [durationEditLesson, setDurationEditLesson] = useState(null)
-  // T7 — Créneau réservé en cours d'édition (ouvre ReservedSlotEditPanel)
+  // T2 — Créneau réservé en cours d'édition : { slot, date } (date = ISO de l'occurrence cliquée)
   const [editingReservedSlot, setEditingReservedSlot] = useState(null)
+  // T2 — Panneau édition permanente (s'ouvre depuis ReservedSlotOccurrencePanel)
+  const [editingReservedSlotPermanent, setEditingReservedSlotPermanent] = useState(null)
 
   const lessonsByDay    = useMemo(() => groupByDay(localLessons), [localLessons])
-  const reservedByDay   = useMemo(() => indexReservedByDay(reservedSlots, weekDays), [reservedSlots, weekDays])
+  const reservedByDay   = useMemo(() => indexReservedByDay(reservedSlots, weekDays, reservedSlotExceptions), [reservedSlots, weekDays, reservedSlotExceptions])
 
   // Ids des cours en chevauchement actif (uniquement utile quand allowOverlap=true).
   // En mode édition provisoire, deux propositions peuvent temporairement se superposer
@@ -836,6 +993,16 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
           >
             <p className="text-[10px] font-medium uppercase tracking-wider">{day.label}</p>
             <p className={`text-lg font-semibold leading-tight ${day.isToday ? 'text-guitar-400' : ''}`}>{day.dayNum}</p>
+            {/* Badges événements école (T3) */}
+            {(eventsByDay[day.iso] ?? []).map((ev) => (
+              <span
+                key={ev.id}
+                title={ev.title + (ev.school_name ? ` — ${ev.school_name}` : '')}
+                className="mt-1 mx-auto block max-w-[90%] truncate text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 leading-tight"
+              >
+                {ev.title}
+              </span>
+            ))}
           </div>
         ))}
       </div>
@@ -912,18 +1079,18 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         borderLeft:  `3px dashed ${rsColor}`,
                         borderTop:   `1px solid ${rsColor}30`,
                         pointerEvents: 'all',
-                        cursor: onEditReservedSlot ? 'pointer' : 'not-allowed',
+                        cursor: (onSlotException || onEditReservedSlot) ? 'pointer' : 'not-allowed',
                       }}
                       onPointerDown={(e) => e.stopPropagation()}
-                      onClick={onEditReservedSlot ? () => setEditingReservedSlot(rs) : undefined}
-                      title={onEditReservedSlot ? `Cliquer pour modifier : ${rs.libelle || rs.schoolName || 'Réservé'}` : `Réservé : ${rs.libelle || rs.schoolName || 'Intervention école'} (${rs.heureDebut}, ${rs.dureeMinutes} min)`}
+                      onClick={onSlotException ? () => setEditingReservedSlot({ slot: rs, date: day.iso }) : onEditReservedSlot ? () => setEditingReservedSlotPermanent(rs) : undefined}
+                      title={onSlotException || onEditReservedSlot ? `Cliquer pour modifier : ${rs.libelle || rs.schoolName || 'Réservé'}` : `Réservé : ${rs.libelle || rs.schoolName || 'Intervention école'} (${rs.heureDebut}, ${rs.dureeMinutes} min)`}
                     >
                       <div className="px-1 py-0.5 overflow-hidden h-full flex flex-col justify-start">
                         <div className="flex items-center gap-1">
                           <p className="text-[9px] font-semibold leading-tight truncate flex-1" style={{ color: rsColor, opacity: RESERVED_OPACITY }}>
                             🔒 {rs.libelle || 'Réservé'}
                           </p>
-                          {onEditReservedSlot && (
+                          {(onSlotException || onEditReservedSlot) && (
                             <Edit2 className="w-2.5 h-2.5 shrink-0 opacity-50" style={{ color: rsColor }} />
                           )}
                         </div>
@@ -1279,14 +1446,29 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
         />
       )}
 
-      {/* T7 — Panneau d'édition d'un créneau réservé (école) */}
+      {/* T2 — Panneau d'occurrence : masquer / déplacer pour une date précise */}
       {editingReservedSlot && (
-        <ReservedSlotEditPanel
-          slot={editingReservedSlot}
+        <ReservedSlotOccurrencePanel
+          slot={editingReservedSlot.slot}
+          date={editingReservedSlot.date}
           onClose={() => setEditingReservedSlot(null)}
+          onHide={() => onSlotException?.({ slotId: editingReservedSlot.slot.id, exceptionDate: editingReservedSlot.date, type: 'hidden' })}
+          onMove={({ slotId, exceptionDate, newHeureDebut, newDureeMinutes }) =>
+            onSlotException?.({ slotId, exceptionDate, type: 'moved', newHeureDebut, newDureeMinutes })
+          }
+          onEditPermanent={() => setEditingReservedSlotPermanent(editingReservedSlot.slot)}
+          onRestoreDefault={(exId) => onSlotException?.({ type: 'delete', exceptionId: exId })}
+        />
+      )}
+
+      {/* Panneau d'édition de la règle permanente (inchangé) */}
+      {editingReservedSlotPermanent && (
+        <ReservedSlotEditPanel
+          slot={editingReservedSlotPermanent}
+          onClose={() => setEditingReservedSlotPermanent(null)}
           onSaved={(updated) => {
             onEditReservedSlot?.(updated)
-            setEditingReservedSlot(null)
+            setEditingReservedSlotPermanent(null)
           }}
         />
       )}
