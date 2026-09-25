@@ -1650,11 +1650,29 @@ export default function SurveyResultsPage() {
   }
 
   // Appelé quand le répondant principal est fusionné — met à jour la réponse en mémoire
-  const handleFused = useCallback((responseId, student) => {
+  const handleFused = useCallback(async (responseId, student) => {
     setResponses((prev) => prev.map((x) =>
       x.id === responseId ? { ...x, matched_student_id: student.id } : x
     ))
     setOpenPanelId(null)
+    // Backfill : si des cours ont été créés avant la fiche élève, ils ont student_id NULL.
+    // On les corrige maintenant que matched_student_id est connu.
+    try {
+      const { data: sr } = await supabase
+        .from('survey_responses').select('assigned_time').eq('id', responseId).single()
+      if (sr?.assigned_time) {
+        const { data: { user } } = await supabase.auth.getUser()
+        // Filtre : même enseignant, même créneau, student_id NULL, série récurrente.
+        // recurrence_group IS NOT NULL : cible uniquement les séries créées par buildLessonRows.
+        // planning_status non filtré : buildLessonRows laisse la colonne NULL (affiché 'confirme').
+        await supabase.from('lessons')
+          .update({ student_id: student.id })
+          .eq('teacher_id', user.id)
+          .eq('lesson_time', sr.assigned_time)
+          .is('student_id', null)
+          .not('recurrence_group', 'is', null)
+      }
+    } catch { /* non-bloquant */ }
   }, [])
 
   // Appelé quand une personne supplémentaire est fusionnée — met à jour l'inscription en mémoire
@@ -1665,11 +1683,25 @@ export default function SurveyResultsPage() {
   }, [])
 
   // Appelé quand une nouvelle fiche est créée pour le répondant principal
-  const handleCreated = useCallback((responseId, student) => {
+  const handleCreated = useCallback(async (responseId, student) => {
     setResponses((prev) => prev.map((x) =>
       x.id === responseId ? { ...x, matched_student_id: student.id } : x
     ))
     setOpenPanelId(null)
+    // Backfill identique à handleFused — même cause, même correction
+    try {
+      const { data: sr } = await supabase
+        .from('survey_responses').select('assigned_time').eq('id', responseId).single()
+      if (sr?.assigned_time) {
+        const { data: { user } } = await supabase.auth.getUser()
+        await supabase.from('lessons')
+          .update({ student_id: student.id })
+          .eq('teacher_id', user.id)
+          .eq('lesson_time', sr.assigned_time)
+          .is('student_id', null)
+          .not('recurrence_group', 'is', null)
+      }
+    } catch { /* non-bloquant */ }
   }, [])
 
   // Appelé quand une nouvelle fiche est créée pour une personne supplémentaire

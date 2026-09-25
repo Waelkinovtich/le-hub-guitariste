@@ -123,9 +123,12 @@ function mergerCreneauxDispos(availabilities) {
 
 /**
  * Génère les lignes à insérer dans `lessons` pour un élève, de candidateDate
- * jusqu'à endDate, chaque semaine. Pur (pas d'effet de bord).
+ * jusqu'à endDate, selon l'intervalle spécifié. Pur (pas d'effet de bord).
+ *
+ * @param {number} intervalWeeks  Espacement en semaines (1 = hebdo, défaut historique).
  */
-function buildLessonRows(teacherId, response, proposal, endDate) {
+function buildLessonRows(teacherId, response, proposal, endDate, intervalWeeks = 1) {
+  const safeInterval = Math.max(1, Math.round(intervalWeeks))
   const pad = (n) => String(n).padStart(2, '0')
   const groupId = crypto.randomUUID()
   const rows = []
@@ -134,18 +137,19 @@ function buildLessonRows(teacherId, response, proposal, endDate) {
   while (current <= end) {
     const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
     rows.push({
-      teacher_id:       teacherId,
+      teacher_id:                teacherId,
       // matched_student_id est renseigné par "Créer la fiche" / "Fusionner" dans SurveyResultsPage.
       // student_id (colonne historique) reste NULL pour la plupart des élèves — on préfère matched.
-      student_id:       response.matched_student_id ?? response.student_id,
-      lesson_date:      iso,
-      lesson_time:      proposal.startTime,
-      duration_minutes: proposal.durationMinutes,
-      status:           'planifie',
-      topic:            'Cours de guitare',
-      recurrence_group: groupId,
+      student_id:                response.matched_student_id ?? response.student_id,
+      lesson_date:               iso,
+      lesson_time:               proposal.startTime,
+      duration_minutes:          proposal.durationMinutes,
+      status:                    'planifie',
+      topic:                     'Cours de guitare',
+      recurrence_group:          groupId,
+      recurrence_interval_weeks: safeInterval,
     })
-    current.setDate(current.getDate() + 7)
+    current.setDate(current.getDate() + 7 * safeInterval)
   }
   return rows
 }
@@ -365,7 +369,7 @@ function ProposalCard({ response, proposals, onConfirm, confirming, schools = []
 // Clé sessionStorage pour l'état replié du panneau groupes
 const SESSION_KEY_GROUPES_OUVERT = 'planning_groupe_panel_open'
 
-function GroupCandidatSelector({ availableGroups, selectedGroupIds, onToggle, onConfirmerGroupe, groupProposalLessons }) {
+function GroupCandidatSelector({ availableGroups, selectedGroupIds, onToggle, onConfirmerGroupe, groupProposalLessons, confirmedGroupIds }) {
   if (availableGroups.length === 0) return null
 
   // Replié par défaut si jamais utilisé (première ouverture de la page)
@@ -414,12 +418,16 @@ function GroupCandidatSelector({ availableGroups, selectedGroupIds, onToggle, on
       </p>
       <div className="space-y-1.5">
         {availableGroups.map((g) => {
-          const selected = selectedGroupIds.has(g.id)
-          const placed   = groupsPlaces.has(g.id)
-          const nbMembres = g.memberAvailabilities.length
-          const nbConnus  = g.memberAvailabilities.filter(
+          const selected   = selectedGroupIds.has(g.id)
+          const placed     = groupsPlaces.has(g.id)
+          // Groupe déjà planifié en DB (séance visible dans la grille après rechargement)
+          const confirmed  = confirmedGroupIds?.has(g.id) ?? false
+          const nbMembres  = g.memberAvailabilities.length
+          const nbConnus   = g.memberAvailabilities.filter(
             (m) => Object.values(m.availabilities ?? {}).some((s) => Array.isArray(s) && s.length > 0)
           ).length
+          // Prénoms connus des membres pour identification rapide
+          const prenoms = g.memberAvailabilities.map((m) => m.firstName).filter(Boolean)
 
           return (
             <div
@@ -432,9 +440,22 @@ function GroupCandidatSelector({ availableGroups, selectedGroupIds, onToggle, on
               onClick={() => onToggle(g.id)}
             >
               <div className="min-w-0">
-                <p className="text-sm font-medium truncate">{g.name}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-sm font-medium truncate">{g.name}</p>
+                  {confirmed && (
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 shrink-0">
+                      Dans la grille
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  {nbMembres} membre{nbMembres > 1 ? 's' : ''}{nbConnus < nbMembres ? ` · ${nbMembres - nbConnus} sans disponibilités` : ''} · {g.duration_minutes || 30} min
+                  {prenoms.length > 0
+                    ? prenoms.join(', ')
+                    : `${nbMembres} membre${nbMembres > 1 ? 's' : ''}`
+                  }
+                  {nbConnus < nbMembres ? ` · ${nbMembres - nbConnus} sans dispo` : ''}
+                  {g.school_name ? ` · ${g.school_name}` : ''}
+                  {` · ${g.duration_minutes || 30} min`}
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -819,7 +840,7 @@ export default function SchedulingAssistantPage() {
           supabase.from('schools').select('id, name, current_weekly_hours, desired_weekly_hours, latitude, longitude, available_slot_durations').eq('teacher_id', tInfo.id),
           fetchReservedSlots(tInfo.id),
           // Groupes existants — intégrables comme candidats dans le calcul du planning
-          supabase.from('music_groups').select('id, name, type, school_name, duration_minutes').eq('teacher_id', tInfo.id).order('name'),
+          supabase.from('music_groups').select('id, name, type, school_name, duration_minutes, recurrence_day, recurrence_time').eq('teacher_id', tInfo.id).order('name'),
         ])
 
         if (respRes.error) throw new Error(respRes.error.message)
@@ -828,13 +849,16 @@ export default function SchedulingAssistantPage() {
         // Deux requêtes séquentielles courtes (dépendance : group_ids → member_ids → availabilities).
         const groupsData  = groupsRes.data ?? []
         const groupIds    = groupsData.map((g) => g.id)
-        let groupsAvecMembres = groupsData.map((g) => ({ ...g, memberAvailabilities: [] }))
+        let groupsAvecMembres  = groupsData.map((g) => ({ ...g, memberAvailabilities: [] }))
+        let groupSessionsData  = []
 
         if (groupIds.length > 0) {
-          const { data: membersData } = await supabase
-            .from('group_members')
-            .select('group_id, student_id')
-            .in('group_id', groupIds)
+          // Membres et séances chargés en parallèle — indépendants l'un de l'autre
+          const [{ data: membersData }, { data: sessionsData }] = await Promise.all([
+            supabase.from('group_members').select('group_id, student_id').in('group_id', groupIds),
+            supabase.from('group_sessions').select('id, group_id, session_date, session_time, duration_minutes').in('group_id', groupIds),
+          ])
+          groupSessionsData = sessionsData ?? []
 
           const memberStudentIds = [...new Set((membersData ?? []).map((m) => m.student_id).filter(Boolean))]
           let memberAvailMap = {}  // student_id → { firstName, availabilities }
@@ -915,8 +939,34 @@ export default function SchedulingAssistantPage() {
           )
         )
 
+        // Reconstruire les tuiles groupe depuis les séances persistées — même shape que handleGrouperConflits
+        const groupByIdMap = Object.fromEntries(groupsAvecMembres.map((g) => [g.id, g]))
+        const mappedGroupSessions = groupSessionsData.map((gs) => {
+          const g = groupByIdMap[gs.group_id] ?? {}
+          return {
+            id:                    `groupe-${gs.group_id}-${gs.id}`,
+            lessonDate:            gs.session_date,
+            lessonTime:            gs.session_time,
+            timeLabel:             gs.session_time,
+            durationMinutes:       gs.duration_minutes,
+            studentName:           `🎸 ${g.name ?? 'Groupe'}`,
+            schoolName:            g.school_name ?? null,
+            planningStatus:        'groupe',
+            _groupId:              gs.group_id,
+            _groupSessionId:       gs.id,
+            // Les réponses sont déjà au statut 'planifie' — non reconstructibles ici
+            _memberResponseIds:    [],
+            _memberAvailabilities: (g.memberAvailabilities ?? []).map((m) => ({
+              responseId:     null,
+              studentId:      m.studentId,
+              firstName:      m.firstName,
+              availabilities: m.availabilities,
+            })),
+          }
+        })
+
         setResponses(enrichedResponses)
-        setExistingLessons(mappedLessons)
+        setExistingLessons([...mappedLessons, ...mappedGroupSessions])
         setSchools(schoolsRes.data ?? [])
         setReservedSlots(reservedSlotsData)
       } catch (e) {
@@ -1276,6 +1326,8 @@ export default function SchedulingAssistantPage() {
     const restoredLocked = new Set(data.donnees.lockedIds ?? [])
     setProposalOverrides(overrides)
     setLockedIds(restoredLocked)
+    // Restaure la semaine affichée — les tuiles groupe ne sont visibles que dans leur semaine d'origine
+    if (data.donnees.weekOffset !== undefined) setWeekOffset(data.donnees.weekOffset)
     ecrireSession(overrides, restoredLocked)
     setShowSnapshots(false)
   }, [])
@@ -1417,6 +1469,12 @@ export default function SchedulingAssistantPage() {
    * planningStatus 'groupe' → même rendu que les cours de groupe confirmés (vert émeraude),
    * mais sans _groupSessionId → distincts dans handleMoveProposal et handleDegrouper.
    */
+  // Groupes déjà planifiés en DB (séances chargées au démarrage) — pour l'indicateur dans le sélecteur
+  const confirmedGroupIds = useMemo(
+    () => new Set(existingLessons.filter((l) => l._groupSessionId).map((l) => l._groupId).filter(Boolean)),
+    [existingLessons],
+  )
+
   const groupProposalLessons = useMemo(() => {
     const isoParJour = {}
     for (const d of weekDays) {
@@ -3100,6 +3158,7 @@ export default function SchedulingAssistantPage() {
                   onToggle={handleToggleGroupCandidat}
                   onConfirmerGroupe={handleConfirmerGroupePropose}
                   groupProposalLessons={groupProposalLessons}
+                  confirmedGroupIds={confirmedGroupIds}
                 />
               )}
 
