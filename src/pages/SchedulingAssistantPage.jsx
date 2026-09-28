@@ -124,6 +124,21 @@ function mergerCreneauxDispos(availabilities) {
 // ─── Helper partagé : génération des lignes de cours récurrents ──────────────
 
 /**
+ * Résout l'identifiant élève depuis une réponse de sondage.
+ * Priorité : matched_student_id (fiche créée/fusionnée) puis student_id (lien direct).
+ * Retourne null si aucun des deux n'est renseigné — la réponse ne peut pas être membre.
+ *
+ * Cas couverts :
+ *   { matched_student_id: 'A', student_id: 'B' } → 'A'   (fiche fusionnée)
+ *   { matched_student_id: null, student_id: 'B' } → 'B'  (lien direct)
+ *   { matched_student_id: 'A', student_id: null } → 'A'  (fiche créée)
+ *   { matched_student_id: null, student_id: null } → null (fiche absente)
+ */
+function resolveStudentId(response) {
+  return response.matched_student_id ?? response.student_id ?? null
+}
+
+/**
  * Génère les lignes à insérer dans `lessons` pour un élève, de candidateDate
  * jusqu'à endDate, selon l'intervalle spécifié. Pur (pas d'effet de bord).
  *
@@ -1936,11 +1951,24 @@ export default function SchedulingAssistantPage() {
         start_date:       sessionDay ?? null,
       })
 
-      // Membres : un insert par élève (student_id)
+      // Membres : un insert par élève — résout matched_student_id ?? student_id
+      const sansFiche = selectedResponses.filter((r) => !resolveStudentId(r))
+      if (sansFiche.length > 0) {
+        // Avertissement nominatif — ces élèves ne seront pas membres du groupe
+        const noms = sansFiche.map((r) => [r.first_name, r.last_name].filter(Boolean).join(' ') || r.id)
+        setGroupError(
+          `Attention : ${noms.join(', ')} n'${noms.length === 1 ? 'a' : 'ont'} pas de fiche élève. `
+          + `${noms.length === 1 ? 'Cet élève ne sera pas' : 'Ces élèves ne seront pas'} membre${noms.length > 1 ? 's' : ''} du groupe. `
+          + `Créez ou fusionnez la fiche dans "Résultats du sondage" avant de regrouper.`
+        )
+      }
       const members = selectedResponses
-        .filter((r) => r.student_id)
-        .map((r) => ({ group_id: groupId, student_id: r.student_id, is_external: false }))
-      if (members.length > 0) await supabase.from('group_members').insert(members)
+        .filter((r) => resolveStudentId(r))
+        .map((r) => ({ group_id: groupId, student_id: resolveStudentId(r), is_external: false }))
+      // ignoreDuplicates : si la contrainte UNIQUE (group_id, student_id) est déjà satisfaite
+      // (re-création d'un groupe avec les mêmes élèves), on ne lève pas d'erreur.
+      if (members.length > 0) await supabase.from('group_members')
+        .upsert(members, { onConflict: 'group_id,student_id', ignoreDuplicates: true })
 
       // Première séance + série récurrente jusqu'à fin d'année scolaire
       let groupSessionId   = null

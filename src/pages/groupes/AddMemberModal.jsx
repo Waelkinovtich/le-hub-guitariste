@@ -18,11 +18,10 @@ export default function AddMemberModal({ groupId, onClose, onAdded }) {
 
   async function addStudent(student) {
     setSaving(true)
-    await supabase.from('group_members').insert({
-      group_id: groupId,
-      student_id: student.id,
-      is_external: false,
-    })
+    // ignoreDuplicates : si l'élève est déjà membre de ce groupe, on ne lève pas d'erreur.
+    await supabase.from('group_members')
+      .upsert({ group_id: groupId, student_id: student.id, is_external: false },
+               { onConflict: 'group_id,student_id', ignoreDuplicates: true })
     setSaving(false)
     onAdded()
     onClose()
