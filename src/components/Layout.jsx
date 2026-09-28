@@ -21,7 +21,7 @@ function lirePréférenceSidebar() {
 export default function Layout() {
   const [ouvert, setOuvert] = useState(lirePréférenceSidebar)
   const { triggerReload } = useRefreshContext() ?? {}
-  const { undoLast, redoLast, feedback } = useUndoRedo() ?? {}
+  const { undoLast, redoLast, canUndo, canRedo, feedback, stackVersion } = useUndoRedo() ?? {}
 
   // Raccourcis clavier globaux : Ctrl+Z = annuler, Ctrl+Shift+Z / Ctrl+Y = rétablir
   useEffect(() => {
