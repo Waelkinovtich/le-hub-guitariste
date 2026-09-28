@@ -23,21 +23,54 @@ export async function fetchEventsInRange(teacherId, fromDate, toDate) {
   return data ?? []
 }
 
-/** Crée un événement depuis le Planning. Retourne la ligne créée. */
-export async function createSchoolEvent({ teacherId, schoolName, title, content, eventDate, typeEvenement }) {
+/**
+ * Crée un événement depuis le Planning.
+ * Si intervalWeeks > 1 ou endDate fourni, crée une série récurrente jusqu'à endDate.
+ * Retourne la première ligne créée.
+ */
+export async function createSchoolEvent({ teacherId, schoolName, title, content, eventDate, typeEvenement, intervalWeeks = 1, endDate = null }) {
+  const seriesId = (intervalWeeks > 1 || endDate) ? crypto.randomUUID() : null
+
+  // Génère les dates de la série
+  const dates = []
+  const pad = (n) => String(n).padStart(2, '0')
+  let current = new Date(eventDate + 'T00:00:00')
+  const stop = endDate ? new Date(endDate + 'T00:00:00') : current
+  const safeInterval = Math.max(1, Math.round(intervalWeeks))
+  while (current <= stop) {
+    dates.push(current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate()))
+    if (!endDate || safeInterval < 1) break
+    current.setDate(current.getDate() + 7 * safeInterval)
+  }
+
+  const rows = dates.map(d => ({
+    teacher_id:                teacherId,
+    school_name:               schoolName,
+    type:                      'evenement',
+    title:                     title.trim(),
+    content:                   content?.trim() || null,
+    event_date:                d,
+    type_evenement:            typeEvenement ?? 'autre',
+    recurrence_series_id:      seriesId,
+    recurrence_interval_weeks: safeInterval,
+  }))
+
   const { data, error } = await supabase
     .from('school_notes_events')
-    .insert({
-      teacher_id:    teacherId,
-      school_name:   schoolName,
-      type:          'evenement',
-      title:         title.trim(),
-      content:       content?.trim() || null,
-      event_date:    eventDate,
-      type_evenement: typeEvenement ?? 'autre',
-    })
+    .insert(rows)
     .select('*')
-    .single()
-  if (error) throw new Error(error.message)
-  return data
+  if (error) {
+    // Fallback si colonnes récurrence absentes (BLOC T9 non exécuté) : insérer sans elles
+    if (error.code === '42703') {
+      const { data: d2, error: e2 } = await supabase
+        .from('school_notes_events')
+        .insert({ teacher_id: teacherId, school_name: schoolName, type: 'evenement', title: title.trim(), content: content?.trim() || null, event_date: eventDate, type_evenement: typeEvenement ?? 'autre' })
+        .select('*')
+        .single()
+      if (e2) throw new Error(e2.message)
+      return d2
+    }
+    throw new Error(error.message)
+  }
+  return data?.[0] ?? null
 }

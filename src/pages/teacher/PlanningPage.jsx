@@ -23,7 +23,107 @@ import { fetchReservedSlots, fetchSlotExceptions, upsertSlotException, deleteSlo
 import { fetchEventsInRange, createSchoolEvent } from '../../services/schoolEvents'
 
 const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
-const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: 'Mois' }, { value: 'période', label: 'Période scolaire' }, { value: 'année', label: 'Année' }]
+const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: 'Mois' }, { value: 'période', label: 'Période scolaire' }, { value: 'année', label: 'Année' }, { value: 'récap', label: 'Récapitulatif' }]
+
+// ─── T10 : Récapitulatif de période ──────────────────────────────────────────
+
+const STATUTS_REALISES = ['present', 'rattrape']
+const STATUTS_PLANIFIES = ['planifie', 'present', 'absent', 'excuse', 'rattrape', 'annule_prof']
+
+function RecapView({ lessons, périodes }) {
+  const [périodeIdx, setPériodeIdx] = useState(0)
+
+  const période = périodes[périodeIdx] ?? périodes[0]
+
+  const filtered = useMemo(() => {
+    if (!période) return lessons
+    return lessons.filter(l => l.lessonDate >= période.debut && l.lessonDate <= période.fin)
+  }, [lessons, période])
+
+  const parÉcole = useMemo(() => {
+    const map = {}
+    for (const l of filtered) {
+      if (l.isGroup) continue  // groupes non comptabilisés en heures individuelles
+      const école = l.schoolName || 'Cours particuliers'
+      if (!map[école]) map[école] = { planifie: 0, realise: 0 }
+      if (STATUTS_PLANIFIES.includes(l.status)) map[école].planifie += l.durationMinutes ?? 0
+      if (STATUTS_REALISES.includes(l.status)) map[école].realise += l.durationMinutes ?? 0
+    }
+    return Object.entries(map).map(([nom, v]) => ({ nom, ...v })).sort((a, b) => b.planifie - a.planifie)
+  }, [filtered])
+
+  const totalPlanifie = parÉcole.reduce((s, e) => s + e.planifie, 0)
+  const totalRealise  = parÉcole.reduce((s, e) => s + e.realise, 0)
+
+  function exportCSV() {
+    const lines = [
+      'École,Planifié (min),Réalisé (min)',
+      ...parÉcole.map(e => `"${e.nom}",${e.planifie},${e.realise}`),
+      `"TOTAL",${totalPlanifie},${totalRealise}`,
+    ]
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
+    a.download = `recap-${période?.nom ?? 'planning'}.csv`; a.click()
+  }
+
+  return (
+    <div className="p-6 sm:p-8 max-w-3xl">
+      <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
+        <h2 className="text-xl font-semibold">Récapitulatif de période</h2>
+        <div className="flex items-center gap-2">
+          <select value={périodeIdx} onChange={e => setPériodeIdx(Number(e.target.value))}
+            className="px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none">
+            {périodes.map((p, i) => <option key={p.nom} value={i}>{p.nom}</option>)}
+          </select>
+          <button type="button" onClick={exportCSV}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90">
+            Exporter CSV
+          </button>
+        </div>
+      </div>
+      <div className="glass-panel rounded-2xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border-subtle text-muted-foreground text-left">
+              <th className="px-4 py-3 font-medium">École</th>
+              <th className="px-4 py-3 font-medium text-right">Planifié</th>
+              <th className="px-4 py-3 font-medium text-right">Réalisé</th>
+              <th className="px-4 py-3 font-medium text-right">Taux</th>
+            </tr>
+          </thead>
+          <tbody>
+            {parÉcole.map(e => (
+              <tr key={e.nom} className="border-b border-border-subtle">
+                <td className="px-4 py-3">{e.nom}</td>
+                <td className="px-4 py-3 text-right text-muted-foreground">{Math.round(e.planifie / 60 * 10) / 10}h</td>
+                <td className="px-4 py-3 text-right">{Math.round(e.realise / 60 * 10) / 10}h</td>
+                <td className="px-4 py-3 text-right">
+                  {e.planifie > 0 ? (
+                    <span className={`text-xs font-medium ${e.realise / e.planifie >= 0.8 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {Math.round((e.realise / e.planifie) * 100)}%
+                    </span>
+                  ) : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-border text-foreground font-semibold">
+              <td className="px-4 py-3">Total</td>
+              <td className="px-4 py-3 text-right text-muted-foreground">{Math.round(totalPlanifie / 60 * 10) / 10}h</td>
+              <td className="px-4 py-3 text-right">{Math.round(totalRealise / 60 * 10) / 10}h</td>
+              <td className="px-4 py-3 text-right">
+                {totalPlanifie > 0 ? (
+                  <span className="text-xs font-medium">{Math.round((totalRealise / totalPlanifie) * 100)}%</span>
+                ) : '—'}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  )
+}
 
 export default function PlanningPage() {
   const { user } = useAuth()
@@ -56,7 +156,7 @@ export default function PlanningPage() {
   const [schoolEvents, setSchoolEvents] = useState([])
   const [showCreateEvent, setShowCreateEvent] = useState(false)
   // Formulaire de création d'événement
-  const [newEvent, setNewEvent] = useState({ title: '', eventDate: '', typeEvenement: 'reunion', schoolName: '', content: '' })
+  const [newEvent, setNewEvent] = useState({ title: '', eventDate: '', typeEvenement: 'reunion', schoolName: '', content: '', intervalWeeks: 1, endDate: '' })
   const [savingEvent, setSavingEvent] = useState(false)
   const [eventError, setEventError] = useState('')
 
@@ -223,9 +323,11 @@ export default function PlanningPage() {
         content:        newEvent.content,
         eventDate:      newEvent.eventDate,
         typeEvenement:  newEvent.typeEvenement,
+        intervalWeeks:  newEvent.intervalWeeks,
+        endDate:        newEvent.intervalWeeks >= 1 && newEvent.endDate ? newEvent.endDate : null,
       })
       setShowCreateEvent(false)
-      setNewEvent({ title: '', eventDate: '', typeEvenement: 'reunion', schoolName: '', content: '' })
+      setNewEvent({ title: '', eventDate: '', typeEvenement: 'reunion', schoolName: '', content: '', intervalWeeks: 1, endDate: '' })
       fetchEventsInRange(user.id, range.from, range.to).then(setSchoolEvents).catch(() => {})
     } catch (err) {
       setEventError(err.message)
@@ -383,6 +485,7 @@ export default function PlanningPage() {
             // choisit lui-même la nouvelle date dans la modale.
           })}
           onDurationChange={() => reload()}
+          onEmargement={(lesson) => setStatusLesson(lesson)}
           reservedSlotExceptions={reservedSlotExceptions}
           onSlotException={async ({ slotId, exceptionDate, type, newHeureDebut, newDureeMinutes, exceptionId }) => {
             if (type === 'delete') {
@@ -511,6 +614,11 @@ export default function PlanningPage() {
         </>
       ) : null}
 
+      {/* T10 — Vue récapitulatif de période */}
+      {view === 'récap' && (
+        <RecapView lessons={lessons ?? []} périodes={périodes} />
+      )}
+
       {/* Modal création d'événement école (T3) */}
       {showCreateEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -572,6 +680,32 @@ export default function PlanningPage() {
                   className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600 resize-none"
                 />
               </div>
+              {/* Récurrence — T9 */}
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Récurrence</label>
+                <select
+                  value={newEvent.intervalWeeks}
+                  onChange={(e) => setNewEvent((ev) => ({ ...ev, intervalWeeks: Number(e.target.value) }))}
+                  className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                >
+                  <option value={0}>Unique (pas de récurrence)</option>
+                  <option value={1}>Chaque semaine</option>
+                  <option value={2}>Toutes les 2 semaines</option>
+                  <option value={3}>Toutes les 3 semaines</option>
+                  <option value={4}>Toutes les 4 semaines</option>
+                </select>
+              </div>
+              {newEvent.intervalWeeks >= 1 && newEvent.intervalWeeks !== 0 && (
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Répéter jusqu'au</label>
+                  <input
+                    type="date"
+                    value={newEvent.endDate}
+                    onChange={(e) => setNewEvent((ev) => ({ ...ev, endDate: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                  />
+                </div>
+              )}
               {eventError && <p className="text-xs text-red-400">{eventError}</p>}
               <div className="flex gap-3 pt-1">
                 <button type="button" onClick={() => { setShowCreateEvent(false); setEventError('') }} className="flex-1 px-4 py-2.5 rounded-xl border border-border-subtle text-sm hover:bg-surface-overlay transition-colors">

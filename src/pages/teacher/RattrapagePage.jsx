@@ -296,6 +296,8 @@ export default function RattrapagePage() {
   const { period: periodCtx } = usePeriod()
   // Id du cours dont le panel de rattrapage est ouvert (null = aucun)
   const [openPanelId, setOpenPanelId] = useState(null)
+  // Id du cours dont l'annulation de rattrapage est en cours
+  const [cancellingRattrapageId, setCancellingRattrapageId] = useState(null)
 
   const zone = user?.schoolZone ?? 'B'
 
@@ -349,6 +351,24 @@ export default function RattrapagePage() {
     setOpenPanelId(null)
     reload()
   }
+
+  // Annule un rattrapage en remettant le status à 'annule_prof' (additive, pas de DELETE)
+  const handleAnnulerRattrapage = useCallback(async (lesson) => {
+    if (!window.confirm(`Annuler le rattrapage du ${lesson.dateLabel} pour ${lesson.studentName} ?\nLe cours repassera en « À rattraper ».`)) return
+    setCancellingRattrapageId(lesson.id)
+    try {
+      const { error } = await supabase
+        .from('lessons')
+        .update({ status: 'annule_prof' })
+        .eq('id', lesson.id)
+      if (error) throw new Error(error.message)
+      reload()
+    } catch (e) {
+      alert('Erreur : ' + e.message)
+    } finally {
+      setCancellingRattrapageId(null)
+    }
+  }, [reload])
 
   return (
     <div className="p-6 sm:p-8 max-w-5xl">
@@ -461,9 +481,25 @@ export default function RattrapagePage() {
                             </span>
                           )}
                           {déjàRattrapé ? (
-                            <span className="text-xs px-2 py-1 rounded-full font-medium bg-green-500/15 text-green-400">
-                              Rattrapé
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs px-2 py-1 rounded-full font-medium bg-green-500/15 text-green-400">
+                                Rattrapé
+                              </span>
+                              {l.status === 'rattrape' && (
+                                <button
+                                  type="button"
+                                  disabled={cancellingRattrapageId === l.id}
+                                  onClick={() => handleAnnulerRattrapage(l)}
+                                  title="Annuler ce rattrapage"
+                                  className="flex items-center gap-1 px-2 py-1 rounded-lg border border-border-subtle text-xs text-muted-foreground hover:text-guitar-400 hover:border-guitar-600/40 transition-colors disabled:opacity-40"
+                                >
+                                  {cancellingRattrapageId === l.id
+                                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                                    : <X className="w-3 h-3" />}
+                                  Annuler
+                                </button>
+                              )}
+                            </div>
                           ) : (
                             <button
                               type="button"

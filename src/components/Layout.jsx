@@ -1,6 +1,6 @@
 import { useState, Suspense, useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
-import { PanelLeft, RefreshCw } from 'lucide-react'
+import { PanelLeft, RefreshCw, Undo2, Redo2 } from 'lucide-react'
 import Sidebar from './Sidebar'
 import { LoadingBlock } from './DataState'
 import { useRefreshContext } from '../contexts/RefreshContext'
@@ -108,6 +108,52 @@ export default function Layout() {
                      shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-guitar-400"
         >
           <RefreshCw className="w-4 h-4" />
+        </button>
+      )}
+
+      {/* Boutons Annuler / Rétablir — visibles dès qu'une action undoable est dans le stack */}
+      {undoLast && (
+        <button
+          type="button"
+          onClick={undoLast}
+          disabled={!canUndo?.()}
+          aria-label="Annuler (Ctrl+Z)"
+          title="Annuler (Ctrl+Z)"
+          style={{
+            position: 'fixed',
+            left: ouvert ? SIDEBAR_W + 48 : 88,
+            top: 12,
+            zIndex: 60,
+            transition: 'left 0.3s ease-in-out',
+          }}
+          className="w-8 h-8 rounded-lg bg-surface border border-border-subtle
+                     flex items-center justify-center
+                     text-muted-foreground hover:text-foreground hover:bg-surface-overlay
+                     disabled:opacity-30 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-guitar-400"
+        >
+          <Undo2 className="w-4 h-4" />
+        </button>
+      )}
+      {redoLast && (
+        <button
+          type="button"
+          onClick={redoLast}
+          disabled={!canRedo?.()}
+          aria-label="Rétablir (Ctrl+Shift+Z)"
+          title="Rétablir (Ctrl+Shift+Z)"
+          style={{
+            position: 'fixed',
+            left: ouvert ? SIDEBAR_W + 88 : 128,
+            top: 12,
+            zIndex: 60,
+            transition: 'left 0.3s ease-in-out',
+          }}
+          className="w-8 h-8 rounded-lg bg-surface border border-border-subtle
+                     flex items-center justify-center
+                     text-muted-foreground hover:text-foreground hover:bg-surface-overlay
+                     disabled:opacity-30 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-guitar-400"
+        >
+          <Redo2 className="w-4 h-4" />
         </button>
       )}
 

@@ -10,6 +10,7 @@ import { computeAllProposals, computeProposals, scoreCandidate, parseStartTime, 
 import { currentSchoolYear } from '../services/schools'
 import { createRecurringGroupSessions } from '../services/lessons'
 import { fetchReservedSlots, updateReservedSlot } from '../services/reservedSlots'
+import { useRefreshContext } from '../contexts/RefreshContext'
 import { exportPlanningPDF } from '../utils/exportPDF'
 import { trierSlots } from '../utils/creneauxSort'
 
@@ -721,7 +722,8 @@ function GroupingPanel({ selectedCount, conflictLessons, conflictSelectedIds, no
       <button
         type="button"
         onClick={() => onConfirm(nom.trim(), day || null, time || null, duree, interval)}
-        disabled={loading || !nom.trim()}
+        disabled={loading || !nom.trim() || !day || !time}
+        title={(!day || !time) ? 'La date et l\'heure de la première séance sont obligatoires' : undefined}
         className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 text-white text-xs font-medium hover:bg-purple-700 disabled:opacity-40 transition-all"
       >
         {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
@@ -736,6 +738,7 @@ function GroupingPanel({ selectedCount, conflictLessons, conflictSelectedIds, no
 export default function SchedulingAssistantPage() {
   const { user }    = useAuth()
   const navigate    = useNavigate()
+  const { triggerReload } = useRefreshContext() ?? {}
   const [responses, setResponses]         = useState([])
   const [existingLessons, setExistingLessons] = useState([])
   const [schools, setSchools]             = useState([])
@@ -797,6 +800,7 @@ export default function SchedulingAssistantPage() {
   const [conflictSelectedIds, setConflictSelectedIds] = useState(() => new Set())
   const [groupingConflicts, setGroupingConflicts]     = useState(false)
   const [groupError, setGroupError]                   = useState('')
+  const [groupSuccessMsg, setGroupSuccessMsg]         = useState('')
   // Mode cascade DnD : quand actif, un dépôt sur une proposition existante
   // déclenche la recherche automatique d'un créneau alternatif pour l'élève déplacé (T2)
   const [cascadeEnabled, setCascadeEnabled]           = useState(false)
@@ -2000,12 +2004,14 @@ export default function SchedulingAssistantPage() {
       }
 
       setConflictSelectedIds(new Set())
+      setGroupSuccessMsg('✓ Groupe planifié — séances créées jusqu\'en juin. Visible dans le Planning.')
+      triggerReload?.()
     } catch (e) {
       setGroupError(e.message ?? 'Erreur lors du regroupement.')
     } finally {
       setGroupingConflicts(false)
     }
-  }, [conflictSelectedIds, statsPlacement, teacherInfo])
+  }, [conflictSelectedIds, statsPlacement, teacherInfo, triggerReload])
 
   // ── Sélection / déselection d'un groupe comme candidat dans le calcul ────────
   const handleToggleEnsembleCandidat = useCallback((id) => {
@@ -3205,6 +3211,14 @@ export default function SchedulingAssistantPage() {
                   loading={groupingConflicts}
                   error={groupError}
                 />
+              )}
+
+              {/* Confirmation groupe planifié */}
+              {groupSuccessMsg && (
+                <div className="px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-400 font-medium flex items-center justify-between gap-2">
+                  <span>{groupSuccessMsg}</span>
+                  <button type="button" onClick={() => setGroupSuccessMsg('')} className="text-emerald-400/60 hover:text-emerald-400">✕</button>
+                </div>
               )}
 
               {/* Notification éphémère cascade — confirme que l'élève déplacé a été relogé */}

@@ -20,6 +20,11 @@ export function UndoRedoProvider({ children }) {
   const [feedback, setFeedback] = useState(null) // { text: string, id: number } | null
   const feedbackTimer = useRef(null)
 
+  // Compteur de version — incrémenté à chaque mutation du stack → déclenche un re-render
+  // dans les composants qui lisent canUndo/canRedo (Layout.jsx pour les boutons).
+  const [stackVersion, setStackVersion] = useState(0)
+  const bumpVersion = useCallback(() => setStackVersion(v => v + 1), [])
+
   const showFeedback = useCallback((text) => {
     clearTimeout(feedbackTimer.current)
     setFeedback({ text, id: Date.now() })
@@ -30,40 +35,47 @@ export function UndoRedoProvider({ children }) {
     redoStack.current = []
     undoStack.current.push({ label, undo, redo })
     if (undoStack.current.length > MAX_STACK) undoStack.current.shift()
-  }, [])
+    bumpVersion()
+  }, [bumpVersion])
 
   const undoLast = useCallback(async () => {
     const action = undoStack.current.pop()
     if (!action) return
+    bumpVersion()
     try {
       await action.undo()
       redoStack.current.push(action)
+      bumpVersion()
       showFeedback(`Annulé : ${action.label}`)
     } catch (e) {
-      // L'annulation a échoué — on remet l'action dans le stack
       undoStack.current.push(action)
+      bumpVersion()
       showFeedback(`Impossible d'annuler : ${e.message}`)
     }
-  }, [showFeedback])
+  }, [showFeedback, bumpVersion])
 
   const redoLast = useCallback(async () => {
     const action = redoStack.current.pop()
     if (!action) return
+    bumpVersion()
     try {
       await action.redo()
       undoStack.current.push(action)
+      bumpVersion()
       showFeedback(`Rétabli : ${action.label}`)
     } catch (e) {
       redoStack.current.push(action)
+      bumpVersion()
       showFeedback(`Impossible de rétablir : ${e.message}`)
     }
-  }, [showFeedback])
+  }, [showFeedback, bumpVersion])
 
   const canUndo = useCallback(() => undoStack.current.length > 0, [])
   const canRedo = useCallback(() => redoStack.current.length > 0, [])
 
   return (
-    <UndoRedoContext.Provider value={{ pushAction, undoLast, redoLast, canUndo, canRedo, feedback }}>
+    // stackVersion est dans la value pour que les consommateurs se re-rendent quand le stack change
+    <UndoRedoContext.Provider value={{ pushAction, undoLast, redoLast, canUndo, canRedo, feedback, stackVersion }}>
       {children}
     </UndoRedoContext.Provider>
   )

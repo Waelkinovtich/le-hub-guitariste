@@ -353,6 +353,36 @@ export async function updateGroupSessionRecurrence({ seriesId, groupId, fromDate
   return rows.length
 }
 
+// ─── Présence aux séances de groupe (group_session_attendance) ───────────────
+
+/**
+ * Retourne les lignes d'émargement pour une séance de groupe.
+ * Appelé par les tuiles groupe (T5) et EmargementPage (T6).
+ */
+export async function fetchGroupSessionAttendance(sessionId) {
+  const { data, error } = await supabase
+    .from('group_session_attendance')
+    .select('id, student_id, participant_id, status')
+    .eq('session_id', sessionId)
+  if (error) throw new Error(error.message)
+  return data ?? []
+}
+
+/**
+ * Émarger un membre (upsert) — crée ou met à jour la ligne.
+ * memberKey : { student_id } OU { participant_id }.
+ */
+export async function upsertGroupAttendance({ teacherId, sessionId, memberKey, status }) {
+  const row = { teacher_id: teacherId, session_id: sessionId, status, ...memberKey }
+  const conflictCols = memberKey.student_id
+    ? 'session_id, student_id'
+    : 'session_id, participant_id'
+  const { error } = await supabase
+    .from('group_session_attendance')
+    .upsert(row, { onConflict: conflictCols })
+  if (error) throw new Error(error.message)
+}
+
 export async function updateLessonPlanningStatus(lessonId, planningStatus) {
   const { error } = await supabase
     .from(TABLES.lessons)

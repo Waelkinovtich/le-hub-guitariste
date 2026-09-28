@@ -1,10 +1,10 @@
-import { useCallback, useState } from 'react'
-import { FileDown, CalendarDays, ClipboardCheck, Pencil, Trash2, Check, EyeOff, Eye } from 'lucide-react'
+import { useCallback, useState, useEffect } from 'react'
+import { FileDown, CalendarDays, ClipboardCheck, Pencil, Trash2, Check, EyeOff, Eye, Users, ChevronDown, ChevronUp } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import { useRegisterRefresh } from '../../contexts/RefreshContext'
 import { useUndoRedo } from '../../contexts/UndoRedoContext'
-import { fetchLessonsInRange, updateLessonStatus } from '../../services/lessons'
+import { fetchLessonsInRange, updateLessonStatus, fetchGroupSessionAttendance, upsertGroupAttendance } from '../../services/lessons'
 import { supabase } from '../../lib/supabase'
 import { fetchSchoolNames } from '../../services/students'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
@@ -67,6 +67,108 @@ function getRange(period) {
 // fmtDuree : utiliser minutesToLabel importé depuis utils/format.js
 const fmtDuree = minutesToLabel
 
+// Statuts d'émargement pour les membres de groupe (sous-ensemble de LESSON_STATUSES)
+const ATTENDANCE_STATUSES = [
+  { value: 'present', label: 'Présent', color: '#22c55e' },
+  { value: 'absent',  label: 'Absent',  color: '#ef4444' },
+  { value: 'excuse',  label: 'Excusé',  color: '#3b82f6' },
+]
+
+/**
+ * Panneau de présence par membre pour une séance de groupe.
+ * Charge les membres du groupe et leurs statuts depuis group_session_attendance.
+ * Dépend du BLOC T4 migration — affiche un avertissement si la table n'existe pas.
+ */
+function GroupMembresPanel({ sessionId, groupId, teacherId }) {
+  const [membres, setMembres]         = useState([])
+  const [attendance, setAttendance]   = useState({})  // student_id → status
+  const [loading, setLoading]         = useState(true)
+  const [tableMissing, setTableMissing] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setLoading(true)
+      // Membres du groupe
+      const { data: membresData } = await supabase
+        .from('group_members')
+        .select('student_id, students:student_id(id, first_name, last_name)')
+        .eq('group_id', groupId)
+      if (cancelled) return
+
+      const m = (membresData ?? []).filter(r => r.student_id)
+      setMembres(m)
+
+      // Attendance — peut échouer si BLOC T4 non exécuté
+      try {
+        const rows = await fetchGroupSessionAttendance(sessionId)
+        if (cancelled) return
+        const map = {}
+        rows.forEach(r => { if (r.student_id) map[r.student_id] = r.status })
+        setAttendance(map)
+      } catch (e) {
+        if (cancelled) return
+        // 42P01 = table inexistante
+        if (e.message.includes('42P01') || e.message.includes('does not exist')) setTableMissing(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [sessionId, groupId])
+
+  async function handleMemberStatus(studentId, status) {
+    setAttendance(prev => ({ ...prev, [studentId]: status }))
+    try {
+      await upsertGroupAttendance({ teacherId, sessionId, memberKey: { student_id: studentId }, status })
+    } catch (e) {
+      setAttendance(prev => { const n = { ...prev }; delete n[studentId]; return n })
+      alert('Erreur : ' + e.message)
+    }
+  }
+
+  if (loading) return <p className="text-xs text-muted-foreground px-2 py-1">Chargement…</p>
+  if (tableMissing) return (
+    <p className="text-xs text-amber-400 px-2 py-1">
+      Table group_session_attendance manquante — exécutez le BLOC T4 de la migration.
+    </p>
+  )
+  if (membres.length === 0) return <p className="text-xs text-muted-foreground px-2 py-1">Aucun membre lié.</p>
+
+  return (
+    <div className="flex flex-col gap-1 pt-1">
+      {membres.map(m => {
+        const nom = [m.students?.first_name, m.students?.last_name].filter(Boolean).join(' ') || m.student_id?.slice(0, 8)
+        const status = attendance[m.student_id] ?? null
+        return (
+          <div key={m.student_id} className="flex items-center gap-2 text-xs">
+            <span className="w-28 truncate text-foreground font-medium">{nom}</span>
+            <div className="flex gap-1">
+              {ATTENDANCE_STATUSES.map(s => (
+                <button
+                  key={s.value}
+                  type="button"
+                  onClick={() => handleMemberStatus(m.student_id, s.value)}
+                  title={s.label}
+                  className="px-2 py-0.5 rounded-md border text-[10px] font-medium transition-all"
+                  style={{
+                    borderColor: s.color + (status === s.value ? 'CC' : '40'),
+                    color: status === s.value ? s.color : s.color + '80',
+                    background: status === s.value ? s.color + '20' : 'transparent',
+                  }}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function ÉmargementPage() {
   const { user } = useAuth()
   const { period: periodCtx } = usePeriod()
@@ -78,6 +180,8 @@ export default function ÉmargementPage() {
   const [statusLesson, setStatusLesson] = useState(null)
   const [editLesson, setEditLesson]     = useState(null)
   const [deleteLesson, setDeleteLesson] = useState(null)
+  // Séances de groupe dont le panneau membres est ouvert (Set de sessionId)
+  const [openGroupPanels, setOpenGroupPanels] = useState(new Set())
 
   const range = getRange(period)
 
@@ -321,14 +425,32 @@ export default function ÉmargementPage() {
                   <tbody>
                     {groupSessions.map((g) => {
                       const gColors = { prevue: '#7f8c8d', effectuee: '#27ae60', annulee: '#9b59b6' }
-                      const gLabels = { prevue: 'Prévue', effectuee: 'Effectuée', annulee: 'Annulée' }
                       const gStatus = statusOverrides[g.sessionId] || g.sessionStatus || 'prevue'
                       const color = gColors[gStatus] ?? '#7f8c8d'
+                      const panelOpen = openGroupPanels.has(g.sessionId)
                       return (
-                        <tr key={g.id} className="border-b border-border-subtle last:border-0">
+                        <>
+                        <tr key={g.id} className="border-b border-border-subtle">
                           <td className="px-4 py-3">{g.dateLabel}</td>
                           <td className="px-4 py-3">{g.timeLabel}</td>
-                          <td className="px-4 py-3 font-medium">{g.topic}</td>
+                          <td className="px-4 py-3 font-medium">
+                            <button
+                              type="button"
+                              onClick={() => setOpenGroupPanels(prev => {
+                                const n = new Set(prev)
+                                panelOpen ? n.delete(g.sessionId) : n.add(g.sessionId)
+                                return n
+                              })}
+                              className="flex items-center gap-1.5 hover:text-guitar-400 transition-colors"
+                              title="Émarger les membres"
+                            >
+                              <Users className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                              {g.topic}
+                              {panelOpen
+                                ? <ChevronUp className="w-3 h-3 text-muted-foreground" />
+                                : <ChevronDown className="w-3 h-3 text-muted-foreground" />}
+                            </button>
+                          </td>
                           <td className="px-4 py-3 text-muted-foreground">{fmtDuree(g.durationMinutes)}</td>
                           <td className="px-4 py-3">
                             <select value={gStatus} onChange={async (e) => { const v = e.target.value; setStatusOverrides((prev) => ({ ...prev, [g.sessionId]: v })); await supabase.from('group_sessions').update({ status: v }).eq('id', g.sessionId) }}
@@ -339,6 +461,18 @@ export default function ÉmargementPage() {
                             </select>
                           </td>
                         </tr>
+                        {panelOpen && g.sessionId && g._groupId && (
+                          <tr key={g.id + '-members'} className="border-b border-border-subtle bg-surface-overlay/30">
+                            <td colSpan={5} className="px-6 pb-3 pt-1">
+                              <GroupMembresPanel
+                                sessionId={g.sessionId}
+                                groupId={g._groupId}
+                                teacherId={user.id}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                        </>
                       )
                     })}
                   </tbody>

@@ -1,5 +1,5 @@
 import { useRef, useState, useMemo, useCallback, useEffect } from 'react'
-import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X, Scissors, AlertTriangle, Edit2, Repeat2 } from 'lucide-react'
+import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X, Scissors, AlertTriangle, Edit2, Repeat2, ClipboardCheck } from 'lucide-react'
 import { updateLesson, updateRecurrenceInterval, updateGroupSessionRecurrence } from '../services/lessons'
 import { getSchoolColor, SCHOOL_COLOR_DEFAULT } from '../utils/schoolColors'
 import DeleteLessonModal from './DeleteLessonModal'
@@ -816,7 +816,10 @@ function ReservedSlotEditPanel({ slot, onClose, onSaved }) {
 // cascadeEnabled : quand true, un dépôt sur une proposition déplaçable déclenche onCascadeRequest.
 // onCascadeRequest(displacedLesson, newDay, newTime, durationMinutes) : intercepte le DnD
 //   pour que le parent recalcule un créneau alternatif pour la leçon déplacée.
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], reservedSlotExceptions = [], validDropZones = [], eventsByDay = {}, onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, onDegrouper = null, allowOverlap = false, outsideAvailIds = null, originalProposalMap = null, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null, onEditReservedSlot = null, onSlotException = null }) {
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], reservedSlotExceptions = [], validDropZones = [], eventsByDay = {}, onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, onDegrouper = null, allowOverlap = false, outsideAvailIds = null, originalProposalMap = null, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null, onEditReservedSlot = null, onSlotException = null, onEmargement = null }) {
+  // Date du jour (ISO) — sert à T3 (icône cours passé non émargé)
+  const TODAY_ISO = new Date().toISOString().slice(0, 10)
+
   // ── État local des cours (permet la mise à jour optimiste sans reload) ─────
   const [localLessons, setLocalLessons] = useState(lessons)
 
@@ -1682,6 +1685,38 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         </button>
                       )}
 
+                      {/* T2 — Bouton émargement : cours individuels confirmés */}
+                      {onEmargement && isConfirme && lesson.studentId && !lesson.id?.startsWith('proposal-') && !estSelectablePourGroupe && (
+                        <button
+                          type="button"
+                          aria-label="Émarger ce cours"
+                          title="Émarger — présence, absence, excusé…"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); onEmargement(lesson) }}
+                          className="absolute bottom-0 left-0 z-20 p-0.5 rounded-tr-md bg-void/50 text-white/80
+                                     opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity
+                                     focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
+                        >
+                          <ClipboardCheck className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      {/* T5 — Bouton émargement : tuiles groupe/répétition avec séance en DB */}
+                      {onEmargement && isGroupe && lesson._groupSessionId && !estSelectablePourGroupe && (
+                        <button
+                          type="button"
+                          aria-label="Émarger les membres du groupe"
+                          title="Émarger — présence des membres"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); onEmargement(lesson) }}
+                          className="absolute bottom-0 left-0 z-20 p-0.5 rounded-tr-md bg-void/50 text-emerald-400/80
+                                     opacity-0 group-hover:opacity-100 hover:text-emerald-300 transition-opacity
+                                     focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                        >
+                          <ClipboardCheck className="w-3 h-3" />
+                        </button>
+                      )}
+
                       {/* Indicateur de statut d'émargement — toujours visible sur les cours confirmés émargés.
                           Absent pour planifie (non émargé) et pour les tuiles envisage/groupe/ensemble. */}
                       {isConfirme && lesson.status && lesson.status !== 'planifie' && (() => {
@@ -1708,6 +1743,20 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           />
                         )
                       })()}
+
+                      {/* T3 — Icône grise : cours passé non émargé (status=planifie ET date < aujourd'hui) */}
+                      {isConfirme && lesson.status === 'planifie' && lesson.lessonDate < TODAY_ISO && (
+                        <div
+                          aria-label="Cours passé non émargé"
+                          title="Cours passé — émargement en attente"
+                          style={{
+                            position: 'absolute', bottom: 3, right: 3, zIndex: 15,
+                            pointerEvents: 'none',
+                          }}
+                        >
+                          <Clock className="w-2.5 h-2.5 text-muted-foreground opacity-60" />
+                        </div>
+                      )}
                     </div>
                   )
                   })
