@@ -29,6 +29,8 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated }
   const [studentContexts, setStudentContexts] = useState([])
   const [recurring, setRecurring] = useState(false)
   const [untilDate, setUntilDate] = useState('')
+  // Intervalle entre deux occurrences récurrentes (1=hebdo, 2=quinzomadaire, etc.)
+  const [intervalWeeks, setIntervalWeeks] = useState(1)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -127,7 +129,7 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated }
     setSubmitting(true)
     try {
       if (recurring && !isEdit) {
-        const count = await createRecurringLessons(teacherId, form, untilDate)
+        const count = await createRecurringLessons(teacherId, form, untilDate, intervalWeeks)
         alert(count + ' cours créés !')
         onCreated()
       } else {
@@ -362,13 +364,32 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated }
               <div className="border-t border-border-subtle pt-4">
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} className="w-4 h-4 accent-guitar-600" />
-                  <span className="text-sm font-medium">Cours hebdomadaire (toutes les semaines)</span>
+                  <span className="text-sm font-medium">Cours récurrent</span>
                 </label>
                 {recurring && (
-                  <div className="mt-3">
-                    <label className="block text-sm text-muted-foreground mb-1.5">Jusqu'au</label>
-                    <input type="date" value={untilDate} onChange={(e) => setUntilDate(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
-                    <p className="text-xs text-muted-foreground mt-1">Un cours sera créé chaque semaine à la même heure jusqu'à cette date.</p>
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <label className="block text-sm text-muted-foreground mb-1.5">Répétition</label>
+                      <select
+                        value={intervalWeeks}
+                        onChange={(e) => setIntervalWeeks(Number(e.target.value))}
+                        className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                      >
+                        <option value={1}>Toutes les semaines</option>
+                        <option value={2}>Une semaine sur deux</option>
+                        <option value={3}>Toutes les 3 semaines</option>
+                        <option value={4}>Toutes les 4 semaines</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-muted-foreground mb-1.5">Jusqu'au</label>
+                      <input type="date" value={untilDate} onChange={(e) => setUntilDate(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {intervalWeeks === 1
+                          ? 'Un cours sera créé chaque semaine à la même heure jusqu\'à cette date.'
+                          : `Un cours toutes les ${intervalWeeks} semaines jusqu'à cette date.`}
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>

@@ -3,7 +3,7 @@ import { TABLES } from '../lib/tables'
 import { fullName, formatLessonDateLabel, formatTime } from '../utils/format'
 
 const LESSON_SELECT = `
-  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group, planning_status, context_type, rattrapage_de_lesson_id,
+  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group, recurrence_interval_weeks, planning_status, context_type, rattrapage_de_lesson_id,
   student:${TABLES.students} (id, first_name, last_name, level, instrument, lesson_type, school_name)
 `
 
@@ -23,6 +23,7 @@ function mapLesson(row) {
     absenceReason: row.absence_reason ?? null,
     cancelReason: row.cancel_reason ?? null,
     recurrenceGroup: row.recurrence_group ?? null,
+    recurrenceIntervalWeeks: row.recurrence_interval_weeks ?? 1,
     planningStatus:       row.planning_status ?? 'confirme',
     contextType:          row.context_type ?? null,
     rattrapageDeLessonId: row.rattrapage_de_lesson_id ?? null,
@@ -57,12 +58,26 @@ export async function fetchPastLessons({ teacherId, studentId, limit = 20 } = {}
   return (data ?? []).map(mapLesson)
 }
 
+// LESSON_SELECT sans recurrence_interval_weeks — utilisé comme fallback si la
+// colonne n'existe pas encore en DB (migration BLOC 0 non exécutée).
+const LESSON_SELECT_NO_INTERVAL = LESSON_SELECT.replace(', recurrence_interval_weeks', '')
+
 export async function fetchLessonsInRange({ teacherId, from, to }) {
-  let query = supabase.from(TABLES.lessons).select(LESSON_SELECT).gte('lesson_date', from).lte('lesson_date', to).order('lesson_date').order('lesson_time')
-  if (teacherId) query = query.eq('teacher_id', teacherId)
-  const { data, error } = await query
+  const buildQuery = (select) => {
+    let q = supabase.from(TABLES.lessons).select(select).gte('lesson_date', from).lte('lesson_date', to).order('lesson_date').order('lesson_time')
+    if (teacherId) q = q.eq('teacher_id', teacherId)
+    return q
+  }
+
+  let { data, error } = await buildQuery(LESSON_SELECT)
+  if (error?.code === '42703' && error.message.includes('recurrence_interval_weeks')) {
+    // Colonne absente (BLOC 0 migration en attente) — on recharge sans elle, valeur forcée à 1
+    const fallback = await buildQuery(LESSON_SELECT_NO_INTERVAL)
+    data  = fallback.data
+    error = fallback.error
+  }
   if (error) throw new Error(error.message)
-  const lessons = (data ?? []).map(mapLesson)
+  const lessons = (data ?? []).map((row) => mapLesson({ ...row, recurrence_interval_weeks: row.recurrence_interval_weeks ?? 1 }))
   let groupSessions = []
   try {
     groupSessions = await fetchGroupSessionsInRange({ teacherId, from, to })
@@ -119,29 +134,89 @@ export async function fetchCancelledLessons({ teacherId } = {}) {
   return (data ?? []).map(mapLesson)
 }
 
-export async function createRecurringLessons(teacherId, input, untilDate) {
+/** Crée une série de cours récurrents depuis lessonDate jusqu'à untilDate.
+ *  intervalWeeks : 1 = hebdomadaire (défaut), 2 = quinzomadaire, etc. */
+export async function createRecurringLessons(teacherId, input, untilDate, intervalWeeks = 1) {
+  const safeInterval = Math.max(1, Math.round(intervalWeeks))
   const groupId = crypto.randomUUID()
   const rows = []
+  const pad = (n) => String(n).padStart(2, '0')
   let current = new Date(input.lessonDate + 'T00:00:00')
   const end = new Date(untilDate + 'T00:00:00')
   while (current <= end) {
-    const pad = (n) => String(n).padStart(2, '0')
     const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
     rows.push({
-      teacher_id: teacherId,
-      student_id: input.studentId,
-      lesson_date: iso,
-      lesson_time: input.lessonTime,
-      duration_minutes: input.durationMinutes ?? 45,
-      topic: input.topic,
-      notes: input.notes ?? null,
-      status: 'planifie',
-      recurrence_group: groupId,
+      teacher_id:                teacherId,
+      student_id:                input.studentId,
+      lesson_date:               iso,
+      lesson_time:               input.lessonTime,
+      duration_minutes:          input.durationMinutes ?? 45,
+      topic:                     input.topic,
+      notes:                     input.notes ?? null,
+      status:                    'planifie',
+      context_type:              input.contextType ?? null,
+      recurrence_group:          groupId,
+      recurrence_interval_weeks: safeInterval,
     })
-    current.setDate(current.getDate() + 7)
+    current.setDate(current.getDate() + 7 * safeInterval)
   }
   const { error } = await supabase.from(TABLES.lessons).insert(rows)
   if (error) throw new Error(error.message)
+  return rows.length
+}
+
+/**
+ * Régénère les occurrences FUTURES d'une série récurrente avec un nouvel intervalle.
+ *
+ * Limites techniques documentées :
+ *  - Supprime toutes les occurrences futures (gte fromDate) du recurrence_group.
+ *  - Recrée les occurrences de fromDate jusqu'à endDate selon le nouvel intervalle.
+ *  - Les occurrences PASSÉES (< fromDate) ne sont jamais touchées.
+ *  - Les modifications manuelles (durée, notes) sur des occurrences futures sont perdues.
+ *
+ * @param {object} p
+ * @param {string} p.groupId           - UUID de la série (recurrence_group)
+ * @param {string} p.fromDate          - Date ISO à partir de laquelle régénérer (incluse)
+ * @param {string} p.endDate           - Date ISO de fin de génération (ex: fin d'année scolaire)
+ * @param {number} p.intervalWeeks     - Nouvel intervalle en semaines (1–4)
+ * @param {object} p.template          - Modèle pour les nouvelles lignes (teacherId, studentId, …)
+ */
+export async function updateRecurrenceInterval({ groupId, fromDate, endDate, intervalWeeks, template }) {
+  const safeInterval = Math.max(1, Math.round(intervalWeeks))
+
+  // 1. Supprime les occurrences futures de la série — jamais les passées
+  const { error: delErr } = await supabase
+    .from(TABLES.lessons)
+    .delete()
+    .eq('recurrence_group', groupId)
+    .gte('lesson_date', fromDate)
+  if (delErr) throw new Error(delErr.message)
+
+  // 2. Recrée les occurrences selon le nouvel intervalle
+  const pad = (n) => String(n).padStart(2, '0')
+  const rows = []
+  let current = new Date(fromDate + 'T00:00:00')
+  const end    = new Date(endDate + 'T00:00:00')
+  while (current <= end) {
+    const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
+    rows.push({
+      teacher_id:                template.teacherId,
+      student_id:                template.studentId,
+      lesson_date:               iso,
+      lesson_time:               template.lessonTime,
+      duration_minutes:          template.durationMinutes,
+      topic:                     template.topic ?? 'Cours de guitare',
+      notes:                     template.notes ?? null,
+      status:                    'planifie',
+      context_type:              template.contextType ?? null,
+      recurrence_group:          groupId,
+      recurrence_interval_weeks: safeInterval,
+    })
+    current.setDate(current.getDate() + 7 * safeInterval)
+  }
+  if (rows.length === 0) return 0
+  const { error: insErr } = await supabase.from(TABLES.lessons).insert(rows)
+  if (insErr) throw new Error(insErr.message)
   return rows.length
 }
 
@@ -174,7 +249,7 @@ export async function fetchGroupSessionsInRange({ teacherId, from, to }) {
 
   const { data: sessions, error: sErr } = await supabase
     .from('group_sessions')
-    .select('id, group_id, session_date, session_time, duration_minutes, status')
+    .select('id, group_id, session_date, session_time, duration_minutes, status, recurrence_series_id, recurrence_interval_weeks')
     .in('group_id', groupIds)
     .gte('session_date', from)
     .lte('session_date', to)
@@ -184,23 +259,98 @@ export async function fetchGroupSessionsInRange({ teacherId, from, to }) {
   return (sessions ?? []).map(s => {
     const g = groupMap[s.group_id] || {}
     return {
-      id: 'group-' + s.id,
-      isGroup: true,
-      groupId: s.group_id,
-      sessionId: s.id,
-      lessonDate: s.session_date,
-      lessonTime: s.session_time,
+      id:              'group-' + s.id,
+      // Champs calqués sur le shape attendu par WeekGridPlanning pour les groupes
+      planningStatus:  'groupe',
+      _groupId:        s.group_id,
+      _groupSessionId: s.id,
+      // Récurrence (BLOC 3 migration requis — NULL avant)
+      recurrenceSeriesId:     s.recurrence_series_id ?? null,
+      recurrenceIntervalWeeks: s.recurrence_interval_weeks ?? 1,
+      isGroup:         true,
+      groupId:         s.group_id,
+      sessionId:       s.id,
+      lessonDate:      s.session_date,
+      lessonTime:      s.session_time,
       durationMinutes: s.duration_minutes || g.duration_minutes,
-      topic: g.name,
-      status: 'planifie',
-      studentName: g.name,
-      groupType: g.type,
-      sessionStatus: s.status || 'prevue',
-      schoolName: g.school_name ?? null,
-      dateLabel: formatLessonDateLabel(s.session_date),
-      timeLabel: formatTime(s.session_time),
+      topic:           g.name,
+      status:          s.status || 'planifie',
+      studentName:     g.name,
+      groupType:       g.type,
+      sessionStatus:   s.status || 'prevue',
+      schoolName:      g.school_name ?? null,
+      dateLabel:       formatLessonDateLabel(s.session_date),
+      timeLabel:       formatTime(s.session_time),
     }
   })
+}
+
+// ─── Récurrence des séances de groupe ─────────────────────────────────────────
+
+/** Calcule les dates ISO d'une série récurrente à partir de firstDate jusqu'à endDate. */
+function buildGroupSessionDates(firstDate, endDate, intervalWeeks) {
+  const safeInterval = Math.max(1, Math.round(intervalWeeks))
+  const pad = (n) => String(n).padStart(2, '0')
+  const dates = []
+  let current = new Date(firstDate + 'T00:00:00')
+  const end    = new Date(endDate   + 'T00:00:00')
+  while (current <= end) {
+    dates.push(current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate()))
+    current.setDate(current.getDate() + 7 * safeInterval)
+  }
+  return dates
+}
+
+/**
+ * Crée une série récurrente de séances de groupe dans group_sessions.
+ * Retourne l'id de la première séance créée (pour l'affichage immédiat).
+ */
+export async function createRecurringGroupSessions({ groupId, firstDate, sessionTime, durationMinutes, endDate, intervalWeeks = 1 }) {
+  const seriesId = crypto.randomUUID()
+  const dates    = buildGroupSessionDates(firstDate, endDate, intervalWeeks)
+  if (dates.length === 0) throw new Error('Aucune date générée pour la série.')
+
+  const rows = dates.map((d) => ({
+    group_id:                  groupId,
+    session_date:              d,
+    session_time:              sessionTime,
+    duration_minutes:          durationMinutes,
+    recurrence_series_id:      seriesId,
+    recurrence_interval_weeks: Math.max(1, Math.round(intervalWeeks)),
+  }))
+
+  const { data, error } = await supabase.from('group_sessions').insert(rows).select('id').limit(1)
+  if (error) throw new Error(error.message)
+  return { seriesId, firstSessionId: data?.[0]?.id ?? null, count: rows.length }
+}
+
+/**
+ * Régénère les séances FUTURES d'une série de groupe avec un nouvel intervalle.
+ * Les séances passées (< fromDate) ne sont jamais modifiées.
+ */
+export async function updateGroupSessionRecurrence({ seriesId, groupId, fromDate, endDate, sessionTime, durationMinutes, intervalWeeks }) {
+  const safeInterval = Math.max(1, Math.round(intervalWeeks))
+
+  const { error: delErr } = await supabase
+    .from('group_sessions')
+    .delete()
+    .eq('recurrence_series_id', seriesId)
+    .gte('session_date', fromDate)
+  if (delErr) throw new Error(delErr.message)
+
+  const dates = buildGroupSessionDates(fromDate, endDate, safeInterval)
+  if (dates.length === 0) return 0
+  const rows = dates.map((d) => ({
+    group_id:                  groupId,
+    session_date:              d,
+    session_time:              sessionTime,
+    duration_minutes:          durationMinutes,
+    recurrence_series_id:      seriesId,
+    recurrence_interval_weeks: safeInterval,
+  }))
+  const { error: insErr } = await supabase.from('group_sessions').insert(rows)
+  if (insErr) throw new Error(insErr.message)
+  return rows.length
 }
 
 export async function updateLessonPlanningStatus(lessonId, planningStatus) {

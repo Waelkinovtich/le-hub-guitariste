@@ -1,8 +1,10 @@
 import { useCallback, useState } from 'react'
-import { FileDown, CalendarDays, ClipboardCheck, Pencil, Trash2 } from 'lucide-react'
+import { FileDown, CalendarDays, ClipboardCheck, Pencil, Trash2, Check, EyeOff, Eye } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
-import { fetchLessonsInRange } from '../../services/lessons'
+import { useRegisterRefresh } from '../../contexts/RefreshContext'
+import { useUndoRedo } from '../../contexts/UndoRedoContext'
+import { fetchLessonsInRange, updateLessonStatus } from '../../services/lessons'
 import { supabase } from '../../lib/supabase'
 import { fetchSchoolNames } from '../../services/students'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
@@ -70,7 +72,9 @@ export default function ÉmargementPage() {
   const { period: periodCtx } = usePeriod()
   const [period, setPeriod] = useState('mois')
   const [filterSchool, setFilterSchool] = useState('')
-  const [statusOverrides, setStatusOverrides] = useState({})
+  const [statusOverrides, setStatusOverrides] = useState({})         // group sessions
+  const [lessonStatusOverrides, setLessonStatusOverrides] = useState({}) // cours individuels
+  const [showOnlyUnemarged, setShowOnlyUnemarged] = useState(false)
   const [statusLesson, setStatusLesson] = useState(null)
   const [editLesson, setEditLesson]     = useState(null)
   const [deleteLesson, setDeleteLesson] = useState(null)
@@ -86,10 +90,16 @@ export default function ÉmargementPage() {
   }, [user.id, range.from, range.to])
 
   const { data, loading, error, reload } = useFetch(load, [user.id, period])
+  useRegisterRefresh(reload)
+  const { pushAction } = useUndoRedo() ?? {}
 
   const periodFiltered = filterLessonsByPeriod(data?.lessons ?? [], periodCtx)
   const allItems = periodFiltered.filter((l) => !filterSchool || l.schoolName === filterSchool || l.student?.school_name === filterSchool || (filterSchool === 'particulier' && !l.student?.school_name && !l.isGroup))
-  const lessons = allItems.filter((l) => !l.isGroup)
+  const allLessons = allItems.filter((l) => !l.isGroup)
+  // Filtre "non émargés" : status === 'planifie' (jamais modifié depuis la création)
+  const lessons = showOnlyUnemarged
+    ? allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'planifie')
+    : allLessons
   const groupSessions = allItems.filter((l) => l.isGroup)
   const schools = data?.schools ?? []
 
@@ -105,11 +115,37 @@ export default function ÉmargementPage() {
     })
   }
 
-  const presents = lessons.filter((l) => l.status === 'present').length
-  const absents = lessons.filter((l) => l.status === 'absent').length
-  const excuses = lessons.filter((l) => l.status === 'excuse').length
-  const annulés = lessons.filter((l) => l.status === 'annule_prof').length
-  const taux = lessons.length > 0 ? Math.round((presents / lessons.length) * 100) : 0
+  // Marque immédiatement "présent" sans ouvrir la modale — clic unique pour l'action la plus fréquente.
+  // Mise à jour optimiste : l'UI répond instantanément, pas de rechargement.
+  const handleQuickPresent = useCallback(async (lesson) => {
+    const previousStatus = lesson.status  // statut avant le clic pour l'undo
+    setLessonStatusOverrides((prev) => ({ ...prev, [lesson.id]: 'present' }))
+    try {
+      await updateLessonStatus(lesson.id, 'present', null, null)
+      // Enregistre l'action dans le stack undo/redo
+      pushAction?.({
+        label: `Présent — ${lesson.studentName ?? 'cours'}`,
+        undo: async () => {
+          setLessonStatusOverrides((prev) => ({ ...prev, [lesson.id]: previousStatus }))
+          await updateLessonStatus(lesson.id, previousStatus, null, null)
+        },
+        redo: async () => {
+          setLessonStatusOverrides((prev) => ({ ...prev, [lesson.id]: 'present' }))
+          await updateLessonStatus(lesson.id, 'present', null, null)
+        },
+      })
+    } catch (e) {
+      // Annule l'override si l'appel échoue
+      setLessonStatusOverrides((prev) => { const n = { ...prev }; delete n[lesson.id]; return n })
+      alert('Erreur : ' + e.message)
+    }
+  }, [pushAction])
+
+  const presents = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'present').length
+  const absents = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'absent').length
+  const excuses = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'excuse').length
+  const annulés = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'annule_prof').length
+  const taux = allLessons.length > 0 ? Math.round((presents / allLessons.length) * 100) : 0
 
   return (
     <>
@@ -149,6 +185,20 @@ export default function ÉmargementPage() {
           <option value="particulier">Cours particuliers</option>
           {schools.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
+        {/* Filtre "non encore émargés" — pour enchaîner rapidement les présences */}
+        <button
+          type="button"
+          onClick={() => setShowOnlyUnemarged((v) => !v)}
+          className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-sm font-medium transition-colors ${
+            showOnlyUnemarged
+              ? 'border-guitar-600/40 bg-guitar-600/10 text-guitar-400'
+              : 'border-border-subtle hover:bg-surface-overlay'
+          }`}
+          title={showOnlyUnemarged ? 'Afficher tous les cours' : 'Afficher uniquement les cours non encore émargés'}
+        >
+          {showOnlyUnemarged ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          Non émargés
+        </button>
       </div>
 
       {loading ? <LoadingBlock label="Chargement..." /> : error ? <ErrorBlock message={error} /> : (
@@ -186,7 +236,10 @@ export default function ÉmargementPage() {
                 </thead>
                 <tbody>
                   {lessons.map((lesson) => {
-                    const color = STATUS_COLORS[lesson.status] ?? '#7f8c8d'
+                    const effectiveStatus = lessonStatusOverrides[lesson.id] ?? lesson.status
+                    const color = STATUS_COLORS[effectiveStatus] ?? '#7f8c8d'
+                    const isPresent = effectiveStatus === 'present'
+                    const isPlanifie = effectiveStatus === 'planifie'
                     return (
                       <tr key={lesson.id} className="border-b border-border-subtle last:border-0">
                         <td className="px-4 py-3">{lesson.dateLabel}</td>
@@ -195,16 +248,30 @@ export default function ÉmargementPage() {
                         <td className="px-4 py-3 text-muted-foreground">{lesson.topic}</td>
                         <td className="px-4 py-3 text-muted-foreground">{fmtDuree(lesson.durationMinutes)}</td>
                         <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            onClick={() => setStatusLesson(lesson)}
-                            title="Modifier le statut de présence"
-                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium border hover:opacity-80 transition-opacity cursor-pointer"
-                            style={{ backgroundColor: color + '20', borderColor: color + '50', color }}
-                          >
-                            <ClipboardCheck className="w-3 h-3" />
-                            {STATUS_LABELS[lesson.status] ?? lesson.status}
-                          </button>
+                          <div className="flex items-center gap-2">
+                            {/* Bouton "Présent" rapide — un seul clic, pas de modale */}
+                            {!isPresent && (
+                              <button
+                                type="button"
+                                onClick={() => handleQuickPresent(lesson)}
+                                title="Marquer présent"
+                                className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
+                              >
+                                <Check className="w-4 h-4" />
+                              </button>
+                            )}
+                            {/* Badge statut — clic pour ouvrir la modale complète (absent/excusé/annulé) */}
+                            <button
+                              type="button"
+                              onClick={() => setStatusLesson(lesson)}
+                              title="Modifier le statut de présence"
+                              className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[36px] rounded-full text-xs font-medium border hover:opacity-80 transition-opacity cursor-pointer"
+                              style={{ backgroundColor: color + '20', borderColor: color + '50', color }}
+                            >
+                              <ClipboardCheck className="w-3 h-3" />
+                              {STATUS_LABELS[effectiveStatus] ?? effectiveStatus}
+                            </button>
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1">
@@ -212,7 +279,7 @@ export default function ÉmargementPage() {
                               type="button"
                               onClick={() => setEditLesson(lesson)}
                               title="Modifier ce cours"
-                              className="p-1.5 rounded-lg text-muted hover:text-foreground hover:bg-surface-overlay transition-colors"
+                              className="p-2 min-h-[36px] min-w-[36px] rounded-lg text-muted hover:text-foreground hover:bg-surface-overlay transition-colors"
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
@@ -220,7 +287,7 @@ export default function ÉmargementPage() {
                               type="button"
                               onClick={() => setDeleteLesson(lesson)}
                               title="Supprimer ce cours"
-                              className="p-1.5 rounded-lg text-muted hover:text-guitar-400 hover:bg-guitar-600/10 transition-colors"
+                              className="p-2 min-h-[36px] min-w-[36px] rounded-lg text-muted hover:text-guitar-400 hover:bg-guitar-600/10 transition-colors"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -287,7 +354,14 @@ export default function ÉmargementPage() {
       <LessonStatusModal
         lesson={statusLesson}
         onClose={() => setStatusLesson(null)}
-        onUpdated={() => { reload(); setStatusLesson(null) }}
+        onUpdated={(newStatus) => {
+          // Mise à jour optimiste : applique le nouveau statut immédiatement pour préserver
+          // la position de défilement — pas de passage par loading=true
+          if (newStatus && statusLesson) {
+            setLessonStatusOverrides((prev) => ({ ...prev, [statusLesson.id]: newStatus }))
+          }
+          setStatusLesson(null)
+        }}
       />
     )}
     {editLesson && (

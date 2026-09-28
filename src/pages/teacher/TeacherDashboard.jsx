@@ -5,6 +5,7 @@ import StatCard from '../../components/StatCard'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
+import { useRegisterRefresh } from '../../contexts/RefreshContext'
 import { fetchTeacherStudents } from '../../services/students'
 import { fetchUpcomingLessons, fetchLessonsInRange } from '../../services/lessons'
 import { endOfWeek, startOfWeek, toISODate } from '../../utils/format'
@@ -32,6 +33,7 @@ export default function TeacherDashboard() {
   }, [user.id])
 
   const { data, loading, error, reload } = useFetch(loadDashboard, [user.id])
+  useRegisterRefresh(reload)
 
   const stats = useMemo(() => {
     if (!data) return []

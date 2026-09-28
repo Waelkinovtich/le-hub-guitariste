@@ -21,7 +21,8 @@ export default function LessonStatusModal({ lesson, onClose, onUpdated }) {
         needsAbsenceReason ? absenceReason : null,
         needsCancelReason ? cancelReason : null
       )
-      onUpdated()
+      // Transmet le nouveau statut pour les mises à jour optimistes dans les pages parentes
+      onUpdated(status, needsAbsenceReason ? absenceReason : null)
       onClose()
     } catch (err) {
       alert('Erreur : ' + err.message)

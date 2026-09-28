@@ -8,6 +8,7 @@ import ScoreBadge from '../components/ScoreBadge'
 import WeekGridPlanning from '../components/WeekGridPlanning'
 import { computeAllProposals, computeProposals, scoreCandidate, parseStartTime, JOURS_FR, timeToMinutes, intersectionDisponibilitesCollectives } from '../utils/scoringCreneaux'
 import { currentSchoolYear } from '../services/schools'
+import { createRecurringGroupSessions } from '../services/lessons'
 import { fetchReservedSlots, updateReservedSlot } from '../services/reservedSlots'
 import { exportPlanningPDF } from '../utils/exportPDF'
 import { trierSlots } from '../utils/creneauxSort'
@@ -638,9 +639,10 @@ function EnsembleCandidatSelector({ ensembleReponses, selectedEnsembleIds, onTog
 function GroupingPanel({ selectedCount, conflictLessons, conflictSelectedIds, nonPlaces, onCancel, onConfirm, loading, error }) {
   // Pré-remplissage : on prend la date/heure de la première leçon en conflit sélectionnée
   const firstSelected = conflictLessons.find((l) => conflictSelectedIds.has(l._responseId))
-  const [nom,  setNom]  = useState('')
-  const [day,  setDay]  = useState(firstSelected?.lessonDate  ?? '')
-  const [time, setTime] = useState(firstSelected?.lessonTime  ?? '')
+  const [nom,      setNom]      = useState('')
+  const [day,      setDay]      = useState(firstSelected?.lessonDate  ?? '')
+  const [time,     setTime]     = useState(firstSelected?.lessonTime  ?? '')
+  const [interval, setInterval] = useState(1)
   const [duree, setDuree] = useState(() => {
     const resp = nonPlaces.find((r) => conflictSelectedIds.has(r.id))
     return resp?.effective_duration_minutes ?? 30
@@ -701,11 +703,24 @@ function GroupingPanel({ selectedCount, conflictLessons, conflictSelectedIds, no
             ))}
           </select>
         </div>
+        <div>
+          <label className="text-xs text-muted mb-1 block">Récurrence</label>
+          <select
+            value={interval}
+            onChange={(e) => setInterval(Number(e.target.value))}
+            className="w-full px-3 py-2 rounded-xl bg-surface-overlay border border-border-subtle text-sm focus:outline-none focus:border-guitar-600"
+          >
+            <option value={1}>Toutes les semaines</option>
+            <option value={2}>Une semaine sur deux</option>
+            <option value={3}>Toutes les 3 semaines</option>
+            <option value={4}>Toutes les 4 semaines</option>
+          </select>
+        </div>
       </div>
       {error && <p className="text-xs text-red-400">{error}</p>}
       <button
         type="button"
-        onClick={() => onConfirm(nom.trim(), day || null, time || null, duree)}
+        onClick={() => onConfirm(nom.trim(), day || null, time || null, duree, interval)}
         disabled={loading || !nom.trim()}
         className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 text-white text-xs font-medium hover:bg-purple-700 disabled:opacity-40 transition-all"
       >
@@ -1887,7 +1902,7 @@ export default function SchedulingAssistantPage() {
    * Met à jour survey_responses.status → 'planifie' pour chaque réponse groupée.
    * Retire ensuite ces réponses de l'état local pour mettre à jour la grille sans rechargement.
    */
-  const handleGrouperConflits = useCallback(async (nomGroupe, sessionDay, sessionTime, durationMinutes) => {
+  const handleGrouperConflits = useCallback(async (nomGroupe, sessionDay, sessionTime, durationMinutes, intervalWeeks = 1) => {
     if (conflictSelectedIds.size < 2 || !teacherInfo?.id) return
     setGroupingConflicts(true)
     setGroupError('')
@@ -1923,17 +1938,22 @@ export default function SchedulingAssistantPage() {
         .map((r) => ({ group_id: groupId, student_id: r.student_id, is_external: false }))
       if (members.length > 0) await supabase.from('group_members').insert(members)
 
-      // Première séance — récupère l'id pour pouvoir la modifier/supprimer plus tard
-      let groupSessionId = null
+      // Première séance + série récurrente jusqu'à fin d'année scolaire
+      let groupSessionId   = null
+      let recurrenceSeriesId = null
       if (sessionDay && sessionTime) {
-        const { data: sessData, error: sessErr } = await supabase.from('group_sessions').insert({
-          group_id:         groupId,
-          session_date:     sessionDay,
-          session_time:     sessionTime,
-          duration_minutes: durationMinutes,
-        }).select('id').single()
-        if (sessErr) throw new Error('Création de séance impossible : ' + sessErr.message)
-        groupSessionId = sessData?.id ?? null
+        const [, endYear] = currentSchoolYear().split('-').map(Number)
+        const endDate = `${endYear}-06-30`
+        const result = await createRecurringGroupSessions({
+          groupId,
+          firstDate:       sessionDay,
+          sessionTime,
+          durationMinutes,
+          endDate,
+          intervalWeeks:   intervalWeeks ?? 1,
+        })
+        groupSessionId     = result.firstSessionId
+        recurrenceSeriesId = result.seriesId
         if (!groupSessionId) throw new Error('Séance créée mais id non retourné — vérifiez les permissions RLS sur group_sessions.')
       }
 
@@ -1973,6 +1993,8 @@ export default function SchedulingAssistantPage() {
           _groupSessionId:        groupSessionId,
           _memberResponseIds:     responseIds,
           _memberAvailabilities:  memberAvailabilities,
+          recurrenceSeriesId:     recurrenceSeriesId,
+          recurrenceIntervalWeeks: intervalWeeks ?? 1,
           // Pas de nonMovable : lessonsForGrid l'exclura pour les groupes (planningStatus === 'groupe')
         }])
       }
@@ -2021,18 +2043,16 @@ export default function SchedulingAssistantPage() {
     if (!window.confirm(`Planifier « ${lesson._groupName ?? lesson.studentName} » le ${JOURS_FR[new Date(lesson.lessonDate + 'T12:00:00').getDay()]} à ${lesson.lessonTime} (${lesson.durationMinutes} min) ?`)) return
 
     try {
-      const { data: sessData, error: sessErr } = await supabase
-        .from('group_sessions')
-        .insert({
-          group_id:         lesson._groupId,
-          session_date:     lesson.lessonDate,
-          session_time:     lesson.lessonTime,
-          duration_minutes: lesson.durationMinutes,
-        })
-        .select('id')
-        .single()
-      if (sessErr) throw new Error(sessErr.message)
-      const groupSessionId = sessData?.id ?? null
+      const [, endYear] = currentSchoolYear().split('-').map(Number)
+      const result = await createRecurringGroupSessions({
+        groupId:         lesson._groupId,
+        firstDate:       lesson.lessonDate,
+        sessionTime:     lesson.lessonTime,
+        durationMinutes: lesson.durationMinutes,
+        endDate:         `${endYear}-06-30`,
+        intervalWeeks:   1,  // hebdomadaire par défaut — modifiable via l'icône Repeat2
+      })
+      const groupSessionId = result.firstSessionId
 
       // Retirer de la sélection des candidats (il est maintenant dans existingLessons)
       setSelectedGroupIds((prev) => { const n = new Set(prev); n.delete(lesson._groupId); return n })
@@ -2047,11 +2067,13 @@ export default function SchedulingAssistantPage() {
         durationMinutes:       lesson.durationMinutes,
         studentName:           lesson.studentName,
         schoolName:            lesson.schoolName,
-        planningStatus:        'groupe',
-        _groupId:              lesson._groupId,
-        _groupSessionId:       groupSessionId,
-        _memberResponseIds:    [],  // pas de survey_responses liées (groupe pré-existant)
-        _memberAvailabilities: lesson._memberAvailabilities ?? [],
+        planningStatus:         'groupe',
+        _groupId:               lesson._groupId,
+        _groupSessionId:        groupSessionId,
+        _memberResponseIds:     [],  // pas de survey_responses liées (groupe pré-existant)
+        _memberAvailabilities:  lesson._memberAvailabilities ?? [],
+        recurrenceSeriesId:     result.seriesId,
+        recurrenceIntervalWeeks: 1,
       }])
     } catch (e) {
       alert('Erreur lors de la confirmation : ' + e.message)

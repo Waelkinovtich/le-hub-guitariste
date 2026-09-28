@@ -7,6 +7,7 @@ import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState
 import { useAuth } from '../../context/AuthContext'
 import HelpTooltip from '../../components/HelpTooltip'
 import { useFetch } from '../../hooks/useFetch'
+import { useRegisterRefresh } from '../../contexts/RefreshContext'
 import { fetchTeacherStudents, fetchSchoolNames, fetchAllContextsByStudent, archiveStudent, unarchiveStudent } from '../../services/students'
 import { fetchUpcomingLessons, buildNextLessonByStudent, formatNextLessonLabel } from '../../services/lessons'
 import { initials } from '../../utils/format'
@@ -49,6 +50,7 @@ export default function StudentsPage() {
 
   const { period } = usePeriod()
   const { data, loading, error, reload } = useFetch(load, [user.id, showArchived])
+  useRegisterRefresh(reload)
   const schools = data?.schools ?? []
 
   const rows = useMemo(() => {

@@ -6,6 +6,7 @@ import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState
 import { useAuth } from '../../context/AuthContext'
 import HelpTooltip from '../../components/HelpTooltip'
 import { useFetch } from '../../hooks/useFetch'
+import { useRegisterRefresh } from '../../contexts/RefreshContext'
 import { fetchLessonsInRange, updateLessonPlanningStatus } from '../../services/lessons'
 import { fetchTeacherSchools } from '../../services/schools'
 import { startOfWeek, toISODate } from '../../utils/format'
@@ -135,6 +136,7 @@ export default function PlanningPage() {
   }, [user.id, range.from, range.to])
 
   const { data: lessons, loading, error, reload } = useFetch(load, [user.id, range.from, range.to])
+  useRegisterRefresh(reload)
 
   const weekLabel = useMemo(() => {
     const opts = { day: 'numeric', month: 'long' }

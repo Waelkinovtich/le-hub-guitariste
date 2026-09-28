@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
+import { useRegisterRefresh } from '../../contexts/RefreshContext'
 import { fetchCancelledLessons } from '../../services/lessons'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
 import { getRaisonLabel } from '../../utils/lessonStatus'
@@ -300,6 +301,7 @@ export default function RattrapagePage() {
 
   const load = useCallback(() => fetchCancelledLessons({ teacherId: user.id }), [user.id])
   const { data: rawLessons, loading, error, reload } = useFetch(load, [user.id])
+  useRegisterRefresh(reload)
 
   const lessons = filterLessonsByPeriod(rawLessons ?? [], periodCtx)
 

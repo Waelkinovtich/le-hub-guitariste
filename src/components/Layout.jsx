@@ -1,8 +1,10 @@
-import { useState, Suspense } from 'react'
+import { useState, Suspense, useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
-import { PanelLeft } from 'lucide-react'
+import { PanelLeft, RefreshCw } from 'lucide-react'
 import Sidebar from './Sidebar'
 import { LoadingBlock } from './DataState'
+import { useRefreshContext } from '../contexts/RefreshContext'
+import { useUndoRedo } from '../contexts/UndoRedoContext'
 
 // Clé localStorage : persiste la préférence sans passer par la base de données
 const LS_KEY = 'sidebar_ouverte'
@@ -18,6 +20,19 @@ function lirePréférenceSidebar() {
 
 export default function Layout() {
   const [ouvert, setOuvert] = useState(lirePréférenceSidebar)
+  const { triggerReload } = useRefreshContext() ?? {}
+  const { undoLast, redoLast, feedback } = useUndoRedo() ?? {}
+
+  // Raccourcis clavier globaux : Ctrl+Z = annuler, Ctrl+Shift+Z / Ctrl+Y = rétablir
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (!e.ctrlKey && !e.metaKey) return
+      if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undoLast?.() }
+      if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); redoLast?.() }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [undoLast, redoLast])
 
   function toggle() {
     setOuvert((v) => {
@@ -73,6 +88,39 @@ export default function Layout() {
           style={{ transform: ouvert ? 'rotate(0deg)' : 'rotate(180deg)' }}
         />
       </button>
+
+      {/* Bouton Actualiser — ancré à droite du bouton sidebar, toujours visible */}
+      {triggerReload && (
+        <button
+          type="button"
+          onClick={triggerReload}
+          aria-label="Actualiser les données"
+          style={{
+            position: 'fixed',
+            left: ouvert ? SIDEBAR_W + 8 : 48,
+            top: 12,
+            zIndex: 60,
+            transition: 'left 0.3s ease-in-out',
+          }}
+          className="w-8 h-8 rounded-lg bg-surface border border-border-subtle
+                     flex items-center justify-center
+                     text-muted-foreground hover:text-foreground hover:bg-surface-overlay
+                     shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-guitar-400"
+        >
+          <RefreshCw className="w-4 h-4" />
+        </button>
+      )}
+
+      {/* Badge feedback undo/redo — apparaît 2s après Ctrl+Z / Ctrl+Y */}
+      {feedback && (
+        <div
+          key={feedback.id}
+          style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 200 }}
+          className="px-4 py-2 rounded-xl bg-surface border border-border-subtle shadow-lg text-sm text-foreground pointer-events-none"
+        >
+          {feedback.text}
+        </div>
+      )}
 
       {/* Zone de contenu : occupe tout l'espace libéré par la sidebar */}
       <main className="flex-1 overflow-auto min-w-0">

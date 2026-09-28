@@ -7,32 +7,46 @@ import { supabase } from '../lib/supabase'
 
 const SELECT = `
   id, teacher_id, school_id, jour_semaine, heure_debut, duree_minutes, libelle, notes, created_at,
+  recurrence_interval_weeks,
+  school:schools (id, name)
+`
+
+// SELECT de secours si la colonne recurrence_interval_weeks n'existe pas encore (BLOC 4 migration)
+const SELECT_NO_INTERVAL = `
+  id, teacher_id, school_id, jour_semaine, heure_debut, duree_minutes, libelle, notes, created_at,
   school:schools (id, name)
 `
 
 function mapSlot(row) {
   return {
-    id:            row.id,
-    teacherId:     row.teacher_id,
-    schoolId:      row.school_id,
-    schoolName:    row.school?.name ?? null,
-    jourSemaine:   row.jour_semaine,  // 0=Dim, 1=Lun … 6=Sam (JS Date.getDay())
-    heureDebut:    row.heure_debut,   // 'HH:MM'
-    dureeMinutes:  row.duree_minutes,
-    libelle:       row.libelle ?? '',
-    notes:         row.notes ?? null,
-    createdAt:     row.created_at,
+    id:                      row.id,
+    teacherId:               row.teacher_id,
+    schoolId:                row.school_id,
+    schoolName:              row.school?.name ?? null,
+    jourSemaine:             row.jour_semaine,  // 0=Dim, 1=Lun … 6=Sam (JS Date.getDay())
+    heureDebut:              row.heure_debut,   // 'HH:MM'
+    dureeMinutes:            row.duree_minutes,
+    libelle:                 row.libelle ?? '',
+    notes:                   row.notes ?? null,
+    createdAt:               row.created_at,
+    recurrenceIntervalWeeks: row.recurrence_interval_weeks ?? 1,
   }
 }
 
 /** Tous les créneaux réservés d'un prof (pour la grille de planning). */
 export async function fetchReservedSlots(teacherId) {
-  const { data, error } = await supabase
+  const tryFetch = async (select) => supabase
     .from('school_reserved_slots')
-    .select(SELECT)
+    .select(select)
     .eq('teacher_id', teacherId)
     .order('jour_semaine')
     .order('heure_debut')
+
+  let { data, error } = await tryFetch(SELECT)
+  if (error?.code === '42703' && error.message.includes('recurrence_interval_weeks')) {
+    // Colonne absente : BLOC 4 migration non encore exécuté — fallback sans la colonne
+    ;({ data, error } = await tryFetch(SELECT_NO_INTERVAL))
+  }
   if (error) throw new Error(error.message)
   return (data ?? []).map(mapSlot)
 }
@@ -50,17 +64,18 @@ export async function fetchReservedSlotsForSchool(schoolId) {
 }
 
 /** Crée un créneau réservé. */
-export async function createReservedSlot({ teacherId, schoolId, jourSemaine, heureDebut, dureeMinutes, libelle, notes }) {
+export async function createReservedSlot({ teacherId, schoolId, jourSemaine, heureDebut, dureeMinutes, libelle, notes, recurrenceIntervalWeeks = 1 }) {
   const { data, error } = await supabase
     .from('school_reserved_slots')
     .insert({
-      teacher_id:    teacherId,
-      school_id:     schoolId,
-      jour_semaine:  jourSemaine,
-      heure_debut:   heureDebut,
-      duree_minutes: dureeMinutes,
-      libelle:       libelle ?? '',
-      notes:         notes ?? null,
+      teacher_id:               teacherId,
+      school_id:                schoolId,
+      jour_semaine:             jourSemaine,
+      heure_debut:              heureDebut,
+      duree_minutes:            dureeMinutes,
+      libelle:                  libelle ?? '',
+      notes:                    notes ?? null,
+      recurrence_interval_weeks: Math.max(1, recurrenceIntervalWeeks),
     })
     .select(SELECT)
     .single()
@@ -68,16 +83,20 @@ export async function createReservedSlot({ teacherId, schoolId, jourSemaine, heu
   return mapSlot(data)
 }
 
-/** Met à jour un créneau réservé depuis la grille Planning (T7). */
-export async function updateReservedSlot({ id, jourSemaine, heureDebut, dureeMinutes, libelle }) {
+/** Met à jour un créneau réservé depuis la grille Planning. */
+export async function updateReservedSlot({ id, jourSemaine, heureDebut, dureeMinutes, libelle, recurrenceIntervalWeeks }) {
+  const patch = {
+    jour_semaine:  jourSemaine,
+    heure_debut:   heureDebut,
+    duree_minutes: dureeMinutes,
+    libelle:       libelle ?? '',
+  }
+  if (recurrenceIntervalWeeks !== undefined) {
+    patch.recurrence_interval_weeks = Math.max(1, recurrenceIntervalWeeks)
+  }
   const { error } = await supabase
     .from('school_reserved_slots')
-    .update({
-      jour_semaine:  jourSemaine,
-      heure_debut:   heureDebut,
-      duree_minutes: dureeMinutes,
-      libelle:       libelle ?? '',
-    })
+    .update(patch)
     .eq('id', id)
   if (error) throw new Error(error.message)
 }

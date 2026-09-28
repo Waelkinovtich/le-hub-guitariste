@@ -1,6 +1,6 @@
 import { useRef, useState, useMemo, useCallback, useEffect } from 'react'
-import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X, Scissors, AlertTriangle, Edit2 } from 'lucide-react'
-import { updateLesson } from '../services/lessons'
+import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X, Scissors, AlertTriangle, Edit2, Repeat2 } from 'lucide-react'
+import { updateLesson, updateRecurrenceInterval, updateGroupSessionRecurrence } from '../services/lessons'
 import { getSchoolColor, SCHOOL_COLOR_DEFAULT } from '../utils/schoolColors'
 import DeleteLessonModal from './DeleteLessonModal'
 import { supabase } from '../lib/supabase'
@@ -112,6 +112,14 @@ function findOverlappingLesson(lessonsByDay, excludeId, targetDay, targetStart, 
  *   type='hidden' → le créneau est supprimé pour cette date
  *   type='moved'  → le créneau apparaît avec un nouvel horaire/durée
  */
+// Lundi de référence pour calculer l'index de semaine (semaine 0 = semaine du 2024-01-01)
+const RECURRENCE_EPOCH_MS = new Date('2024-01-01T00:00:00Z').getTime()
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000
+
+function isoToWeekIndex(isoDate) {
+  return Math.floor((new Date(isoDate + 'T12:00:00Z').getTime() - RECURRENCE_EPOCH_MS) / MS_PER_WEEK)
+}
+
 function indexReservedByDay(reservedSlots, weekDays, exceptions = []) {
   // Index exceptions par "slotId|date" pour lookup O(1)
   const exMap = {}
@@ -121,9 +129,13 @@ function indexReservedByDay(reservedSlots, weekDays, exceptions = []) {
   const map = {}
   for (const day of weekDays) {
     const jourJs = new Date(day.iso + 'T12:00:00').getDay()  // évite les ambiguïtés de fuseau
+    const weekIdx = isoToWeekIndex(day.iso)
     const daySlots = []
     for (const s of (reservedSlots ?? [])) {
       if (s.jourSemaine !== jourJs) continue
+      // Filtre par intervalle de récurrence : semaine visible seulement si index % interval === 0
+      const interval = s.recurrenceIntervalWeeks ?? 1
+      if (interval > 1 && weekIdx % interval !== 0) continue
       const ex = exMap[`${s.id}|${day.iso}`]
       if (!ex) {
         daySlots.push(s)
@@ -326,6 +338,206 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
   )
 }
 
+// ─── Panneau de modification de l'intervalle de récurrence (T1/T2) ───────────
+//
+// Affiché quand l'utilisateur clique sur l'icône "Répétition" d'une tuile de
+// cours récurrent. Permet de changer la fréquence (toutes les N semaines) pour
+// les occurrences FUTURES uniquement. Les occurrences passées ne sont jamais
+// touchées.
+//
+// Limites documentées : supprime les occurrences futures du groupe et recrée
+// à partir de la prochaine date >= aujourd'hui. Les modifications manuelles
+// sur des occurrences futures (durée, notes, etc.) sont perdues lors du
+// changement d'intervalle.
+//
+const INTERVAL_OPTIONS = [
+  { value: 1, label: 'Toutes les semaines' },
+  { value: 2, label: 'Une semaine sur deux' },
+  { value: 3, label: 'Toutes les 3 semaines' },
+  { value: 4, label: 'Toutes les 4 semaines' },
+]
+
+function RecurrenceIntervalPanel({ lesson, onClose, onSaved }) {
+  const recurrenceGroup = lesson.recurrence_group || lesson.recurrenceGroup || null
+  // Lit l'intervalle actuel pour pré-sélectionner le bon choix
+  const currentInterval = lesson.recurrenceIntervalWeeks ?? lesson.recurrence_interval_weeks ?? 1
+  const [selected, setSelected] = useState(currentInterval)
+  const [saving,   setSaving]   = useState(false)
+  const [error,    setError]    = useState('')
+
+  const handleSave = async () => {
+    if (selected === currentInterval) { onClose(); return }
+    if (!recurrenceGroup) { setError('Cours non récurrent — impossible de modifier la fréquence.'); return }
+    setSaving(true); setError('')
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      // Prochaine occurrence >= aujourd'hui (la date du cours courant ou aujourd'hui si passée)
+      const fromDate = lesson.lessonDate >= today ? lesson.lessonDate : today
+      // Fin de l'année scolaire courante (30 juin de l'année suivante si on est après juillet)
+      const now = new Date()
+      const endYear = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear()
+      const endDate = `${endYear}-06-30`
+
+      await updateRecurrenceInterval({
+        groupId:       recurrenceGroup,
+        fromDate,
+        endDate,
+        intervalWeeks: selected,
+        template: {
+          teacherId:      lesson.teacherId ?? lesson.teacher_id,
+          studentId:      lesson._studentId ?? lesson.studentId ?? lesson.student_id,
+          lessonTime:     lesson.lessonTime ?? lesson.lesson_time,
+          durationMinutes: lesson.durationMinutes ?? lesson.duration_minutes,
+          topic:          lesson.topic ?? 'Cours de guitare',
+          notes:          lesson.notes ?? null,
+          contextType:    lesson.contextType ?? lesson.context_type ?? null,
+        },
+      })
+      onSaved(selected)
+    } catch (e) {
+      setError(e.message)
+      setSaving(false)
+    }
+  }
+
+  const dateLabel = lesson.lessonDate
+    ? new Date(lesson.lessonDate + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+    : ''
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button type="button" className="absolute inset-0 bg-void/80 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-sm glass-panel rounded-2xl p-6 shadow-2xl border border-border">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Repeat2 className="w-4 h-4 text-muted" />
+            Fréquence de répétition
+          </h2>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-sm text-muted-foreground mb-5">
+          {lesson.studentName} — les occurrences futures sont régénérées à partir du {dateLabel}. Les cours passés ne sont pas modifiés.
+        </p>
+        <div className="space-y-2 mb-5">
+          {INTERVAL_OPTIONS.map(({ value, label }) => (
+            <button key={value} type="button" onClick={() => setSelected(value)}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left ${
+                selected === value
+                  ? 'guitar-gradient text-white border-transparent'
+                  : 'border-border-subtle hover:bg-surface-overlay'
+              }`}>
+              <Repeat2 className="w-4 h-4 shrink-0" />
+              <span className="text-sm font-medium">{label}</span>
+              {value === currentInterval && selected !== value && (
+                <span className="ml-auto text-xs text-muted-foreground">actuel</span>
+              )}
+            </button>
+          ))}
+        </div>
+        {error && <p className="text-xs text-guitar-400 bg-guitar-600/10 border border-guitar-600/20 rounded-lg px-3 py-2 mb-3">{error}</p>}
+        <div className="flex gap-2">
+          <button type="button" onClick={handleSave} disabled={saving}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-40">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Repeat2 className="w-4 h-4" />}
+            Appliquer
+          </button>
+          <button type="button" onClick={onClose}
+            className="px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">
+            Annuler
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Panneau de fréquence de répétition pour les séances de groupe ───────────
+// Analogue à RecurrenceIntervalPanel mais opère sur group_sessions via
+// updateGroupSessionRecurrence (table group_sessions, champ recurrence_series_id).
+function GroupRecurrenceIntervalPanel({ lesson, onClose, onSaved }) {
+  const currentInterval = lesson.recurrenceIntervalWeeks ?? 1
+  const [selected, setSelected] = useState(currentInterval)
+  const [saving,   setSaving]   = useState(false)
+  const [error,    setError]    = useState('')
+
+  const handleSave = async () => {
+    if (selected === currentInterval) { onClose(); return }
+    if (!lesson.recurrenceSeriesId) { setError('Pas de série récurrente associée.'); return }
+    setSaving(true); setError('')
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      const fromDate = lesson.lessonDate >= today ? lesson.lessonDate : today
+      const now = new Date()
+      const endYear = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear()
+      await updateGroupSessionRecurrence({
+        seriesId:        lesson.recurrenceSeriesId,
+        groupId:         lesson._groupId,
+        fromDate,
+        endDate:         `${endYear}-06-30`,
+        sessionTime:     lesson.lessonTime,
+        durationMinutes: lesson.durationMinutes,
+        intervalWeeks:   selected,
+      })
+      onSaved(selected)
+    } catch (e) {
+      setError(e.message)
+      setSaving(false)
+    }
+  }
+
+  const dateLabel = lesson.lessonDate
+    ? new Date(lesson.lessonDate + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+    : ''
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button type="button" className="absolute inset-0 bg-void/80 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-sm glass-panel rounded-2xl p-6 shadow-2xl border border-border">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Repeat2 className="w-4 h-4 text-muted" />
+            Fréquence du cours de groupe
+          </h2>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-sm text-muted-foreground mb-5">
+          {lesson.studentName} — les séances futures sont régénérées à partir du {dateLabel}.
+        </p>
+        <div className="space-y-2 mb-5">
+          {INTERVAL_OPTIONS.map(({ value, label }) => (
+            <button key={value} type="button" onClick={() => setSelected(value)}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left ${
+                selected === value ? 'guitar-gradient text-white border-transparent' : 'border-border-subtle hover:bg-surface-overlay'
+              }`}>
+              <Repeat2 className="w-4 h-4 shrink-0" />
+              <span className="text-sm font-medium">{label}</span>
+              {value === currentInterval && selected !== value && (
+                <span className="ml-auto text-xs text-muted-foreground">actuel</span>
+              )}
+            </button>
+          ))}
+        </div>
+        {error && <p className="text-xs text-guitar-400 bg-guitar-600/10 border border-guitar-600/20 rounded-lg px-3 py-2 mb-3">{error}</p>}
+        <div className="flex gap-2">
+          <button type="button" onClick={handleSave} disabled={saving}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-40">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Repeat2 className="w-4 h-4" />}
+            Appliquer
+          </button>
+          <button type="button" onClick={onClose}
+            className="px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">
+            Annuler
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Panneau d'édition d'occurrence de créneau réservé (T2) ──────────────────
 // Affiché quand l'utilisateur clique sur un créneau réservé dans le planning.
 // Propose deux options : masquer / déplacer pour CETTE DATE uniquement,
@@ -451,18 +663,19 @@ const JOURS_SEMAINE = [
 ]
 
 function ReservedSlotEditPanel({ slot, onClose, onSaved }) {
-  const [jourSemaine,   setJourSemaine]   = useState(slot.jourSemaine)
-  const [heureDebut,    setHeureDebut]    = useState(slot.heureDebut)
-  const [dureeMinutes,  setDureeMinutes]  = useState(slot.dureeMinutes)
-  const [libelle,       setLibelle]       = useState(slot.libelle ?? '')
-  const [saving,        setSaving]        = useState(false)
-  const [error,         setError]         = useState(null)
+  const [jourSemaine,            setJourSemaine]            = useState(slot.jourSemaine)
+  const [heureDebut,             setHeureDebut]             = useState(slot.heureDebut)
+  const [dureeMinutes,           setDureeMinutes]           = useState(slot.dureeMinutes)
+  const [libelle,                setLibelle]                = useState(slot.libelle ?? '')
+  const [recurrenceIntervalWeeks, setRecurrenceIntervalWeeks] = useState(slot.recurrenceIntervalWeeks ?? 1)
+  const [saving,                 setSaving]                 = useState(false)
+  const [error,                  setError]                  = useState(null)
 
   async function handleSave() {
     setSaving(true)
     setError(null)
     try {
-      await onSaved({ id: slot.id, jourSemaine, heureDebut, dureeMinutes: Number(dureeMinutes), libelle })
+      await onSaved({ id: slot.id, jourSemaine, heureDebut, dureeMinutes: Number(dureeMinutes), libelle, recurrenceIntervalWeeks: Number(recurrenceIntervalWeeks) })
     } catch (e) {
       setError(e.message ?? 'Erreur lors de la sauvegarde')
       setSaving(false)
@@ -528,6 +741,19 @@ function ReservedSlotEditPanel({ slot, onClose, onSaved }) {
                 ))}
               </select>
             </div>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Fréquence</label>
+            <select
+              value={recurrenceIntervalWeeks}
+              onChange={(e) => setRecurrenceIntervalWeeks(Number(e.target.value))}
+              className="w-full px-3 py-2 rounded-xl border border-border-subtle bg-surface-overlay text-sm focus:outline-none focus:ring-2 focus:ring-guitar-500/40"
+            >
+              <option value={1}>Chaque semaine</option>
+              <option value={2}>Toutes les 2 semaines</option>
+              <option value={3}>Toutes les 3 semaines</option>
+              <option value={4}>Toutes les 4 semaines</option>
+            </select>
           </div>
           {error && <p className="text-xs text-red-400">{error}</p>}
         </div>
@@ -654,7 +880,10 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
   // déjà utilisé sur Émargement — même service deleteLesson, aucune logique dupliquée)
   const [deleteLessonItem,   setDeleteLessonItem]   = useState(null)
   // Proposition dont on modifie la durée depuis la grille (ouvre DurationEditPanel)
-  const [durationEditLesson, setDurationEditLesson] = useState(null)
+  const [durationEditLesson,    setDurationEditLesson]    = useState(null)
+  const [groupIntervalEditLesson, setGroupIntervalEditLesson] = useState(null)
+  // Panneau de modification de fréquence de récurrence (T2)
+  const [intervalEditLesson, setIntervalEditLesson] = useState(null)
   // T2 — Créneau réservé en cours d'édition : { slot, date } (date = ISO de l'occurrence cliquée)
   const [editingReservedSlot, setEditingReservedSlot] = useState(null)
   // T2 — Panneau édition permanente (s'ouvre depuis ReservedSlotOccurrencePanel)
@@ -1405,6 +1634,38 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         </button>
                       )}
 
+                      {/* Bouton fréquence de récurrence — uniquement sur les cours récurrents confirmés */}
+                      {isConfirme && (lesson.recurrenceGroup || lesson.recurrence_group) && !estSelectablePourGroupe && (
+                        <button
+                          type="button"
+                          aria-label="Modifier la fréquence de répétition"
+                          title="Modifier la fréquence de répétition"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); setIntervalEditLesson(lesson) }}
+                          className="absolute top-0 left-6 z-20 p-0.5 rounded-br-md bg-void/50 text-white/80
+                                     opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity
+                                     focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
+                        >
+                          <Repeat2 className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      {/* Modifier la fréquence — cours de groupe avec série récurrente */}
+                      {isGroupe && lesson.recurrenceSeriesId && (
+                        <button
+                          type="button"
+                          aria-label="Modifier la fréquence du cours de groupe"
+                          title="Modifier la fréquence du cours de groupe"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); setGroupIntervalEditLesson(lesson) }}
+                          className="absolute top-0 left-6 z-20 p-0.5 rounded-br-md bg-void/50 text-white/80
+                                     opacity-0 group-hover:opacity-100 hover:text-emerald-400 transition-opacity
+                                     focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                        >
+                          <Repeat2 className="w-3 h-3" />
+                        </button>
+                      )}
+
                       {/* Dégrouper — uniquement sur les cours de groupe */}
                       {isGroupe && onDegrouper && (
                         <button
@@ -1420,6 +1681,33 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           <Scissors className="w-3 h-3" />
                         </button>
                       )}
+
+                      {/* Indicateur de statut d'émargement — toujours visible sur les cours confirmés émargés.
+                          Absent pour planifie (non émargé) et pour les tuiles envisage/groupe/ensemble. */}
+                      {isConfirme && lesson.status && lesson.status !== 'planifie' && (() => {
+                        const EMARGEMENT_DOTS = {
+                          present:     { bg: '#22c55e', title: 'Présent' },
+                          absent:      { bg: '#ef4444', title: 'Absent' },
+                          excuse:      { bg: '#3b82f6', title: 'Absent excusé' },
+                          annule_prof: { bg: '#f97316', title: 'Annulé (prof)' },
+                          rattrape:    { bg: '#a855f7', title: 'Cours rattrapé' },
+                        }
+                        const dot = EMARGEMENT_DOTS[lesson.status]
+                        if (!dot) return null
+                        return (
+                          <div
+                            aria-label={dot.title}
+                            title={dot.title}
+                            style={{
+                              position: 'absolute', bottom: 3, right: 3, zIndex: 15,
+                              width: 6, height: 6, borderRadius: '50%',
+                              background: dot.bg,
+                              boxShadow: `0 0 0 1px rgba(0,0,0,0.3)`,
+                              pointerEvents: 'none',
+                            }}
+                          />
+                        )
+                      })()}
                     </div>
                   )
                   })
@@ -1442,6 +1730,42 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
             // Le parent recalcule effective_duration_minutes et relance computeAllProposals
             onDurationChange?.(durationEditLesson, newMinutes)
             setDurationEditLesson(null)
+          }}
+        />
+      )}
+
+      {/* T2 — Panneau de fréquence de récurrence */}
+      {intervalEditLesson && (
+        <RecurrenceIntervalPanel
+          lesson={intervalEditLesson}
+          onClose={() => setIntervalEditLesson(null)}
+          onSaved={(newInterval) => {
+            // Mise à jour optimiste locale : toutes les occurrences du groupe voient le nouvel intervalle
+            const grp = intervalEditLesson.recurrenceGroup || intervalEditLesson.recurrence_group
+            setLocalLessons((prev) => prev.map((l) =>
+              (l.recurrenceGroup === grp || l.recurrence_group === grp)
+                ? { ...l, recurrenceIntervalWeeks: newInterval }
+                : l
+            ))
+            onDurationChange?.(intervalEditLesson, intervalEditLesson.durationMinutes)
+            setIntervalEditLesson(null)
+          }}
+        />
+      )}
+
+      {/* Fréquence de répétition — cours de groupe */}
+      {groupIntervalEditLesson && (
+        <GroupRecurrenceIntervalPanel
+          lesson={groupIntervalEditLesson}
+          onClose={() => setGroupIntervalEditLesson(null)}
+          onSaved={(newInterval) => {
+            setLocalLessons((prev) => prev.map((l) =>
+              l.recurrenceSeriesId === groupIntervalEditLesson.recurrenceSeriesId
+                ? { ...l, recurrenceIntervalWeeks: newInterval }
+                : l
+            ))
+            onDurationChange?.(groupIntervalEditLesson, groupIntervalEditLesson.durationMinutes)
+            setGroupIntervalEditLesson(null)
           }}
         />
       )}

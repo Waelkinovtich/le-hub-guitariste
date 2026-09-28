@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Suspense, lazy } from 'react'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { PeriodProvider } from './context/PeriodContext'
+import { RefreshProvider } from './contexts/RefreshContext'
+import { UndoRedoProvider } from './contexts/UndoRedoContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
 // LoginPage chargé de façon synchrone : c'est la première page rendue,
@@ -170,10 +172,14 @@ export default function App() {
   return (
     <AuthProvider>
       <PeriodProvider>
-        <BrowserRouter>
-          <ThemeInit />
-          <AppShell />
-        </BrowserRouter>
+        <RefreshProvider>
+          <UndoRedoProvider>
+            <BrowserRouter>
+              <ThemeInit />
+              <AppShell />
+            </BrowserRouter>
+          </UndoRedoProvider>
+        </RefreshProvider>
       </PeriodProvider>
     </AuthProvider>
   )
