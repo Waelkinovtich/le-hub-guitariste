@@ -463,7 +463,9 @@ function SlotAssignPanel({ response, onConfirmed, onClose }) {
       const teacherId = await getTeacherId()
       if (!teacherId) throw new Error('Impossible de récupérer le compte enseignant.')
       const startTime = parseStartTime(selection.slots[0])
-      const count = await createRecurringLessons(teacherId, response.student_id, selection.day, startTime, totalMinutes)
+      const studentId = response.matched_student_id ?? response.student_id ?? null
+      if (!studentId) throw new Error(`Réponse ${response.id} : aucun identifiant élève exploitable — impossible de créer les cours.`)
+      const count = await createRecurringLessons(teacherId, studentId, selection.day, startTime, totalMinutes)
       const { error: updErr } = await supabase
         .from('survey_responses')
         .update({ status: 'confirme', assigned_day: selection.day, assigned_time: parseStartTime(selection.slots[0]) })
@@ -1729,16 +1731,21 @@ export default function SurveyResultsPage() {
 
   const handleReassign = async (r) => {
     const today = new Date().toISOString().slice(0, 10)
+    const studentId = r.matched_student_id ?? r.student_id ?? null
     await supabase
       .from('survey_responses')
       .update({ status: 'attente', assigned_day: null, assigned_time: null })
       .eq('id', r.id)
-    await supabase
-      .from('lessons')
-      .delete()
-      .eq('student_id', r.student_id)
-      .gte('lesson_date', today)
-      .lte('lesson_date', '2027-06-30')
+    if (!studentId) {
+      alert(`Réponse ${r.id} : aucun identifiant élève exploitable — les cours futurs n'ont pas pu être supprimés.`)
+    } else {
+      await supabase
+        .from('lessons')
+        .delete()
+        .eq('student_id', studentId)
+        .gte('lesson_date', today)
+        .lte('lesson_date', '2027-06-30')
+    }
     setResponses(prev => prev.map(x => x.id === r.id ? { ...x, status: 'attente' } : x))
     setOpenPanelId(r.id)
   }

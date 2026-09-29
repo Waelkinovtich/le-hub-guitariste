@@ -7,7 +7,7 @@ import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState
 import { getRaisonLabel } from '../../utils/lessonStatus'
 import { minutesToLabel } from '../../utils/format'
 import ScoreBadge from '../../components/ScoreBadge'
-import { RotateCcw, CalendarDays, Search, Check, Loader2, AlertCircle, X } from 'lucide-react'
+import { RotateCcw, CalendarDays, Search, Check, Loader2, AlertCircle, X, ChevronDown, Ban } from 'lucide-react'
 import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
 import { supabase } from '../../lib/supabase'
 import { computeProposals } from '../../utils/scoringCreneaux'
@@ -298,6 +298,9 @@ export default function RattrapagePage() {
   const [openPanelId, setOpenPanelId] = useState(null)
   // Id du cours dont l'annulation de rattrapage est en cours
   const [cancellingRattrapageId, setCancellingRattrapageId] = useState(null)
+  const [abandonningId, setAbandonningId] = useState(null)
+  const [rétablissantId, setRétablissantId] = useState(null)
+  const [abandonnéesOuvertes, setAbandonnéesOuvertes] = useState(false)
 
   const zone = user?.schoolZone ?? 'B'
 
@@ -313,7 +316,8 @@ export default function RattrapagePage() {
     // lessonType (type global de l'élève) OU contextType (contexte spécifique du cours)
     // peuvent signaler un cours CESU, notamment pour les élèves à double casquette.
     // cancelReason 'rattrapage_annule' = cours de rattrapage supprimé — ne compte pas comme "à rattraper"
-    const annulés   = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu' && l.contextType !== 'cesu' && l.cancelReason !== 'rattrapage_annule')
+    // cancelReason 'rattrapage_abandonne' = cours abandonné explicitement — sorti du compteur
+    const annulés   = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu' && l.contextType !== 'cesu' && l.cancelReason !== 'rattrapage_annule' && l.cancelReason !== 'rattrapage_abandonne')
     const rattrapés = all.filter((l) => l.status === 'rattrape'    && l.lessonType !== 'cesu' && l.contextType !== 'cesu')
 
     let totalAnnulé  = 0
@@ -381,6 +385,42 @@ export default function RattrapagePage() {
       alert('Erreur : ' + e.message)
     } finally {
       setCancellingRattrapageId(null)
+    }
+  }, [reload])
+
+  // Abandonne définitivement un cours : cancel_reason='rattrapage_abandonne', statut inchangé (annule_prof).
+  // Le cours disparaît du compteur et de la liste "à rattraper" sans être supprimé.
+  const handleAbandonnerRattrapage = useCallback(async (lesson) => {
+    if (!window.confirm(`Abandonner définitivement la séance du ${lesson.dateLabel} pour ${lesson.studentName} ?\nElle sortira de la liste mais pourra être rétablie.`)) return
+    setAbandonningId(lesson.id)
+    try {
+      const { error } = await supabase
+        .from('lessons')
+        .update({ cancel_reason: 'rattrapage_abandonne' })
+        .eq('id', lesson.id)
+      if (error) throw new Error(error.message)
+      reload()
+    } catch (e) {
+      alert(`Erreur : ${e.message}`)
+    } finally {
+      setAbandonningId(null)
+    }
+  }, [reload])
+
+  // Rétablit un cours abandonné : efface cancel_reason pour qu'il réapparaisse dans "à rattraper".
+  const handleRétablirRattrapage = useCallback(async (lesson) => {
+    setRétablissantId(lesson.id)
+    try {
+      const { error } = await supabase
+        .from('lessons')
+        .update({ cancel_reason: null })
+        .eq('id', lesson.id)
+      if (error) throw new Error(error.message)
+      reload()
+    } catch (e) {
+      alert(`Erreur : ${e.message}`)
+    } finally {
+      setRétablissantId(null)
     }
   }, [reload])
 
@@ -473,7 +513,7 @@ export default function RattrapagePage() {
             <section>
               <h2 className="text-lg font-semibold mb-3">Détail des cours annulés</h2>
               <div className="space-y-2">
-                {(lessons ?? []).filter((l) => l.cancelReason !== 'rattrapage_annule').map((l) => {
+                {(lessons ?? []).filter((l) => l.cancelReason !== 'rattrapage_annule' && l.cancelReason !== 'rattrapage_abandonne').map((l) => {
                   const raison     = getRaisonLabel(l.cancelReason)
                   const isPanelOpen = openPanelId === l.id
                   // Un cours avec rattrapage_de_lesson_id est déjà rattrapé
@@ -504,25 +544,39 @@ export default function RattrapagePage() {
                                   type="button"
                                   disabled={cancellingRattrapageId === l.id}
                                   onClick={() => handleAnnulerRattrapage(l)}
-                                  title="Annuler ce rattrapage"
+                                  title="Annuler le rattrapage planifié — la séance revient dans la liste à rattraper"
                                   className="flex items-center gap-1 px-2 py-1 rounded-lg border border-border-subtle text-xs text-muted-foreground hover:text-guitar-400 hover:border-guitar-600/40 transition-colors disabled:opacity-40"
                                 >
                                   {cancellingRattrapageId === l.id
                                     ? <Loader2 className="w-3 h-3 animate-spin" />
                                     : <X className="w-3 h-3" />}
-                                  Annuler
+                                  Annuler le rattrapage planifié
                                 </button>
                               )}
                             </div>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => setOpenPanelId(isPanelOpen ? null : l.id)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-colors"
-                            >
-                              <Search className="w-3.5 h-3.5" />
-                              Chercher un créneau
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setOpenPanelId(isPanelOpen ? null : l.id)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-colors"
+                              >
+                                <Search className="w-3.5 h-3.5" />
+                                Chercher un créneau
+                              </button>
+                              <button
+                                type="button"
+                                disabled={abandonningId === l.id}
+                                onClick={() => handleAbandonnerRattrapage(l)}
+                                title="Abandonner cette séance — elle sort de la liste sans être supprimée"
+                                className="flex items-center gap-1 px-2 py-1.5 rounded-lg border border-border-subtle text-xs text-muted-foreground hover:text-red-400 hover:border-red-500/40 transition-colors disabled:opacity-40"
+                              >
+                                {abandonningId === l.id
+                                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                                  : <Ban className="w-3 h-3" />}
+                                Abandonner cette séance
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -543,6 +597,52 @@ export default function RattrapagePage() {
               </div>
             </section>
           )}
+
+          {/* Section Abandonnées — séances sorties de la liste via "Abandonner cette séance" */}
+          {(() => {
+            const abandonnées = (lessons ?? []).filter((l) => l.cancelReason === 'rattrapage_abandonne')
+            if (abandonnées.length === 0) return null
+            return (
+              <section className="mt-6">
+                <button
+                  type="button"
+                  onClick={() => setAbandonnéesOuvertes((o) => !o)}
+                  className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors mb-2"
+                >
+                  <ChevronDown className={`w-4 h-4 transition-transform ${abandonnéesOuvertes ? '' : '-rotate-90'}`} />
+                  Séances abandonnées ({abandonnées.length})
+                </button>
+                {abandonnéesOuvertes && (
+                  <div className="space-y-2">
+                    {abandonnées.map((l) => (
+                      <div key={l.id} className="glass-panel rounded-xl p-4 opacity-60">
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="min-w-0">
+                            <p className="font-medium">{l.studentName}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {l.dateLabel} {l.timeLabel} — {l.durationMinutes} min
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={rétablissantId === l.id}
+                            onClick={() => handleRétablirRattrapage(l)}
+                            title="Rétablir — la séance revient dans la liste à rattraper"
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-40 shrink-0"
+                          >
+                            {rétablissantId === l.id
+                              ? <Loader2 className="w-3 h-3 animate-spin" />
+                              : <RotateCcw className="w-3 h-3" />}
+                            Rétablir
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )
+          })()}
         </>
       )}
     </div>

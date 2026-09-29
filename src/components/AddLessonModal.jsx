@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { X, Loader2, UserPlus, ChevronLeft } from 'lucide-react'
+import { X, Loader2, UserPlus, ChevronLeft, Navigation } from 'lucide-react'
 import { createLesson, updateLesson, createRecurringLessons } from '../services/lessons'
 import { fetchTeacherStudents, createStudent, fetchStudentContexts } from '../services/students'
 import { fetchTeacherSchools } from '../services/schools'
@@ -150,9 +150,20 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated }
       <div className="relative w-full max-w-lg glass-panel rounded-2xl p-6 shadow-2xl border border-border overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-semibold">{isEdit ? 'Modifier' : 'Ajouter'} un cours</h2>
-          <button type="button" onClick={onClose} className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {isEdit && lesson?._gpsUrl && (
+              <a href={lesson._gpsUrl} target="_blank" rel="noopener noreferrer"
+                 aria-label={`Naviguer vers ${lesson.schoolName ?? "l'école"}`}
+                 title={`Naviguer vers ${lesson.schoolName ?? "l'école"}`}
+                 className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-sm text-guitar-400 hover:text-guitar-300 hover:bg-surface-overlay transition-colors">
+                <Navigation className="w-4 h-4" />
+                GPS
+              </a>
+            )}
+            <button type="button" onClick={onClose} className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* ── Sous-formulaire création élève ──────────────────────────────── */}

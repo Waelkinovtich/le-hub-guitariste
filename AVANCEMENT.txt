@@ -1,0 +1,299 @@
+AVANCEMENT — Session globale (tâches 1 à 12)
+Mis à jour : après tâche 2
+
+═══════════════════════════════════════════════════════════
+TÂCHE 1 — Émargement en un geste (Planning + Émargement)    TERMINÉE
+═══════════════════════════════════════════════════════════
+Fichiers créés :
+  src/components/AttendanceQuickActions.jsx   (nouveau)
+Fichiers modifiés :
+  src/components/WeekGridPlanning.jsx         (+onQuickPresent prop, toujours visible)
+  src/pages/teacher/PlanningPage.jsx          (+lessonStatusOverrides, +handleQuickPresent, +pushAction sur modal)
+  src/pages/teacher/EmargementPage.jsx        (AttendanceQuickActions, pushAction sur modal)
+
+Ce qui est fait :
+- Composant AttendanceQuickActions : variant="tile" (tuile, toujours visible, compact)
+  et variant="row" (ligne Émargement, min 44 px).
+- ✓ Présent : un geste, pas de modale. ✗ / badge : ouvre LessonStatusModal.
+- LESSON_STATUSES inclut déjà "planifie" = « Remettre à non émargé ».
+- pushAction branché sur handleQuickPresent ET sur onUpdated du LessonStatusModal (les deux pages).
+- Overrides optimistes dans PlanningPage (lessonStatusOverrides) — pas de reload après émargement.
+- Filtre "non émargés" et filtre de période fonctionnent (basés sur lessonStatusOverrides ?? lesson.status).
+- Boutons hover-only WeekGridPlanning remplacés par AttendanceQuickActions always-visible.
+- Limitation documentée : tuiles 15 min → zone tactile ~26px (pas 44px, impossible sans agrandir la tuile).
+
+Ce qui reste pour cette tâche : rien.
+
+═══════════════════════════════════════════════════════════
+TÂCHE 2 — Émargement des groupes, détail par membre         TERMINÉE
+═══════════════════════════════════════════════════════════
+Fichiers créés :
+  src/components/GroupMembresPanel.jsx        (extrait d'EmargementPage, ajout "Tout le monde présent")
+  src/components/GroupAttendanceModal.jsx     (modal wrapper pour PlanningPage)
+Fichiers modifiés :
+  src/components/WeekGridPlanning.jsx         (+groupAttendanceSummary prop, badge x/y sur tuile groupe)
+  src/pages/teacher/PlanningPage.jsx          (+groupLesson state, +groupAttendanceSummary state,
+                                               onEmargement dispatch vers GroupAttendanceModal si tuile groupe)
+  src/pages/teacher/EmargementPage.jsx        (suppression définition locale GroupMembresPanel,
+                                               import depuis composant partagé)
+
+Ce qui est fait :
+- Clic sur icône tuile groupe → ouvre GroupAttendanceModal (avant : LessonStatusModal = silencieux)
+- GroupAttendanceModal : overlay modal, nom du groupe, date, liste membres avec boutons Présent/Absent/Excusé
+- "Tout le monde présent" : un geste pour émarger tous les membres comme présents
+- Badge x/y sur tuile groupe (ex: 3/5) — vert si tout le monde présent, orange sinon
+  → visible dès qu'au moins un émargement a été fait dans la session
+- GroupMembresPanel partagé entre PlanningPage (via modal) et EmargementPage (table pliante)
+- onSummaryChange : callback { present, total } → remonte vers PlanningPage → badge tuile mis à jour
+- Build ✓
+
+SQL nécessaire (BLOC T2 dans migration-session-globale.sql) :
+  UNIQUE NULLS NOT DISTINCT (session_id, student_id)  sur group_session_attendance
+  UNIQUE NULLS NOT DISTINCT (session_id, participant_id) sur group_session_attendance
+  → Sans ces contraintes, l'upsert échoue avec erreur 42P10.
+  → À exécuter AVANT d'utiliser la fonctionnalité.
+
+Ce qui reste pour cette tâche : rien (sous réserve d'exécution du BLOC T2 SQL).
+
+═══════════════════════════════════════════════════════════
+TÂCHE 3 — Ensemble musiques actuelles, émargement détaillé  TERMINÉE
+═══════════════════════════════════════════════════════════
+Fichiers modifiés :
+  src/services/lessons.js          (+ getOrCreateGroupSession)
+  src/services/reservedSlots.js    (+ groupId dans mapSlot + fallback SELECT)
+  src/components/GroupMembresPanel.jsx  (membres externes : free_*, participant_id)
+  src/components/WeekGridPlanning.jsx  (+ onEmargementReservedSlot prop, bouton sur bloc réservé lié)
+  src/pages/teacher/PlanningPage.jsx   (+ onEmargementReservedSlot handler, + gettingGroupSession guard)
+
+Ce qui est fait :
+- Membres externes (is_external, free_first_name, free_last_name, free_instrument) affichés dans
+  GroupMembresPanel — émargement via participant_id = group_member.id
+- reservedSlots.js passe groupId dans mapSlot (nullable avant BLOC T3 SQL)
+- Fallback SELECT si group_id absent de school_reserved_slots (migration non encore exécutée)
+- WeekGridPlanning : bouton ✓ (ClipboardCheck) en bas à droite du bloc hachuré si rs.groupId défini
+- PlanningPage : clic → getOrCreateGroupSession(groupId, date, heure, durée)
+  → si séance existe → récupère son id ; sinon → INSERT dans group_sessions → id
+  → ouvre GroupAttendanceModal avec la séance
+  → reload() pour afficher la tuile verte créée
+
+SQL nécessaire (BLOC T3 dans migration-session-globale.sql) :
+  ALTER TABLE school_reserved_slots ADD COLUMN group_id uuid REFERENCES music_groups(id) ON DELETE SET NULL
+  UPDATE school_reserved_slots SET group_id = 'eff36857-...' WHERE id = '6723bc36-...'
+  → Sans cette migration, groupId = null partout et le bouton n'apparaît pas (dégradé gracieux).
+
+Ce qui reste pour cette tâche : rien (sous réserve d'exécution du BLOC T3 SQL).
+
+═══════════════════════════════════════════════════════════
+TÂCHE 4 — Groupe Assistant → validation visible → Planning  TERMINÉE
+═══════════════════════════════════════════════════════════
+Fichiers modifiés :
+  src/pages/SchedulingAssistantPage.jsx
+
+Ce qui est fait :
+- handleGrouperConflits : le message de succès (groupSuccessMsg) existait déjà.
+  Ajout d'un bouton "Planning" (CalendarDays icon) dans ce bandeau vert.
+  Clic → navigate('/professeur/planning').
+- handleConfirmerGroupePropose : aucun retour visuel → ajout setGroupSuccessMsg
+  avec le même message + même bouton "Planning" (partagé via le rendu existant).
+- Le bouton ✕ reste pour fermer le bandeau sans naviguer.
+- Aucun SQL requis.
+- Build ✓
+
+═══════════════════════════════════════════════════════════
+TÂCHE 5 — Autres lectures student_id seul (resolveStudentId) TERMINÉE
+═══════════════════════════════════════════════════════════
+Fichier modifié :
+  src/pages/SchedulingAssistantPage.jsx (4 sites)
+
+Corrections :
+1. Ligne ~244 (bouton "Voir la fiche") : response.student_id → resolveStudentId(response)
+   → bouton désormais visible même si matched_student_id seul est renseigné
+
+2. Lignes ~897-912 (disponibilités membres de groupe) :
+   requête survey_responses.in('student_id',ids) → .or('student_id.in.(...),matched_student_id.in.(...)')
+   + forEach clé = resolveStudentId(r) au lieu de r.student_id
+   → un membre dont la réponse a student_id=NULL/matched_student_id=UUID est désormais trouvé
+
+3. Ligne ~944-959 (durées effectives au chargement initial) :
+   rawResponses.map(r => r.student_id) → .map(r => resolveStudentId(r))
+   ctxKey = r.student_id → resolveStudentId(r)
+
+4. Lignes ~2182-2196 (durées effectives à la restauration snapshot) :
+   même correction que (3) sur restoredRaw
+
+5. Ligne ~2007 (snapshot memberAvailabilities dans handleGrouperConflits) :
+   studentId: r.student_id ?? null → resolveStudentId(r)
+
+SurveyResultsPage.jsx : aucune occurrence du pattern — pas de modification.
+Aucun SQL requis. Build ✓.
+
+═══════════════════════════════════════════════════════════
+TÂCHE 6 — Rattrapage, "Annuler" à l'envers                 TERMINÉE
+═══════════════════════════════════════════════════════════
+Fichier modifié :
+  src/pages/teacher/RattrapagePage.jsx
+
+Problème corrigé :
+  handleAnnulerRattrapage ne touchait que le cours original (rattrape → annule_prof).
+  Le cours de rattrapage (newLesson.id) restait en status 'planifie' dans le Planning — cours fantôme.
+
+Solution (sans DELETE, additive) :
+  1. Si lesson.rattrapageDeLessonId est renseigné ET que ce cours est encore 'planifie' :
+     → UPDATE status='annule_prof', cancel_reason='rattrapage_annule'
+     (cancel_reason spéciale = marqueur "ce cours n'est pas à rattraper")
+  2. Cours original : status='annule_prof', rattrapage_de_lesson_id=NULL (efface le lien)
+  3. Filtre dans useMemo (stats) et dans le rendu (liste) : exclure cancelReason='rattrapage_annule'
+     → ce cours fantôme n'apparaît pas dans "À rattraper" ni dans le décompte
+
+Aucun SQL requis. Build ✓.
+
+═══════════════════════════════════════════════════════════
+TÂCHE 7 — Fonctionnalités diverses (7a–7f)               TERMINÉE
+═══════════════════════════════════════════════════════════
+Fichiers modifiés :
+  src/pages/SondagePage.jsx              (7a : texte italique sous instrument)
+  src/pages/EnsembleSondagePage.jsx      (7a : idem)
+  src/components/AddStudentModal.jsx     (7b : sections tuteur repliables)
+  src/components/WeekGridPlanning.jsx    (7c : prop buildGpsUrl + bouton GPS sur tuiles ;
+                                          7e : prop onEditEvent + rendu événements timed)
+  src/pages/teacher/PlanningPage.jsx     (7c : buildGpsUrl passé à WeekGrid ;
+                                          7e : champs heure/durée dans form, modal édition,
+                                               import updateSchoolEvent* + handleSaveEditEvent)
+  src/pages/teacher/EmargementPage.jsx   (7d : delete button restreint à isPlanifie)
+  src/services/schoolEvents.js           (7e : select start_time/duration_minutes + fallback,
+                                               createSchoolEvent accepte startTime/durationMinutes,
+                                               + updateSchoolEventOccurrence/Series, deleteSchoolEventOccurrence)
+  migration-session-globale.sql          (BLOC T7e : ALTER school_notes_events ADD start_time TIME, duration_minutes INT)
+
+Détail par sous-tâche :
+
+7a — Texte italique sous instrument :
+  - SondagePage.jsx StepLogistique : <p italic> après </Field> instrument
+  - EnsembleSondagePage.jsx StepInstrument : idem
+  - Texte : "Guitare folk et guitare électrique sont plus utilisées pour les musiques actuelles ;
+    la guitare nylon est plus utilisée pour la musique classique."
+
+7b — Sections Tuteur repliables :
+  - État : tuteur1Open/tuteur2Open — dépliés par défaut seulement si student.parent1Name/Phone/Email
+    (ou parent2*) est renseigné
+  - Titre section transformé en <button> avec ChevronDown (rotate si replié)
+  - Contenu dans {tuteur1Open && <div>…</div>}
+  - Aucune donnée effacée : les inputs existent toujours dans le DOM
+
+7c — Bouton GPS sur tuiles :
+  - WeekGridPlanning : nouveau prop buildGpsUrl (default null) + import Navigation
+  - Sur chaque tuile où lesson.schoolName est défini et buildGpsUrl retourne une URL :
+    <a href=... target="_blank"> en position absolute top-0 right-0, hover-only
+  - PlanningPage : buildGpsUrl={buildGpsUrl} passé à WeekGridPlanning
+
+7d — Suppression cours jamais donné :
+  - Bouton Trash2 dans EmargementPage désormais conditionné à isPlanifie
+  - DeleteLessonModal avec confirmation existait déjà
+
+7e — Événements comme blocs horaires :
+  - SQL : BLOC T7e (ALTER TABLE school_notes_events ADD start_time TIME, duration_minutes INT)
+    → À EXÉCUTER
+  - schoolEvents.js : fetchEventsInRange sélectionne start_time, duration_minutes, recurrence_series_id
+    avec fallback 42703 si colonnes absentes
+  - createSchoolEvent : accepte startTime, durationMinutes (null si non renseignés)
+  - Formulaire PlanningPage : champ "Heure" (time) + "Durée (min)" si heure renseignée
+  - Rendu dans WeekGridPlanning : événements timed = blocs ambrés positionnés dans la grille
+    (cliquables → onEditEvent)
+  - Modal d'édition inline dans PlanningPage : modifie titre/heure/durée,
+    "cette occurrence" ou "toute la série", et suppression occurrence
+  - Événements sans heure : toujours affichés comme badges dans l'en-tête de colonne (rétrocompat)
+
+7f — Audit pushAction :
+  Couverts (undo/redo complet) :
+  1. PlanningPage.handleQuickPresent — émargement rapide présent
+  2. PlanningPage LessonStatusModal.onUpdated — émargement via modale
+  3. EmargementPage.handleQuickPresent — émargement rapide présent
+  4. EmargementPage LessonStatusModal.onUpdated — émargement via modale
+  Non couverts (inverse non sûr) :
+  - Déplacement de tuile (onMoveLesson) : handler non implémenté dans PlanningPage
+  - Modification de durée (onDurationChange) : portée (occurrence vs série) non transmise
+    dans le callback → impossible d'annuler de façon déterministe
+
+SQL en attente : BLOC T7e (à exécuter pour activer les blocs événements dans la grille)
+
+Build de production : ✓
+
+═══════════════════════════════════════════════════════════
+CORRECTIONS C1 à C3                                       TERMINÉES
+═══════════════════════════════════════════════════════════
+
+C1 — SurveyResultsPage.jsx : student_id → matched_student_id ?? student_id
+  Fichier modifié :
+    src/pages/SurveyResultsPage.jsx
+
+  Ligne 466 (handleConfirm dans DetailView) :
+    Avant : createRecurringLessons(teacherId, response.student_id, ...)
+    Après : const studentId = response.matched_student_id ?? response.student_id ?? null
+            if (!studentId) throw new Error(`Réponse ${response.id} : aucun identifiant élève…`)
+            createRecurringLessons(teacherId, studentId, ...)
+
+  Ligne 1739 (handleReassign) :
+    Avant : .eq('student_id', r.student_id)
+    Après : const studentId = r.matched_student_id ?? r.student_id ?? null
+            if (!studentId) { alert(...); return early } (le survey reset se fait quand même)
+            .eq('student_id', studentId)
+
+  Un élève sans identifiant exploitable est nommé dans un message (throw ou alert).
+  Build ✓
+
+C2 — GPS sur les tuiles : toujours visible, zone tactile ≥ 44 px
+  Fichiers modifiés :
+    src/components/WeekGridPlanning.jsx
+    src/pages/teacher/PlanningPage.jsx
+    src/components/AddLessonModal.jsx
+
+  WeekGridPlanning : suppression de opacity-0/group-hover sur le bouton GPS.
+    Visible uniquement si slotCount >= 3 (45px = 3 × SLOT_H 15px) pour garantir
+    zone tactile 44px. style={{ minWidth:44, minHeight:44 }} sur l'<a>.
+    Pour les tuiles < 3 slots, le GPS n'est PAS sur la tuile mais dans la modale.
+
+  PlanningPage onSelectLesson : enrichit le lesson avec _gpsUrl (si schoolName présent)
+    avant d'ouvrir AddLessonModal, pour que les petites tuiles bénéficient du lien GPS.
+
+  AddLessonModal : ajout Navigation dans les imports lucide-react.
+    Si isEdit && lesson._gpsUrl : bouton "GPS" (Navigation icon) dans l'en-tête de la modale,
+    à gauche du bouton ×. Zone tactile ≥ 44 px (px-2 py-1.5 + icône 16px).
+
+  Build ✓
+
+C3 — RattrapagePage.jsx : Abandonner cette séance + section Abandonnées
+  Fichier modifié :
+    src/pages/teacher/RattrapagePage.jsx
+
+  Nouveaux imports : ChevronDown, Ban (lucide-react)
+  Nouveaux états :
+    abandonningId, rétablissantId (spinners de chargement)
+    abandonnéesOuvertes (état d'ouverture de la section repliable)
+
+  Nouvelle fonction handleAbandonnerRattrapage :
+    UPDATE lessons SET cancel_reason='rattrapage_abandonne' WHERE id=l.id
+    (statut inchangé = 'annule_prof', aucun DELETE)
+    Filtre useMemo et liste : ajout && l.cancelReason !== 'rattrapage_abandonne'
+    → séances abandonnées sortent du compteur et de la liste "à rattraper"
+
+  Nouvelle fonction handleRétablirRattrapage :
+    UPDATE lessons SET cancel_reason=NULL WHERE id=l.id
+    → séance réintègre la liste et le compteur
+
+  Bouton "Abandonner cette séance" : dans la branche !déjàRattrapé, à côté de "Chercher un créneau".
+  Bouton "Annuler" renommé → "Annuler le rattrapage planifié" (avec tooltip explicatif).
+  Section "Séances abandonnées (N)" repliable (ChevronDown) en bas de page.
+    Chaque ligne affiche le bouton "Rétablir" avec spinner.
+
+  Aucun CHECK constraint sur cancel_reason (vérifié T6 — valeur 'rattrapage_abandonne' acceptable).
+  Aucun SQL nécessaire.
+  Build ✓
+
+═══════════════════════════════════════════════════════════
+TÂCHES 8 à 12 — NON COMMENCÉES
+═══════════════════════════════════════════════════════════
+T8  : Page publique d'absence (AbsencePage.jsx)
+T9  : Vacances scolaires
+T10 : Récapitulatif de période (km, carburant, PDF)
+T11 : Salaires perçus (nouvelle page + SQL)
+T12 : Vérification finale

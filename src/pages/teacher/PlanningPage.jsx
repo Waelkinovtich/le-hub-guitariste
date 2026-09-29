@@ -535,7 +535,12 @@ export default function PlanningPage() {
           reservedSlots={reservedSlots}
           eventsByDay={eventsByDay}
           onNewLesson={(draft) => setNewLessonDraft(draft)}
-          onSelectLesson={(lesson) => setEditLesson(lesson)}
+          onSelectLesson={(lesson) => {
+            // Pour les petites tuiles (< 3 slots) le bouton GPS n'est pas sur la tuile :
+            // on enrichit le lesson avec _gpsUrl pour qu'AddLessonModal l'affiche.
+            const gpsUrl = lesson.schoolName ? buildGpsUrl(lesson.schoolName) : null
+            setEditLesson(gpsUrl ? { ...lesson, _gpsUrl: gpsUrl } : lesson)
+          }}
           onDuplicate={(lesson) => setDuplicateDraft({
             studentId:       lesson.studentId,
             durationMinutes: lesson.durationMinutes,

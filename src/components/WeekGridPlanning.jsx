@@ -1615,8 +1615,10 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         </button>
                       )}
 
-                      {/* GPS — navigation vers l'école (mécanisme buildGpsUrl de PlanningPage) */}
-                      {buildGpsUrl && lesson.schoolName && (() => {
+                      {/* GPS — navigation vers l'école (mécanisme buildGpsUrl de PlanningPage).
+                          Visible uniquement si tuile ≥ 3 slots (45 px) pour garantir la zone tactile 44 px.
+                          Pour les tuiles < 3 slots, le lien GPS est placé dans la fenêtre au clic (via _gpsUrl). */}
+                      {buildGpsUrl && lesson.schoolName && slotCount >= 3 && (() => {
                         const gpsUrl = buildGpsUrl(lesson.schoolName)
                         return gpsUrl ? (
                           <a
@@ -1627,11 +1629,11 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                             title={`Naviguer vers ${lesson.schoolName}`}
                             onPointerDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
-                            className="absolute top-0 right-0 z-20 p-0.5 rounded-bl-md bg-void/50 text-white/80
-                                       opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity
-                                       focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
+                            style={{ minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                            className="absolute top-0 right-0 z-20 rounded-bl-md bg-void/50 text-white/80
+                                       hover:text-guitar-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
                           >
-                            <Navigation className="w-3 h-3" />
+                            <Navigation className="w-3.5 h-3.5" />
                           </a>
                         ) : null
                       })()}
