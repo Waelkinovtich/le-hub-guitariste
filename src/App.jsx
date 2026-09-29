@@ -53,6 +53,8 @@ const EnsembleLinksPage      = lazy(() => import('./pages/EnsembleLinksPage'))
 const EnsembleResponsesPage  = lazy(() => import('./pages/EnsembleResponsesPage'))
 const AbsencePage            = lazy(() => import('./pages/AbsencePage'))
 const AbsencesPage           = lazy(() => import('./pages/teacher/AbsencesPage'))
+const RecapPage              = lazy(() => import('./pages/teacher/RecapPage'))
+const SalaryPage             = lazy(() => import('./pages/teacher/SalaryPage'))
 
 // ─── Écran de chargement (fallback Suspense) ──────────────────────────────────
 // Spinner minimaliste inline — identique au spinner d'AppShell —, importé ici
@@ -135,6 +137,8 @@ function AppShell() {
             <Route path="simulation" element={<Navigate to="/admin/objectifs" replace />} />
             <Route path="deplacements" element={<TravelPage />} />
             <Route path="temps-travail" element={<WorkTimePage />} />
+            <Route path="recap" element={<RecapPage />} />
+            <Route path="salaires" element={<SalaryPage />} />
             <Route path="ensemble/liens" element={<EnsembleLinksPage />} />
             <Route path="ensemble/reponses" element={<EnsembleResponsesPage />} />
             <Route path="absences" element={<AbsencesPage />} />

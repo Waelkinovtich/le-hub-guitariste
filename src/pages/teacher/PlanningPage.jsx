@@ -579,6 +579,7 @@ export default function PlanningPage() {
             }
           }}
           reservedSlotExceptions={reservedSlotExceptions}
+          schoolZone={zone}
           onSlotException={async ({ slotId, exceptionDate, type, newHeureDebut, newDureeMinutes, exceptionId }) => {
             if (type === 'delete') {
               await deleteSlotException(exceptionId)
@@ -838,10 +839,10 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {showAddForm && <AddLessonModal teacherId={user.id} onClose={() => setShowAddForm(false)} onCreated={() => reload()} />}
-      {newLessonDraft  && <AddLessonModal teacherId={user.id} lesson={newLessonDraft}  onClose={() => setNewLessonDraft(null)}  onCreated={() => { reload(); setNewLessonDraft(null) }} />}
-      {duplicateDraft  && <AddLessonModal teacherId={user.id} lesson={duplicateDraft}  onClose={() => setDuplicateDraft(null)}  onCreated={() => { reload(); setDuplicateDraft(null) }} />}
-      {editLesson      && <AddLessonModal teacherId={user.id} lesson={editLesson}       onClose={() => setEditLesson(null)}      onCreated={() => { reload(); setEditLesson(null) }} />}
+      {showAddForm && <AddLessonModal teacherId={user.id} schoolZone={zone} onClose={() => setShowAddForm(false)} onCreated={() => reload()} />}
+      {newLessonDraft  && <AddLessonModal teacherId={user.id} schoolZone={zone} lesson={newLessonDraft}  onClose={() => setNewLessonDraft(null)}  onCreated={() => { reload(); setNewLessonDraft(null) }} />}
+      {duplicateDraft  && <AddLessonModal teacherId={user.id} schoolZone={zone} lesson={duplicateDraft}  onClose={() => setDuplicateDraft(null)}  onCreated={() => { reload(); setDuplicateDraft(null) }} />}
+      {editLesson      && <AddLessonModal teacherId={user.id} schoolZone={zone} lesson={editLesson}       onClose={() => setEditLesson(null)}      onCreated={() => { reload(); setEditLesson(null) }} />}
       {statusLesson && (
         <LessonStatusModal
           lesson={statusLesson}

@@ -6,6 +6,7 @@ import { geocodeAddress } from '../../utils/geocode'
 import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Briefcase, Palette, Trash2, Plus, Route, Navigation, CalendarDays, Copy, RefreshCw, SlidersHorizontal, TableProperties, School, Phone, Link } from 'lucide-react'
 import { useTheme, THEMES } from '../../hooks/useTheme'
 import { fetchMileageRates, upsertMileageRate, deleteMileageRate, seedDefaultRates } from '../../services/mileageRates'
+import { applyHolidaysToAllSchoolSeries } from '../../services/lessons'
 import { DEFAULT_SCORE_WEIGHTS } from '../../services/schools'
 import HelpTooltip from '../../components/HelpTooltip'
 
@@ -164,6 +165,8 @@ export default function SettingsPage() {
   const [savingZone, setSavingZone] = useState(false)
   const [savedZone, setSavedZone]   = useState(false)
   const [errorZone, setErrorZone]   = useState(null)
+  const [applyingHolidays, setApplyingHolidays] = useState(false)
+  const [appliedHolidays, setAppliedHolidays]   = useState(false)
 
   // ── Profil professionnel ───────────────────────────────────────────────────
   const [prof, setProf] = useState({
@@ -630,6 +633,26 @@ export default function SettingsPage() {
             >
               {(savingZone || savingProf) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
               {(savingZone || savingProf) ? 'Sauvegarde…' : (savedZone || savedProf) ? 'Enregistré !' : 'Enregistrer'}
+            </button>
+            <button
+              onClick={async () => {
+                if (!confirm('Activer "Pas de cours pendant les vacances" sur toutes vos séries d\'école ? (ne supprime aucun cours)')) return
+                setApplyingHolidays(true)
+                try {
+                  await applyHolidaysToAllSchoolSeries(user.id)
+                  setAppliedHolidays(true)
+                  setTimeout(() => setAppliedHolidays(false), 3000)
+                } catch (e) {
+                  setErrorZone(e.message)
+                } finally {
+                  setApplyingHolidays(false)
+                }
+              }}
+              disabled={applyingHolidays}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors disabled:opacity-50"
+            >
+              {applyingHolidays ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CalendarDays className="w-3.5 h-3.5" />}
+              {appliedHolidays ? 'Appliqué !' : 'Appliquer à toutes mes séries d\'école'}
             </button>
           </div>
         )}

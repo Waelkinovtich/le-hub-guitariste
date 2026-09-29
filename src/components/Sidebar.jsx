@@ -44,6 +44,8 @@ const ecolesLinks = [
   { to: '/admin/revenus',           icon: Euro,            label: 'Suivi des revenus' },
   { to: '/admin/deplacements',      icon: Car,             label: 'Déplacements' },
   { to: '/admin/temps-travail',     icon: Timer,           label: 'Temps de travail' },
+  { to: '/admin/recap',             icon: BarChart2,       label: 'Récapitulatif' },
+  { to: '/admin/salaires',          icon: Euro,            label: 'Salaires perçus' },
 ]
 
 const studentLinks = [

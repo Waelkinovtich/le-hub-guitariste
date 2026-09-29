@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Guitar, Loader2, AlertCircle, CheckCircle2, Clock, X, ChevronDown, ChevronUp } from 'lucide-react'
+import { Guitar, Loader2, AlertCircle, CheckCircle2, Clock, X, ChevronDown, ChevronUp, ArrowLeft } from 'lucide-react'
 import { supabasePublic as supabase } from '../lib/supabase'
 
 // ─── Texte réglementaire imposé (verbatim, ne pas modifier) ──────────────────
@@ -12,7 +12,7 @@ Si vous prévenez au moins 48h à l'avance, l'absence est considérée comme exc
 
 En cas d'absences régulières, le professeur se réserve le droit de déplacer votre créneau vers un autre horaire, afin de laisser la priorité aux élèves plus assidus.`
 
-// ─── Utilitaires d'affichage ─────────────────────────────────────────────────
+// ─── Utilitaires ─────────────────────────────────────────────────────────────
 
 function formatDate(isoDate) {
   if (!isoDate) return '—'
@@ -21,28 +21,25 @@ function formatDate(isoDate) {
   })
 }
 
-// "14:30:00" → "14h30"
 function formatTime(timeStr) {
   if (!timeStr) return '—'
   const [h, m] = timeStr.split(':')
   return m === '00' ? `${h}h` : `${h}h${m}`
 }
 
-// Retourne un libellé d'erreur lisible depuis le code d'exception PostgreSQL
 function libErreur(code) {
   const map = {
-    cours_passe:         'Ce cours est déjà passé.',
-    cours_introuvable:   'Cours introuvable ou non éligible.',
-    deja_declare:        'Une absence est déjà enregistrée pour ce cours.',
-    deja_annulee:        'Cette déclaration a déjà été annulée.',
+    cours_passe:             'Ce cours est déjà passé.',
+    cours_introuvable:       'Cours introuvable ou non éligible.',
+    deja_declare:            'Une absence est déjà enregistrée pour ce cours.',
+    deja_annulee:            'Cette déclaration a déjà été annulée.',
     declaration_introuvable: 'Déclaration introuvable.',
-    token_invalide:      'Lien invalide.',
+    token_invalide:          'Lien invalide.',
   }
   return map[code] ?? 'Une erreur est survenue. Veuillez réessayer.'
 }
 
-// ─── Composants visuels ───────────────────────────────────────────────────────
-
+// ─── Composant en-tête ────────────────────────────────────────────────────────
 function PageHeader() {
   const [open, setOpen] = useState(false)
   return (
@@ -56,8 +53,6 @@ function PageHeader() {
           <p className="text-sm text-muted-foreground">Cours de guitare</p>
         </div>
       </div>
-
-      {/* Texte réglementaire repliable */}
       <div className="rounded-xl border border-border-subtle bg-surface-raised overflow-hidden">
         <button
           type="button"
@@ -77,117 +72,29 @@ function PageHeader() {
   )
 }
 
-// Carte d'un cours à venir — permet de déclarer l'absence
-function CourseCard({ lesson, onDeclare, declared, declaring }) {
-  const date = formatDate(lesson.lesson_date)
-  const time = formatTime(lesson.lesson_time)
-  const school = lesson.school_name ?? ''
-
-  return (
-    <div className={`rounded-xl border p-4 flex items-start justify-between gap-4 transition-all ${
-      declared ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-border-subtle bg-surface-raised'
-    }`}>
-      <div>
-        <p className="font-medium text-foreground capitalize">{date}</p>
-        <p className="text-sm text-muted-foreground mt-0.5">{time} · {lesson.duration_minutes} min{school ? ` · ${school}` : ''}</p>
-        {declared && (
-          <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3" /> Absence enregistrée
-          </p>
-        )}
-      </div>
-      {!declared && (
-        <button
-          type="button"
-          disabled={declaring}
-          onClick={() => onDeclare(lesson.id)}
-          className="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium bg-guitar-600/10 border border-guitar-600/30 text-guitar-400 hover:bg-guitar-600/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-        >
-          {declaring ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-          Signaler mon absence
-        </button>
-      )}
-    </div>
-  )
-}
-
-// Badge d'une déclaration passée ou future dans l'historique
-function DeclarationRow({ decl, onCancel, cancelling }) {
-  const date     = formatDate(decl.lesson_date)
-  const time     = formatTime(decl.lesson_time)
-  const school   = decl.lesson_school ?? ''
-  const passe    = new Date(decl.lesson_date + 'T' + (decl.lesson_time ?? '00:00:00')) <= new Date()
-  const annulee  = !!decl.cancelled_at
-
-  return (
-    <div className={`flex items-start justify-between gap-4 py-3 border-b border-border-subtle last:border-0 ${
-      annulee || passe ? 'opacity-50' : ''
-    }`}>
-      <div>
-        <p className="text-sm font-medium text-foreground capitalize">{date} — {time}{school ? ` · ${school}` : ''}</p>
-        <div className="flex flex-wrap items-center gap-1.5 mt-1">
-          {annulee ? (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-surface-overlay text-muted-foreground border border-border-subtle">
-              <X className="w-2.5 h-2.5" /> Annulée
-            </span>
-          ) : decl.excused ? (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              <CheckCircle2 className="w-2.5 h-2.5" /> Excusée
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-orange-500/10 text-orange-400 border border-orange-500/20">
-              <AlertCircle className="w-2.5 h-2.5" /> Non excusée
-            </span>
-          )}
-          {passe && !annulee && (
-            <span className="text-[10px] text-muted-foreground">· Cours passé</span>
-          )}
-        </div>
-      </div>
-
-      {/* Annulation possible uniquement si le cours est encore futur et non annulé */}
-      {!passe && !annulee && (
-        <button
-          type="button"
-          disabled={cancelling}
-          onClick={() => onCancel(decl.id)}
-          className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium border border-border-subtle text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors disabled:opacity-50 flex items-center gap-1.5"
-        >
-          {cancelling ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
-          Annuler
-        </button>
-      )}
-    </div>
-  )
-}
-
 // ─── Page principale ──────────────────────────────────────────────────────────
-
 export default function AbsencePage() {
   const { token } = useParams()
 
-  // ── État de la recherche par nom ─────────────────────────────────────────
-  const [nameInput,  setNameInput]  = useState('')
-  const [searching,  setSearching]  = useState(false)
-  const [searchErr,  setSearchErr]  = useState(null)
+  // ── Étapes : 'search' | 'confirm' | 'select' | 'done' ───────────────────
+  const [step,        setStep]        = useState('search')
+  const [nameInput,   setNameInput]   = useState('')
+  const [searching,   setSearching]   = useState(false)
+  const [searchErr,   setSearchErr]   = useState(null)
   const [studentData, setStudentData] = useState(null)
-  // { student: {...}, upcoming_lessons: [...], declarations: [...] }
 
-  // ── État des déclarations/annulations ────────────────────────────────────
-  // Set d'IDs de cours pour lesquels une absence vient d'être déclarée
-  const [declaredIds,   setDeclaredIds]   = useState(new Set())
-  // ID en cours de déclaration (pour le spinner du bouton)
-  const [declaringId,   setDeclaringId]   = useState(null)
-  // ID en cours d'annulation
-  const [cancellingId,  setCancellingId]  = useState(null)
-  // Résultat de la dernière déclaration : { excused: bool }
-  const [lastResult,    setLastResult]    = useState(null)
-  // Message d'erreur sur une action
-  const [actionErr,     setActionErr]     = useState(null)
-  // Déclarations enrichies (mise à jour locale après chaque action)
-  const [declarations,  setDeclarations]  = useState(null)
+  // Cours sélectionné pour la déclaration
+  const [selectedLessonId, setSelectedLessonId] = useState(null)
+  const [declaring,        setDeclaring]        = useState(false)
+  const [actionErr,        setActionErr]        = useState(null)
+  // Résultat de la dernière déclaration
+  const [lastResult,       setLastResult]       = useState(null)
 
-  // ── Recherche de l'élève par nom ─────────────────────────────────────────
+  // Copie locale des déclarations (mise à jour optimiste)
+  const [declarations, setDeclarations] = useState(null)
+  const [cancellingId, setCancellingId] = useState(null)
+
+  // ── Étape 1 : Recherche par nom ──────────────────────────────────────────
   async function handleSearch(e) {
     e.preventDefault()
     const name = nameInput.trim()
@@ -195,9 +102,9 @@ export default function AbsencePage() {
     setSearching(true)
     setSearchErr(null)
     setStudentData(null)
-    setDeclaredIds(new Set())
-    setLastResult(null)
     setDeclarations(null)
+    setLastResult(null)
+    setSelectedLessonId(null)
     try {
       const { data, error } = await supabase.rpc('find_student_for_absence', {
         p_token:     token,
@@ -205,11 +112,11 @@ export default function AbsencePage() {
       })
       if (error) throw error
       if (!data) {
-        // Aucune correspondance — message neutre, jamais d'indice sur les autres élèves
         setSearchErr('Aucun élève trouvé avec ce nom. Vérifiez l\'orthographe (prénom et nom) ou contactez directement votre professeur.')
       } else {
         setStudentData(data)
         setDeclarations(data.declarations ?? [])
+        setStep('confirm')
       }
     } catch {
       setSearchErr('Une erreur est survenue. Vérifiez votre connexion et réessayez.')
@@ -218,52 +125,61 @@ export default function AbsencePage() {
     }
   }
 
-  // ── Déclaration d'absence ─────────────────────────────────────────────────
-  async function handleDeclare(lessonId) {
-    if (!studentData) return
-    setDeclaringId(lessonId)
+  // ── Étape 2 : Confirmation d'identité ────────────────────────────────────
+  function handleConfirmYes() {
+    setStep('select')
+  }
+  function handleConfirmNo() {
+    setStep('search')
+    setStudentData(null)
+    setNameInput('')
+    setSearchErr(null)
+  }
+
+  // ── Étape 3 : Déclaration d'absence ──────────────────────────────────────
+  async function handleDeclare() {
+    if (!selectedLessonId || !studentData) return
+    setDeclaring(true)
     setActionErr(null)
     setLastResult(null)
     try {
       const { data, error } = await supabase.rpc('declare_absence', {
         p_token:      token,
         p_student_id: studentData.student.id,
-        p_lesson_id:  lessonId,
+        p_lesson_id:  selectedLessonId,
       })
       if (error) throw error
-      // Mise à jour optimiste : marquer le cours comme déclaré
-      setDeclaredIds((prev) => new Set([...prev, lessonId]))
-      setLastResult({ excused: data.excused })
-      // Rechargement des déclarations (appel find_student_for_absence pour avoir l'id)
+      // Refresh des déclarations
       const { data: refreshed } = await supabase.rpc('find_student_for_absence', {
         p_token:     token,
         p_full_name: nameInput.trim(),
       })
       if (refreshed) setDeclarations(refreshed.declarations ?? [])
+      setLastResult({ excused: data.excused, lessonId: selectedLessonId })
+      setSelectedLessonId(null)
+      setStep('done')
     } catch (err) {
       const code = err?.message?.match(/([a-z_]+)$/)?.[1]
       setActionErr(libErreur(code ?? ''))
     } finally {
-      setDeclaringId(null)
+      setDeclaring(false)
     }
   }
 
-  // ── Annulation d'une déclaration ──────────────────────────────────────────
+  // ── Annulation d'une déclaration ─────────────────────────────────────────
   async function handleCancel(declarationId) {
     setCancellingId(declarationId)
     setActionErr(null)
+    setLastResult(null) // ← correctif bug (a) : réinitialise le résultat précédent
     try {
       const { error } = await supabase.rpc('cancel_absence_declaration', {
         p_token:          token,
         p_declaration_id: declarationId,
       })
       if (error) throw error
-      // Mise à jour optimiste locale : marquer cancelled_at = now()
       setDeclarations((prev) => (prev ?? []).map((d) =>
         d.id === declarationId ? { ...d, cancelled_at: new Date().toISOString() } : d
       ))
-      // Retirer aussi l'ID du set declaredIds si applicable
-      setDeclaredIds((prev) => { const s = new Set(prev); s.delete(declarationId); return s })
     } catch (err) {
       const code = err?.message?.match(/([a-z_]+)$/)?.[1]
       setActionErr(libErreur(code ?? ''))
@@ -272,145 +188,270 @@ export default function AbsencePage() {
     }
   }
 
-  // ── Rendu ─────────────────────────────────────────────────────────────────
-
+  // ── Données dérivées ──────────────────────────────────────────────────────
   const upcomingLessons = studentData?.upcoming_lessons ?? []
-  const historique = declarations ?? []
-  const historiquePasse = historique.filter((d) =>
-    new Date(d.lesson_date + 'T' + (d.lesson_time ?? '00:00:00')) <= new Date()
-  )
-  const historiqueFutur = historique.filter((d) =>
-    new Date(d.lesson_date + 'T' + (d.lesson_time ?? '00:00:00')) > new Date()
+  const allDeclarations = declarations ?? []
+  const now = new Date()
+  const isFuture = (lesson) => new Date(lesson.lesson_date + 'T' + (lesson.lesson_time ?? '00:00:00')) > now
+  // Normalise "09:30:00" et "09:30" en "09:30" pour comparer sans dépendre de lesson_id
+  const toHHMM = (t) => (t ?? '').slice(0, 5)
+  const lessonKey = (date, time) => `${date}|${toHHMM(time)}`
+
+  // Clés date|HH:MM des déclarations actives futures (lesson_id absent en production)
+  const declaredKeys = new Set(
+    allDeclarations
+      .filter((d) => !d.cancelled_at && isFuture(d))
+      .map((d) => lessonKey(d.lesson_date, d.lesson_time))
   )
 
+  // Trouver la déclaration active d'un cours par date+heure (pas par lesson_id)
+  const activeDeclForLesson = (lesson) =>
+    allDeclarations.find(
+      (d) => lessonKey(d.lesson_date, d.lesson_time) === lessonKey(lesson.lesson_date, lesson.lesson_time)
+        && !d.cancelled_at
+        && isFuture(d)
+    )
+
+  // ── Rendu ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="max-w-lg mx-auto px-4 py-8">
         <PageHeader />
 
-        {/* ── Formulaire de recherche par nom ─────────────────────────────── */}
-        <form onSubmit={handleSearch} className="mb-8">
-          <label htmlFor="student-name" className="block text-sm font-medium mb-2">
-            Votre nom et prénom
-          </label>
-          <div className="flex gap-2">
-            <input
-              id="student-name"
-              type="text"
-              value={nameInput}
-              onChange={(e) => setNameInput(e.target.value)}
-              placeholder="Ex : Marie Dupont"
-              autoComplete="name"
-              className="flex-1 px-3 py-2.5 rounded-xl border border-border-subtle bg-surface-raised text-sm focus:outline-none focus:border-guitar-600 transition-colors"
-            />
+        {/* ── Étape 1 : Saisie du nom ───────────────────────────────────────── */}
+        {step === 'search' && (
+          <form onSubmit={handleSearch} className="space-y-4">
+            <div>
+              <label htmlFor="student-name" className="block text-sm font-medium mb-2">
+                Votre prénom et nom
+              </label>
+              <input
+                id="student-name"
+                type="text"
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                placeholder="Ex : Marie Dupont"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="words"
+                spellCheck={false}
+                className="w-full px-3 py-2.5 rounded-xl border border-border-subtle bg-surface-raised text-sm focus:outline-none focus:border-guitar-600 transition-colors"
+              />
+            </div>
             <button
               type="submit"
               disabled={searching || !nameInput.trim()}
-              className="px-4 py-2.5 rounded-xl bg-guitar-600 text-white text-sm font-medium hover:bg-guitar-600/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              className="w-full px-4 py-2.5 rounded-xl bg-guitar-600 text-white text-sm font-medium hover:bg-guitar-600/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              Rechercher
+              {searching ? 'Recherche…' : 'Rechercher'}
             </button>
-          </div>
-
-          {/* Erreur de recherche (pas de correspondance ou erreur réseau) */}
-          {searchErr && (
-            <div className="mt-3 flex items-start gap-2 text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2.5">
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-              <p>{searchErr}</p>
-            </div>
-          )}
-        </form>
-
-        {/* ── Résultats : trouvé ───────────────────────────────────────────── */}
-        {studentData && (
-          <>
-            <div className="mb-6 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <p className="text-sm">
-                Connecté en tant que <strong>{studentData.student.first_name} {studentData.student.last_name}</strong>
-                {studentData.student.school_name ? ` · ${studentData.student.school_name}` : ''}
-              </p>
-            </div>
-
-            {/* Notification du résultat de la dernière déclaration */}
-            {lastResult && (
-              <div className={`mb-4 flex items-start gap-2 text-sm rounded-xl px-3 py-2.5 border ${
-                lastResult.excused
-                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-                  : 'bg-orange-500/10 border-orange-500/20 text-orange-400'
-              }`}>
-                {lastResult.excused
-                  ? <><CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" /><p>Absence enregistrée et considérée comme <strong>excusée</strong> (préavis ≥ 48 h).</p></>
-                  : <><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /><p>Absence enregistrée. Délai inférieur à 48 h — elle peut être marquée comme <strong>non excusée</strong>.</p></>
-                }
-              </div>
-            )}
-
-            {/* Erreur d'action */}
-            {actionErr && (
-              <div className="mb-4 flex items-start gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5">
+            {searchErr && (
+              <div className="flex items-start gap-2 text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2.5">
                 <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                <p>{actionErr}</p>
+                <p>{searchErr}</p>
               </div>
             )}
+          </form>
+        )}
 
-            {/* Cours à venir */}
-            <section className="mb-8">
+        {/* ── Étape 2 : Confirmation d'identité ────────────────────────────── */}
+        {step === 'confirm' && studentData && (
+          <div className="space-y-6">
+            <div className="rounded-xl border border-border bg-surface-raised p-5 space-y-2">
+              <p className="text-base font-semibold">
+                Vous êtes bien{' '}
+                <span className="text-guitar-400">
+                  {studentData.student.first_name} {studentData.student.last_name}
+                </span>
+                &nbsp;?
+              </p>
+              {studentData.student.school_name && (
+                <p className="text-sm text-muted-foreground">{studentData.student.school_name}</p>
+              )}
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={handleConfirmYes}
+                className="flex-1 py-2.5 rounded-xl bg-guitar-600 text-white text-sm font-medium hover:bg-guitar-600/90 transition-colors"
+              >
+                Oui, c'est moi
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmNo}
+                className="flex-1 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
+              >
+                Non, ce n'est pas moi
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Étape 3 : Sélection du cours ─────────────────────────────────── */}
+        {step === 'select' && studentData && (
+          <div className="space-y-6">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <button
+                type="button"
+                onClick={() => setStep('confirm')}
+                className="flex items-center gap-1 hover:text-foreground transition-colors"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                {studentData.student.first_name} {studentData.student.last_name}
+              </button>
+            </div>
+
+            <div>
               <h2 className="text-base font-semibold mb-3">Mes prochains cours</h2>
               {upcomingLessons.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Aucun cours à venir dans la période affichée.</p>
               ) : (
                 <div className="space-y-3">
-                  {upcomingLessons.map((lesson) => (
-                    <CourseCard
-                      key={lesson.id}
-                      lesson={lesson}
-                      declared={declaredIds.has(lesson.id) || historiqueFutur.some((d) => d.lesson_date === lesson.lesson_date && !d.cancelled_at)}
-                      declaring={declaringId === lesson.id}
-                      onDeclare={handleDeclare}
-                    />
-                  ))}
+                  {upcomingLessons.map((lesson) => {
+                    const alreadyDeclared = declaredKeys.has(lessonKey(lesson.lesson_date, lesson.lesson_time))
+                    const activeDecl = activeDeclForLesson(lesson)
+                    const isSelected = selectedLessonId === lesson.id
+
+                    if (alreadyDeclared && activeDecl) {
+                      // Cours avec absence déjà déclarée — bouton "Annuler mon absence"
+                      return (
+                        <div key={lesson.id} className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 flex items-start justify-between gap-4">
+                          <div>
+                            <p className="font-medium text-foreground capitalize">{formatDate(lesson.lesson_date)}</p>
+                            <p className="text-sm text-muted-foreground mt-0.5">
+                              {formatTime(lesson.lesson_time)} · {lesson.duration_minutes} min{lesson.school_name ? ` · ${lesson.school_name}` : ''}
+                            </p>
+                            <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> Absence enregistrée
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={cancellingId === activeDecl.id}
+                            onClick={() => handleCancel(activeDecl.id)}
+                            className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium border border-border-subtle text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                          >
+                            {cancellingId === activeDecl.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                            Annuler mon absence
+                          </button>
+                        </div>
+                      )
+                    }
+
+                    // Cours non déclaré — sélectionnable
+                    return (
+                      <button
+                        key={lesson.id}
+                        type="button"
+                        onClick={() => setSelectedLessonId(isSelected ? null : lesson.id)}
+                        className={`w-full text-left rounded-xl border p-4 transition-all ${
+                          isSelected
+                            ? 'border-guitar-600/60 bg-guitar-600/10'
+                            : 'border-border-subtle bg-surface-raised hover:border-border hover:bg-surface-overlay'
+                        }`}
+                      >
+                        <p className="font-medium text-foreground capitalize">{formatDate(lesson.lesson_date)}</p>
+                        <p className="text-sm text-muted-foreground mt-0.5">
+                          {formatTime(lesson.lesson_time)} · {lesson.duration_minutes} min{lesson.school_name ? ` · ${lesson.school_name}` : ''}
+                        </p>
+                      </button>
+                    )
+                  })}
                 </div>
               )}
-            </section>
+            </div>
 
-            {/* Historique des déclarations */}
-            {historique.length > 0 && (
-              <section>
-                <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-muted-foreground" />
-                  Historique de mes absences
-                </h2>
-
-                {/* Déclarations futures (annulables) */}
-                {historiqueFutur.length > 0 && (
-                  <div className="mb-4 rounded-xl border border-border-subtle bg-surface-raised divide-y divide-border-subtle px-4">
-                    {historiqueFutur.map((decl) => (
-                      <DeclarationRow
-                        key={decl.id}
-                        decl={decl}
-                        onCancel={handleCancel}
-                        cancelling={cancellingId === decl.id}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {/* Déclarations passées (lecture seule) */}
-                {historiquePasse.length > 0 && (
-                  <>
-                    <p className="text-xs text-muted-foreground mb-2">Absences passées (lecture seule)</p>
-                    <div className="rounded-xl border border-border-subtle bg-surface-raised divide-y divide-border-subtle px-4 opacity-70">
-                      {historiquePasse.map((decl) => (
-                        <DeclarationRow key={decl.id} decl={decl} onCancel={() => {}} cancelling={false} />
-                      ))}
-                    </div>
-                  </>
-                )}
-              </section>
+            {actionErr && (
+              <div className="flex items-start gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5">
+                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                <p>{actionErr}</p>
+              </div>
             )}
-          </>
+
+            {selectedLessonId && (
+              <button
+                type="button"
+                disabled={declaring}
+                onClick={handleDeclare}
+                className="w-full py-2.5 rounded-xl bg-guitar-600 text-white text-sm font-medium hover:bg-guitar-600/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {declaring ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                {declaring ? 'Enregistrement…' : 'Confirmer mon absence'}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ── Étape 4 : Résultat ───────────────────────────────────────────── */}
+        {step === 'done' && lastResult && (
+          <div className="space-y-6">
+            <div className={`flex items-start gap-3 rounded-xl border p-4 ${
+              lastResult.excused
+                ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300'
+                : 'bg-orange-500/10 border-orange-500/25 text-orange-300'
+            }`}>
+              {lastResult.excused
+                ? <CheckCircle2 className="w-5 h-5 mt-0.5 shrink-0" />
+                : <AlertCircle className="w-5 h-5 mt-0.5 shrink-0" />
+              }
+              <div>
+                <p className="font-semibold text-sm">
+                  {lastResult.excused ? 'Absence enregistrée et excusée' : 'Absence enregistrée'}
+                </p>
+                <p className="text-sm mt-1 opacity-80">
+                  {lastResult.excused
+                    ? 'Vous avez prévenu plus de 48 h à l\'avance — votre absence est excusée.'
+                    : 'Délai inférieur à 48 h — votre absence pourra être marquée non excusée.'}
+                </p>
+              </div>
+            </div>
+
+            {actionErr && (
+              <div className="flex items-start gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5">
+                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                <p>{actionErr}</p>
+              </div>
+            )}
+
+            {/* Absences futures avec option d'annulation */}
+            {(declarations ?? []).filter((d) => !d.cancelled_at && isFuture(d)).length > 0 && (
+              <div>
+                <h2 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-muted-foreground" />
+                  Mes absences déclarées
+                </h2>
+                <div className="rounded-xl border border-border-subtle bg-surface-raised divide-y divide-border-subtle px-4">
+                  {(declarations ?? []).filter((d) => !d.cancelled_at && isFuture(d)).map((decl) => (
+                    <div key={decl.id} className="flex items-center justify-between gap-4 py-3">
+                      <div>
+                        <p className="text-sm font-medium capitalize">{formatDate(decl.lesson_date)} — {formatTime(decl.lesson_time)}</p>
+                        {decl.lesson_school && <p className="text-xs text-muted-foreground mt-0.5">{decl.lesson_school}</p>}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={cancellingId === decl.id}
+                        onClick={() => handleCancel(decl.id)}
+                        className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium border border-border-subtle text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {cancellingId === decl.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                        Annuler
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => { setStep('select'); setActionErr(null) }}
+              className="w-full py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
+            >
+              Déclarer une autre absence
+            </button>
+          </div>
         )}
       </div>
     </div>

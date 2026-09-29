@@ -1,5 +1,5 @@
 AVANCEMENT — Session globale (tâches 1 à 12)
-Mis à jour : après tâche 2
+Mis à jour : après correctif AbsencePage (fin de session)
 
 ═══════════════════════════════════════════════════════════
 TÂCHE 1 — Émargement en un geste (Planning + Émargement)    TERMINÉE
@@ -290,7 +290,176 @@ C3 — RattrapagePage.jsx : Abandonner cette séance + section Abandonnées
   Build ✓
 
 ═══════════════════════════════════════════════════════════
-TÂCHES 8 à 12 — NON COMMENCÉES
+SESSION NOUVELLE — Tâches T1 à T6                         EN COURS
+═══════════════════════════════════════════════════════════
+
+T1 — Récurrence unifiée                                    TERMINÉE
+─────────────────────────────────────────────────────────
+Fichiers créés :
+  src/components/RecurrencePanel.jsx  (nouveau — remplace les deux anciens panneaux)
+
+Fichiers modifiés :
+  src/services/lessons.js             (+ fetchSeriesDateRange, fetchGroupSeriesDateRange,
+                                         updateRecurrenceRange, updateGroupSessionRange)
+  src/components/WeekGridPlanning.jsx (remplacement RecurrenceIntervalPanel + GroupRecurrenceIntervalPanel
+                                         par RecurrencePanel unifié ; boutons toujours visibles ;
+                                         import updateRecurrenceInterval supprimé)
+
+Ce qui est fait :
+- RecurrencePanel : affiche première date, dernière date, intervalle (chargés depuis la base).
+  Permet de modifier les trois champs. Détecte individuel/groupe via planningStatus.
+- updateRecurrenceRange (individuel) : supprime UNIQUEMENT les planifie, préserve les émargés.
+  Crée de nouvelles occurrences planifie sur toute la plage [newStartDate, newEndDate].
+  Autorise newStartDate dans le passé (ajout rétroactif, ex: 19 et 26 sept avant le 3 oct).
+- updateGroupSessionRange (groupe) : supprime non-effectuées, préserve effectuées.
+  Même logique pour les plages rétroactives.
+- Boutons Repeat2 sur les tuiles : opacity-0/hover supprimé → toujours visibles.
+- États intervalEditLesson + groupIntervalEditLesson → remplacés par un seul recurrenceEditLesson.
+- Preuve scénario Prouvy : firstDate → 2026-09-19 crée 19 sept, 26 sept, 3 oct (intervalle 1).
+- Build ✓, eslint no-undef ✓
+
+T2 — Icônes émargement discrets                           TERMINÉE
+─────────────────────────────────────────────────────────
+Fichier modifié :
+  src/components/AttendanceQuickActions.jsx
+
+Ce qui est fait :
+- Suppression des fonds colorés pleins (background: #22c55e33 etc.) → replaced par
+  bg-emerald-500/20 (actif) ou transparent (inactif), cohérent avec ClipboardCheck groupe.
+- variant="tile" : icônes Check/X 9px + arrondis partiels, fond discret si statut actif.
+- variant="row" : zone tactile 44px préservée, bordures supprimées, fond 15% opacité max.
+- Comportement identique : ✓ = onPresent direct, ✗ = onOpenModal.
+- Build ✓, eslint ✓
+T3 — AbsencePage.jsx                                      TERMINÉE
+─────────────────────────────────────────────────────────
+Fichiers modifiés :
+  src/pages/AbsencePage.jsx       (réécriture complète)
+Fichiers créés :
+  migration-session-continue.sql  (BLOC T3a + BLOC T4a)
+
+Ce qui est fait :
+(a) Bug "Annuler" → lastResult plus jamais affiché après annulation (setLastResult(null) dans handleCancel).
+(b) "Annuler mon absence" sur les cours déjà déclarés dans l'étape 'select'.
+(c) Flux en 4 étapes :
+    - 'search' : saisie nom, bouton Rechercher
+    - 'confirm' : "Vous êtes bien [Prénom Nom] ?" → Oui / Non
+    - 'select' : liste cours futurs planifie, sélection unique par card,
+                 bouton "Confirmer mon absence" (visible si card sélectionnée)
+                 cours déjà déclarés affichent "Annuler mon absence"
+    - 'done' : résultat excusée/non-excusée, liste des déclarations futures
+               avec bouton Annuler, bouton "Déclarer une autre absence"
+(d) autoComplete="off" autoCorrect="off" sur le champ nom.
+(e) Pas de datalist, pas d'exposition de la liste élèves.
+(f) SQL BLOC T3a dans migration-session-continue.sql :
+    _normalize_name_absence + find_student_for_absence (REVOKE ALL / GRANT TO anon).
+    HYPOTHÈSES SCHÉMA NOTÉES — vérifier absence_link et absence_declarations avant exécution.
+(g) Trim déjà fait dans students.js l.69-70 (pre-existant).
+
+⚠️ POINT DE DÉCISION : La fonction find_student_for_absence est réécrite avec des hypothèses
+   sur les colonnes d'absence_declarations (id, lesson_id, lesson_date, lesson_time,
+   lesson_school, excused, cancelled_at). À valider avant d'exécuter le BLOC T3a.
+
+Build ✓, eslint ✓
+T4 — Vacances scolaires                                   TERMINÉE
+─────────────────────────────────────────────────────────
+Fichiers créés/modifiés :
+  migration-session-continue.sql   (+BLOC T4a : suspend_during_holidays sur lessons + group_sessions)
+  src/services/lessons.js          (+enVacances helper, + filtre vacances dans les 4 fonctions
+                                     de génération : createRecurringLessons, buildGroupSessionDates,
+                                     updateRecurrenceRange, updateGroupSessionRange ;
+                                     + applyHolidaysToAllSchoolSeries)
+  src/components/RecurrencePanel.jsx  (+ prop schoolZone, + toggle vacances,
+                                        + previewCount temps réel via countOccurrences)
+  src/components/AddLessonModal.jsx   (+ prop schoolZone, + état suspendHolidays,
+                                        + checkbox "Pas de cours pendant les vacances scolaires")
+  src/components/WeekGridPlanning.jsx (+ prop schoolZone, passé à RecurrencePanel ;
+                                        suppression INTERVAL_OPTIONS orphelin)
+  src/pages/teacher/PlanningPage.jsx  (+ schoolZone={zone} sur WeekGridPlanning et AddLessonModal)
+  src/pages/teacher/SettingsPage.jsx  (+ bouton "Appliquer à toutes mes séries d'école"
+                                        + import applyHolidaysToAllSchoolSeries)
+
+Ce qui est fait :
+(a) Source unique : vacances.js (isVacances, getVacances) + user.schoolZone ?? 'B' existants.
+(b) SQL BLOC T4a dans migration-session-continue.sql :
+    ALTER TABLE lessons ADD COLUMN suspend_during_holidays boolean NOT NULL DEFAULT false ;
+    ALTER TABLE group_sessions ADD COLUMN suspend_during_holidays boolean NOT NULL DEFAULT false.
+    → À exécuter avant d'utiliser la fonctionnalité (flag ignoré si colonne absente = Supabase erreur 42703).
+(c) Création de série : checkbox "Pas de cours pendant les vacances scolaires (zone X)"
+    cochée par défaut si contextType === 'ecole' au moment d'activer la récurrence.
+(d) RecurrencePanel : checkbox + previewCount mis à jour en temps réel.
+(e) Filtrage à la CRÉATION : les dates en vacances ne sont jamais insérées (pas de filtrage à l'affichage).
+(f) "Appliquer à toutes mes séries d'école" dans SettingsPage (zone scolaire) :
+    UPDATE lessons SET suspend_during_holidays=true WHERE context_type='ecole' AND status='planifie'.
+    Ne supprime aucun cours existant, ne régénère aucune série.
+
+Build ✓, eslint no-undef/no-use-before-define ✓ (aucune nouvelle erreur)
+
+T5 — Récapitulatif période / km / PDF                     TERMINÉE
+─────────────────────────────────────────────────────────
+Fichiers créés :
+  src/pages/teacher/RecapPage.jsx   (nouvelle page)
+
+Fichiers modifiés :
+  src/App.jsx      (+ import lazy RecapPage + route /admin/recap)
+  src/components/Sidebar.jsx  (+ lien "Récapitulatif" avec icône BarChart2)
+
+Ce qui est fait :
+(a) Deux vues via onglets : "Réalisé" (present/excuse/rattrape) et "Planifié" (tous statuts).
+(b) Sélecteur de période date-du / au + raccourcis (Année scolaire, Janvier, Juin).
+(c) Stats cours : nombre, durée totale, heures décimales, durée moyenne. Détail par statut.
+(d) Section Déplacements : km et estimation carburant depuis travel_entries + mileage_rates
+    pour la même période.
+(e) Export PDF (jsPDF + autotable) et CSV natif.
+(f) Disclaimer "estimations d'organisation" dans la section déplacements.
+Build ✓, eslint ✓
+
+T6 — Salaires perçus                                      TERMINÉE
+─────────────────────────────────────────────────────────
+Fichiers créés :
+  src/services/salary.js            (CRUD salary_payments)
+  src/pages/teacher/SalaryPage.jsx  (nouvelle page)
+
+Fichiers modifiés :
+  migration-session-continue.sql   (+BLOC T6a : CREATE TABLE salary_payments + RLS + index)
+  src/App.jsx      (+ import lazy SalaryPage + route /admin/salaires)
+  src/components/Sidebar.jsx  (+ lien "Salaires perçus" avec icône Euro)
+
+Ce qui est fait :
+(a) SQL BLOC T6a : table salary_payments (id, teacher_id, school_id, school_name, amount,
+    period_from, period_to, paid_at, notes, created_at) + RLS + index.
+    → À exécuter avant d'utiliser la page.
+(b) Page SalaryPage : sélecteur de période, liste des versements, bouton "+ Ajouter",
+    formulaire modal (école, montant, période, payé le, notes), suppression avec confirmation.
+(c) Synthèse : total perçu, total attendu (depuis income_entries), écart attendu/perçu,
+    taux horaire réel (percus / heures_facturées).
+    → Écart rouge si perçu < attendu.
+(d) Export PDF (jsPDF + autotable) et CSV natif.
+Build ✓, eslint ✓
+
+═══════════════════════════════════════════════════════════
+CORRECTIF AbsencePage — bouton "Annuler mon absence"        TERMINÉ
+═══════════════════════════════════════════════════════════
+Problème : find_student_for_absence en prod ne retourne pas
+lesson_id dans declarations[]. L'ancien code faisait
+d.lesson_id === lesson.id → toujours false → bouton absent.
+
+Correction dans src/pages/AbsencePage.jsx :
+  - Suppression de declaredLessonIds (basé sur lesson_id)
+  - Ajout toHHMM(t) : "09:30:00" → "09:30"
+  - Ajout lessonKey(date, time) : "2026-10-15|09:30"
+  - declaredKeys = Set des lessonKey des déclarations actives futures
+  - activeDeclForLesson(lesson) compare par date+HH:MM
+  - Call sites mis à jour en conséquence
+
+Vérification cas concret :
+  lesson {lesson_date:"2026-10-15", lesson_time:"09:30"}
+  decl   {lesson_date:"2026-10-15", lesson_time:"09:30:00", cancelled_at:null}
+  → lessonKey = "2026-10-15|09:30" des deux côtés → match ✓
+  → bouton "Annuler mon absence" apparaît ✓
+Build ✓, eslint ✓
+
+═══════════════════════════════════════════════════════════
+TÂCHES 8 à 12 (ancienne numérotation) — NON COMMENCÉES
 ═══════════════════════════════════════════════════════════
 T8  : Page publique d'absence (AbsencePage.jsx)
 T9  : Vacances scolaires

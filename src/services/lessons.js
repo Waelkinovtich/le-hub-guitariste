@@ -1,6 +1,11 @@
 import { supabase } from '../lib/supabase'
 import { TABLES } from '../lib/tables'
 import { fullName, formatLessonDateLabel, formatTime } from '../utils/format'
+import { isVacances } from '../utils/vacances'
+
+// Retourne true si la date ISO tombe en vacances scolaires (zone requise, non null).
+// Utilisé pour sauter les dates de vacances lors de la génération des séries récurrentes.
+const enVacances = (iso, zone) => zone != null && isVacances(iso, zone) != null
 
 const LESSON_SELECT = `
   id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group, recurrence_interval_weeks, planning_status, context_type, rattrapage_de_lesson_id,
@@ -136,7 +141,7 @@ export async function fetchCancelledLessons({ teacherId } = {}) {
 
 /** Crée une série de cours récurrents depuis lessonDate jusqu'à untilDate.
  *  intervalWeeks : 1 = hebdomadaire (défaut), 2 = quinzomadaire, etc. */
-export async function createRecurringLessons(teacherId, input, untilDate, intervalWeeks = 1) {
+export async function createRecurringLessons(teacherId, input, untilDate, intervalWeeks = 1, { suspendDuringHolidays = false, zone = null } = {}) {
   const safeInterval = Math.max(1, Math.round(intervalWeeks))
   const groupId = crypto.randomUUID()
   const rows = []
@@ -145,21 +150,25 @@ export async function createRecurringLessons(teacherId, input, untilDate, interv
   const end = new Date(untilDate + 'T00:00:00')
   while (current <= end) {
     const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
-    rows.push({
-      teacher_id:                teacherId,
-      student_id:                input.studentId,
-      lesson_date:               iso,
-      lesson_time:               input.lessonTime,
-      duration_minutes:          input.durationMinutes ?? 45,
-      topic:                     input.topic,
-      notes:                     input.notes ?? null,
-      status:                    'planifie',
-      context_type:              input.contextType ?? null,
-      recurrence_group:          groupId,
-      recurrence_interval_weeks: safeInterval,
-    })
+    if (!(suspendDuringHolidays && enVacances(iso, zone))) {
+      rows.push({
+        teacher_id:                teacherId,
+        student_id:                input.studentId,
+        lesson_date:               iso,
+        lesson_time:               input.lessonTime,
+        duration_minutes:          input.durationMinutes ?? 45,
+        topic:                     input.topic,
+        notes:                     input.notes ?? null,
+        status:                    'planifie',
+        context_type:              input.contextType ?? null,
+        recurrence_group:          groupId,
+        recurrence_interval_weeks: safeInterval,
+        suspend_during_holidays:   suspendDuringHolidays,
+      })
+    }
     current.setDate(current.getDate() + 7 * safeInterval)
   }
+  if (rows.length === 0) throw new Error('Aucune date générée (vérifiez les dates et les vacances).')
   const { error } = await supabase.from(TABLES.lessons).insert(rows)
   if (error) throw new Error(error.message)
   return rows.length
@@ -287,15 +296,17 @@ export async function fetchGroupSessionsInRange({ teacherId, from, to }) {
 
 // ─── Récurrence des séances de groupe ─────────────────────────────────────────
 
-/** Calcule les dates ISO d'une série récurrente à partir de firstDate jusqu'à endDate. */
-function buildGroupSessionDates(firstDate, endDate, intervalWeeks) {
+/** Calcule les dates ISO d'une série récurrente à partir de firstDate jusqu'à endDate.
+ *  suspendDuringHolidays=true + zone non-null → saute les dates en vacances scolaires. */
+function buildGroupSessionDates(firstDate, endDate, intervalWeeks, { suspendDuringHolidays = false, zone = null } = {}) {
   const safeInterval = Math.max(1, Math.round(intervalWeeks))
   const pad = (n) => String(n).padStart(2, '0')
   const dates = []
   let current = new Date(firstDate + 'T00:00:00')
   const end    = new Date(endDate   + 'T00:00:00')
   while (current <= end) {
-    dates.push(current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate()))
+    const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
+    if (!(suspendDuringHolidays && enVacances(iso, zone))) dates.push(iso)
     current.setDate(current.getDate() + 7 * safeInterval)
   }
   return dates
@@ -305,9 +316,9 @@ function buildGroupSessionDates(firstDate, endDate, intervalWeeks) {
  * Crée une série récurrente de séances de groupe dans group_sessions.
  * Retourne l'id de la première séance créée (pour l'affichage immédiat).
  */
-export async function createRecurringGroupSessions({ groupId, firstDate, sessionTime, durationMinutes, endDate, intervalWeeks = 1 }) {
+export async function createRecurringGroupSessions({ groupId, firstDate, sessionTime, durationMinutes, endDate, intervalWeeks = 1, suspendDuringHolidays = false, zone = null }) {
   const seriesId = crypto.randomUUID()
-  const dates    = buildGroupSessionDates(firstDate, endDate, intervalWeeks)
+  const dates    = buildGroupSessionDates(firstDate, endDate, intervalWeeks, { suspendDuringHolidays, zone })
   if (dates.length === 0) throw new Error('Aucune date générée pour la série.')
 
   const rows = dates.map((d) => ({
@@ -317,6 +328,7 @@ export async function createRecurringGroupSessions({ groupId, firstDate, session
     duration_minutes:          durationMinutes,
     recurrence_series_id:      seriesId,
     recurrence_interval_weeks: Math.max(1, Math.round(intervalWeeks)),
+    suspend_during_holidays:   suspendDuringHolidays,
   }))
 
   const { data, error } = await supabase.from('group_sessions').insert(rows).select('id').limit(1)
@@ -348,6 +360,145 @@ export async function updateGroupSessionRecurrence({ seriesId, groupId, fromDate
     recurrence_series_id:      seriesId,
     recurrence_interval_weeks: safeInterval,
   }))
+  const { error: insErr } = await supabase.from('group_sessions').insert(rows)
+  if (insErr) throw new Error(insErr.message)
+  return rows.length
+}
+
+// ─── Récurrence étendue : info + mise à jour avec dates rétroactives ─────────
+
+/**
+ * Retourne la plage de dates d'une série de cours individuels.
+ * Inclut les leçons de tout statut (planifie ET émargés) pour afficher l'état réel.
+ */
+export async function fetchSeriesDateRange(groupId) {
+  const { data, error } = await supabase
+    .from(TABLES.lessons)
+    .select('lesson_date, recurrence_interval_weeks, status')
+    .eq('recurrence_group', groupId)
+    .order('lesson_date')
+  if (error) throw new Error(error.message)
+  if (!data || data.length === 0) return null
+  return {
+    firstDate:     data[0].lesson_date,
+    lastDate:      data[data.length - 1].lesson_date,
+    intervalWeeks: data[0].recurrence_interval_weeks ?? 1,
+  }
+}
+
+/**
+ * Retourne la plage de dates d'une série de séances de groupe.
+ */
+export async function fetchGroupSeriesDateRange(seriesId) {
+  const { data, error } = await supabase
+    .from('group_sessions')
+    .select('session_date, recurrence_interval_weeks')
+    .eq('recurrence_series_id', seriesId)
+    .order('session_date')
+  if (error) throw new Error(error.message)
+  if (!data || data.length === 0) return null
+  return {
+    firstDate:     data[0].session_date,
+    lastDate:      data[data.length - 1].session_date,
+    intervalWeeks: data[0].recurrence_interval_weeks ?? 1,
+  }
+}
+
+/**
+ * Mise à jour complète d'une série individuelle : plage + intervalle.
+ * Supprime uniquement les leçons au statut 'planifie', préserve tous les émargés.
+ * Autorise un newStartDate dans le passé (séances rétroactives).
+ */
+export async function updateRecurrenceRange({ groupId, newStartDate, newEndDate, intervalWeeks, template, suspendDuringHolidays = false, zone = null }) {
+  const safeInterval = Math.max(1, Math.round(intervalWeeks))
+
+  // 1. Connaître les dates déjà émargées (non-planifie) pour ne pas les écraser
+  const { data: existing, error: fetchErr } = await supabase
+    .from(TABLES.lessons)
+    .select('lesson_date, status')
+    .eq('recurrence_group', groupId)
+    .neq('status', 'planifie')
+  if (fetchErr) throw new Error(fetchErr.message)
+  const emargéDates = new Set((existing ?? []).map((r) => r.lesson_date))
+
+  // 2. Supprimer toutes les leçons planifie de la série (passées ET futures)
+  const { error: delErr } = await supabase
+    .from(TABLES.lessons)
+    .delete()
+    .eq('recurrence_group', groupId)
+    .eq('status', 'planifie')
+  if (delErr) throw new Error(delErr.message)
+
+  // 3. Générer et insérer les nouvelles occurrences (planifie), en sautant les émargées
+  const pad = (n) => String(n).padStart(2, '0')
+  const rows = []
+  let current = new Date(newStartDate + 'T00:00:00')
+  const end   = new Date(newEndDate + 'T00:00:00')
+  while (current <= end) {
+    const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
+    if (!emargéDates.has(iso) && !(suspendDuringHolidays && enVacances(iso, zone))) {
+      rows.push({
+        teacher_id:                template.teacherId,
+        student_id:                template.studentId,
+        lesson_date:               iso,
+        lesson_time:               template.lessonTime,
+        duration_minutes:          template.durationMinutes,
+        topic:                     template.topic ?? 'Cours de guitare',
+        notes:                     template.notes ?? null,
+        status:                    'planifie',
+        context_type:              template.contextType ?? null,
+        recurrence_group:          groupId,
+        recurrence_interval_weeks: safeInterval,
+        suspend_during_holidays:   suspendDuringHolidays,
+      })
+    }
+    current.setDate(current.getDate() + 7 * safeInterval)
+  }
+  if (rows.length === 0) return 0
+  const { error: insErr } = await supabase.from(TABLES.lessons).insert(rows)
+  if (insErr) throw new Error(insErr.message)
+  return rows.length
+}
+
+/**
+ * Mise à jour complète d'une série de groupe : plage + intervalle.
+ * Supprime uniquement les séances sans statut 'effectuee', préserve les effectuées.
+ * Autorise un newStartDate dans le passé.
+ */
+export async function updateGroupSessionRange({ seriesId, groupId, newStartDate, newEndDate, intervalWeeks, sessionTime, durationMinutes, suspendDuringHolidays = false, zone = null }) {
+  const safeInterval = Math.max(1, Math.round(intervalWeeks))
+
+  // 1. Dater les séances déjà effectuées pour ne pas les supprimer
+  const { data: done, error: fetchErr } = await supabase
+    .from('group_sessions')
+    .select('session_date')
+    .eq('recurrence_series_id', seriesId)
+    .eq('status', 'effectuee')
+  if (fetchErr) throw new Error(fetchErr.message)
+  const effectueeDates = new Set((done ?? []).map((r) => r.session_date))
+
+  // 2. Supprimer les séances non-effectuées (planifie, prevue, etc.)
+  const { error: delErr } = await supabase
+    .from('group_sessions')
+    .delete()
+    .eq('recurrence_series_id', seriesId)
+    .neq('status', 'effectuee')
+  if (delErr) throw new Error(delErr.message)
+
+  // 3. Recréer, en sautant les dates déjà effectuées et les vacances si demandé
+  const dates = buildGroupSessionDates(newStartDate, newEndDate, safeInterval, { suspendDuringHolidays, zone })
+  const rows  = dates
+    .filter((d) => !effectueeDates.has(d))
+    .map((d) => ({
+      group_id:                  groupId,
+      session_date:              d,
+      session_time:              sessionTime,
+      duration_minutes:          durationMinutes,
+      recurrence_series_id:      seriesId,
+      recurrence_interval_weeks: safeInterval,
+      suspend_during_holidays:   suspendDuringHolidays,
+    }))
+  if (rows.length === 0) return 0
   const { error: insErr } = await supabase.from('group_sessions').insert(rows)
   if (insErr) throw new Error(insErr.message)
   return rows.length
@@ -410,6 +561,20 @@ export async function getOrCreateGroupSession({ groupId, sessionDate, sessionTim
     .single()
   if (error) throw new Error(error.message)
   return created.id
+}
+
+/**
+ * Active suspend_during_holidays sur toutes les leçons planifie d'école du professeur.
+ * N'efface aucune leçon, met uniquement le flag à true sur les lignes concernées.
+ */
+export async function applyHolidaysToAllSchoolSeries(teacherId) {
+  const { error } = await supabase
+    .from(TABLES.lessons)
+    .update({ suspend_during_holidays: true })
+    .eq('teacher_id', teacherId)
+    .eq('context_type', 'ecole')
+    .eq('status', 'planifie')
+  if (error) throw new Error(error.message)
 }
 
 export async function updateLessonPlanningStatus(lessonId, planningStatus) {

@@ -12,7 +12,7 @@ function normalizeSearch(str) {
   return (str ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 }
 
-export default function AddLessonModal({ teacherId, lesson, onClose, onCreated }) {
+export default function AddLessonModal({ teacherId, lesson, onClose, onCreated, schoolZone = null }) {
   const isEdit = Boolean(lesson?.id)
   const [students, setStudents] = useState([])
   const [schools, setSchools] = useState([])
@@ -31,6 +31,8 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated }
   const [untilDate, setUntilDate] = useState('')
   // Intervalle entre deux occurrences récurrentes (1=hebdo, 2=quinzomadaire, etc.)
   const [intervalWeeks, setIntervalWeeks] = useState(1)
+  // Suspendre pendant les vacances scolaires (activé par défaut pour les cours d'école)
+  const [suspendHolidays, setSuspendHolidays] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -129,7 +131,7 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated }
     setSubmitting(true)
     try {
       if (recurring && !isEdit) {
-        const count = await createRecurringLessons(teacherId, form, untilDate, intervalWeeks)
+        const count = await createRecurringLessons(teacherId, form, untilDate, intervalWeeks, { suspendDuringHolidays: suspendHolidays, zone: schoolZone })
         alert(count + ' cours créés !')
         onCreated()
       } else {
@@ -374,7 +376,16 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated }
             {!isEdit && (
               <div className="border-t border-border-subtle pt-4">
                 <label className="flex items-center gap-3 cursor-pointer">
-                  <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} className="w-4 h-4 accent-guitar-600" />
+                  <input
+                    type="checkbox"
+                    checked={recurring}
+                    onChange={(e) => {
+                      setRecurring(e.target.checked)
+                      // Initialiser le défaut vacances selon le contexte au moment de l'activation
+                      if (e.target.checked) setSuspendHolidays(form.contextType === 'ecole')
+                    }}
+                    className="w-4 h-4 accent-guitar-600"
+                  />
                   <span className="text-sm font-medium">Cours récurrent</span>
                 </label>
                 {recurring && (
@@ -401,6 +412,17 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated }
                           : `Un cours toutes les ${intervalWeeks} semaines jusqu'à cette date.`}
                       </p>
                     </div>
+                    {schoolZone && (
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={suspendHolidays}
+                          onChange={(e) => setSuspendHolidays(e.target.checked)}
+                          className="w-4 h-4 accent-guitar-600"
+                        />
+                        <span className="text-sm">Pas de cours pendant les vacances scolaires (zone {schoolZone})</span>
+                      </label>
+                    )}
                   </div>
                 )}
               </div>
