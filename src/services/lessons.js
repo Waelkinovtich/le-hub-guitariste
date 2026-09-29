@@ -383,6 +383,35 @@ export async function upsertGroupAttendance({ teacherId, sessionId, memberKey, s
   if (error) throw new Error(error.message)
 }
 
+/**
+ * Retourne l'id d'une séance de groupe existante pour (groupId, sessionDate),
+ * ou en crée une nouvelle si elle n'existe pas (get-or-create).
+ * Utilisé quand on émarger depuis un créneau réservé lié à un groupe.
+ */
+export async function getOrCreateGroupSession({ groupId, sessionDate, sessionTime, durationMinutes }) {
+  const { data: existing } = await supabase
+    .from('group_sessions')
+    .select('id')
+    .eq('group_id', groupId)
+    .eq('session_date', sessionDate)
+    .maybeSingle()
+  if (existing) return existing.id
+
+  const { data: created, error } = await supabase
+    .from('group_sessions')
+    .insert({
+      group_id:         groupId,
+      session_date:     sessionDate,
+      session_time:     sessionTime ?? null,
+      duration_minutes: durationMinutes ?? null,
+      status:           'prevue',
+    })
+    .select('id')
+    .single()
+  if (error) throw new Error(error.message)
+  return created.id
+}
+
 export async function updateLessonPlanningStatus(lessonId, planningStatus) {
   const { error } = await supabase
     .from(TABLES.lessons)

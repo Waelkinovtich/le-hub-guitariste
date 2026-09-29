@@ -240,10 +240,10 @@ function ProposalCard({ response, proposals, onConfirm, confirming, schools = []
             <div className="flex items-center gap-2">
               <p className="font-medium text-foreground">{response.first_name || '—'} {response.last_name || ''}</p>
               {/* Lien vers la fiche élève — permet de corriger duree_cours_minutes sans quitter le planning */}
-              {response.student_id && onViewStudent && (
+              {resolveStudentId(response) && onViewStudent && (
                 <button
                   type="button"
-                  onClick={() => onViewStudent(response.student_id)}
+                  onClick={() => onViewStudent(resolveStudentId(response))}
                   className="text-[10px] text-guitar-400 hover:underline"
                 >
                   Voir la fiche
@@ -895,18 +895,21 @@ export default function SchedulingAssistantPage() {
           groupSessionsData = sessionsData ?? []
 
           const memberStudentIds = [...new Set((membersData ?? []).map((m) => m.student_id).filter(Boolean))]
-          let memberAvailMap = {}  // student_id → { firstName, availabilities }
+          let memberAvailMap = {}  // studentId → { firstName, availabilities }
 
           if (memberStudentIds.length > 0) {
+            // OR : certaines réponses ont student_id=NULL et matched_student_id=UUID (resolveStudentId)
+            const ids = memberStudentIds.join(',')
             const { data: memberResps } = await supabase
               .from('survey_responses')
-              .select('student_id, first_name, availabilities')
-              .in('student_id', memberStudentIds)
+              .select('student_id, matched_student_id, first_name, availabilities')
+              .or(`student_id.in.(${ids}),matched_student_id.in.(${ids})`)
               .order('submitted_at', { ascending: false })
-            // Garder la réponse la plus récente par student_id
+            // Garder la réponse la plus récente — clé = resolveStudentId
             ;(memberResps ?? []).forEach((r) => {
-              if (!memberAvailMap[r.student_id]) {
-                memberAvailMap[r.student_id] = { firstName: r.first_name ?? null, availabilities: r.availabilities ?? {} }
+              const sid = resolveStudentId(r)
+              if (sid && !memberAvailMap[sid]) {
+                memberAvailMap[sid] = { firstName: r.first_name ?? null, availabilities: r.availabilities ?? {} }
               }
             })
           }
@@ -941,7 +944,8 @@ export default function SchedulingAssistantPage() {
 
         // Charger les contextes élèves pour récupérer la durée de cours convenue.
         // Un contexte par (student_id, school_name) — on cherche celui de l'école du sondage.
-        const studentIds = [...new Set(rawResponses.map((r) => r.student_id).filter(Boolean))]
+        // resolveStudentId : matched_student_id ?? student_id — corrige les réponses avec student_id=NULL
+        const studentIds = [...new Set(rawResponses.map((r) => resolveStudentId(r)).filter(Boolean))]
         let contextsMap = {}
         if (studentIds.length > 0) {
           const { data: ctxData } = await supabase
@@ -956,7 +960,7 @@ export default function SchedulingAssistantPage() {
 
         // Enrichir chaque réponse avec la durée effective (priorité : contexte > sondage > 30).
         const enrichedResponses = rawResponses.map((r) => {
-          const ctxKey = `${r.student_id ?? ''}|${r.school_name ?? ''}`
+          const ctxKey = `${resolveStudentId(r) ?? ''}|${r.school_name ?? ''}`
           const contextDuree = contextsMap[ctxKey] ?? null
           return {
             ...r,
@@ -2000,7 +2004,7 @@ export default function SchedulingAssistantPage() {
       // Stocké dans l'objet leçon plutôt que refetché — les données ne changent plus après planification.
       const memberAvailabilities = selectedResponses.map((r) => ({
         responseId:    r.id,
-        studentId:     r.student_id ?? null,
+        studentId:     resolveStudentId(r),
         firstName:     r.first_name ?? null,
         availabilities: r.availabilities ?? {},
       }))
@@ -2109,10 +2113,11 @@ export default function SchedulingAssistantPage() {
         recurrenceSeriesId:     result.seriesId,
         recurrenceIntervalWeeks: 1,
       }])
+      setGroupSuccessMsg(`✓ Groupe planifié — séances créées jusqu'en juin. Visible dans le Planning.`)
     } catch (e) {
       alert('Erreur lors de la confirmation : ' + e.message)
     }
-  }, [])
+  }, [setGroupSuccessMsg])
 
   // ── T3 : Dégroupement d'un cours de groupe ───────────────────────────────────
 
@@ -2178,7 +2183,7 @@ export default function SchedulingAssistantPage() {
         if (fetchErr) throw new Error(fetchErr.message)
 
         // Enrichir avec effective_duration_minutes depuis student_contexts (même logique que load())
-        const studentIds = [...new Set((restoredRaw ?? []).map((r) => r.student_id).filter(Boolean))]
+        const studentIds = [...new Set((restoredRaw ?? []).map((r) => resolveStudentId(r)).filter(Boolean))]
         let contextsMap = {}
         if (studentIds.length > 0) {
           const { data: ctxData } = await supabase
@@ -2192,7 +2197,7 @@ export default function SchedulingAssistantPage() {
         }
 
         const membersToRestore = (restoredRaw ?? []).map((r) => {
-          const ctxKey = `${r.student_id ?? ''}|${r.school_name ?? ''}`
+          const ctxKey = `${resolveStudentId(r) ?? ''}|${r.school_name ?? ''}`
           return {
             ...r,
             status: 'attente',
@@ -3245,7 +3250,17 @@ export default function SchedulingAssistantPage() {
               {groupSuccessMsg && (
                 <div className="px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-400 font-medium flex items-center justify-between gap-2">
                   <span>{groupSuccessMsg}</span>
-                  <button type="button" onClick={() => setGroupSuccessMsg('')} className="text-emerald-400/60 hover:text-emerald-400">✕</button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => navigate('/professeur/planning')}
+                      className="flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-500/20 border border-emerald-500/40 hover:bg-emerald-500/30 transition-colors text-emerald-300"
+                    >
+                      <CalendarDays className="w-3 h-3" />
+                      Planning
+                    </button>
+                    <button type="button" onClick={() => setGroupSuccessMsg('')} className="text-emerald-400/60 hover:text-emerald-400">✕</button>
+                  </div>
                 </div>
               )}
 

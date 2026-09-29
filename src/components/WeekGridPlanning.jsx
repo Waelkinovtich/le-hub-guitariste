@@ -1,9 +1,10 @@
 import { useRef, useState, useMemo, useCallback, useEffect } from 'react'
-import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X, Scissors, AlertTriangle, Edit2, Repeat2, ClipboardCheck } from 'lucide-react'
+import { Trash2, Copy, UserRound, ChevronLeft, ChevronRight, Clock, Loader2, X, Scissors, AlertTriangle, Edit2, Repeat2, ClipboardCheck, Navigation } from 'lucide-react'
 import { updateLesson, updateRecurrenceInterval, updateGroupSessionRecurrence } from '../services/lessons'
 import { getSchoolColor, SCHOOL_COLOR_DEFAULT } from '../utils/schoolColors'
 import DeleteLessonModal from './DeleteLessonModal'
 import { supabase } from '../lib/supabase'
+import AttendanceQuickActions from './AttendanceQuickActions'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -816,7 +817,7 @@ function ReservedSlotEditPanel({ slot, onClose, onSaved }) {
 // cascadeEnabled : quand true, un dépôt sur une proposition déplaçable déclenche onCascadeRequest.
 // onCascadeRequest(displacedLesson, newDay, newTime, durationMinutes) : intercepte le DnD
 //   pour que le parent recalcule un créneau alternatif pour la leçon déplacée.
-export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], reservedSlotExceptions = [], validDropZones = [], eventsByDay = {}, onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, onDegrouper = null, allowOverlap = false, outsideAvailIds = null, originalProposalMap = null, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null, onEditReservedSlot = null, onSlotException = null, onEmargement = null }) {
+export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], reservedSlotExceptions = [], validDropZones = [], eventsByDay = {}, onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, onDegrouper = null, allowOverlap = false, outsideAvailIds = null, originalProposalMap = null, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null, onEditReservedSlot = null, onSlotException = null, onEmargement = null, onQuickPresent = null, groupAttendanceSummary = {}, onEmargementReservedSlot = null, buildGpsUrl = null, onEditEvent = null }) {
   // Date du jour (ISO) — sert à T3 (icône cours passé non émargé)
   const TODAY_ISO = new Date().toISOString().slice(0, 10)
 
@@ -1332,6 +1333,21 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           </p>
                         )}
                       </div>
+                      {/* Bouton émargement si le créneau est lié à un groupe d'ensemble */}
+                      {onEmargementReservedSlot && rs.groupId && (
+                        <button
+                          type="button"
+                          aria-label="Émarger les membres"
+                          title="Émarger les membres du groupe"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); onEmargementReservedSlot(rs, day.iso) }}
+                          style={{ position: 'absolute', bottom: 0, right: 0, zIndex: 20, padding: '3px 4px' }}
+                          className="rounded-tl-md bg-emerald-500/20 text-emerald-400/80 hover:text-emerald-300 transition-colors
+                                     focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                        >
+                          <ClipboardCheck className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
                   )
                 })}
@@ -1599,6 +1615,27 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         </button>
                       )}
 
+                      {/* GPS — navigation vers l'école (mécanisme buildGpsUrl de PlanningPage) */}
+                      {buildGpsUrl && lesson.schoolName && (() => {
+                        const gpsUrl = buildGpsUrl(lesson.schoolName)
+                        return gpsUrl ? (
+                          <a
+                            href={gpsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`Naviguer vers ${lesson.schoolName}`}
+                            title={`Naviguer vers ${lesson.schoolName}`}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                            className="absolute top-0 right-0 z-20 p-0.5 rounded-bl-md bg-void/50 text-white/80
+                                       opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity
+                                       focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
+                          >
+                            <Navigation className="w-3 h-3" />
+                          </a>
+                        ) : null
+                      })()}
+
                       {/* Fiche élève — sur toutes les tuiles avec un élève identifiable :
                           _studentId (lié) OU _responseId (sondage sans compte).
                           isGroupe/isEnsemble exclus naturellement (pas de _responseId individuel). */}
@@ -1685,36 +1722,51 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         </button>
                       )}
 
-                      {/* T2 — Bouton émargement : cours individuels confirmés */}
-                      {onEmargement && isConfirme && lesson.studentId && !lesson.id?.startsWith('proposal-') && !estSelectablePourGroupe && (
-                        <button
-                          type="button"
-                          aria-label="Émarger ce cours"
-                          title="Émarger — présence, absence, excusé…"
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onClick={(e) => { e.stopPropagation(); onEmargement(lesson) }}
-                          className="absolute bottom-0 left-0 z-20 p-0.5 rounded-tr-md bg-void/50 text-white/80
-                                     opacity-0 group-hover:opacity-100 hover:text-guitar-400 transition-opacity
-                                     focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
-                        >
-                          <ClipboardCheck className="w-3 h-3" />
-                        </button>
+                      {/* Émargement rapide — cours individuels confirmés, toujours visible (tactile) */}
+                      {isConfirme && lesson.studentId && !lesson.id?.startsWith('proposal-') && !estSelectablePourGroupe && (onEmargement || onQuickPresent) && (
+                        <AttendanceQuickActions
+                          variant="tile"
+                          effectiveStatus={lesson.status ?? 'planifie'}
+                          onPresent={() => onQuickPresent?.(lesson)}
+                          onOpenModal={() => onEmargement?.(lesson)}
+                        />
                       )}
 
-                      {/* T5 — Bouton émargement : tuiles groupe/répétition avec séance en DB */}
+                      {/* Émargement groupe — icône + badge x/y toujours visibles (tactile) */}
                       {onEmargement && isGroupe && lesson._groupSessionId && !estSelectablePourGroupe && (
-                        <button
-                          type="button"
-                          aria-label="Émarger les membres du groupe"
-                          title="Émarger — présence des membres"
+                        <div
+                          style={{ position: 'absolute', bottom: 0, left: 0, zIndex: 20, display: 'flex', alignItems: 'center' }}
                           onPointerDown={(e) => e.stopPropagation()}
-                          onClick={(e) => { e.stopPropagation(); onEmargement(lesson) }}
-                          className="absolute bottom-0 left-0 z-20 p-0.5 rounded-tr-md bg-void/50 text-emerald-400/80
-                                     opacity-0 group-hover:opacity-100 hover:text-emerald-300 transition-opacity
-                                     focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
                         >
-                          <ClipboardCheck className="w-3 h-3" />
-                        </button>
+                          <button
+                            type="button"
+                            aria-label="Émarger les membres du groupe"
+                            title="Émarger — présence des membres"
+                            onClick={(e) => { e.stopPropagation(); onEmargement(lesson) }}
+                            style={{ padding: '4px 5px' }}
+                            className="rounded-tr-md bg-void/50 text-emerald-400/80 hover:text-emerald-300 transition-colors
+                                       focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                          >
+                            <ClipboardCheck className="w-3 h-3" />
+                          </button>
+                          {/* Badge x/y affiché dès qu'au moins un membre a été émargé */}
+                          {groupAttendanceSummary[lesson._groupSessionId] && (() => {
+                            const { present, total } = groupAttendanceSummary[lesson._groupSessionId]
+                            return total > 0 ? (
+                              <span
+                                style={{
+                                  fontSize: 8, fontWeight: 700, lineHeight: 1,
+                                  padding: '2px 3px',
+                                  background: present === total ? '#22c55e33' : '#f9731630',
+                                  color: present === total ? '#22c55e' : '#f97316',
+                                  borderRadius: '0 4px 0 0',
+                                }}
+                              >
+                                {present}/{total}
+                              </span>
+                            ) : null
+                          })()}
+                        </div>
                       )}
 
                       {/* Indicateur de statut d'émargement — toujours visible sur les cours confirmés émargés.
@@ -1761,6 +1813,32 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   )
                   })
                 })()}
+
+                {/* Événements avec heure — rendus comme blocs ambrés positionnés dans la grille */}
+                {onEditEvent && (eventsByDay[day.iso] ?? []).filter((ev) => ev.start_time && ev.duration_minutes).map((ev) => {
+                  const [h, m] = ev.start_time.split(':').map(Number)
+                  const evStart = (h - START_HOUR) * 4 + Math.floor(m / 15)
+                  const evSlots = Math.max(1, Math.round(ev.duration_minutes / 15))
+                  if (evStart < 0 || evStart >= TOTAL_SLOTS) return null
+                  return (
+                    <div
+                      key={ev.id}
+                      title={ev.title + (ev.school_name ? ` — ${ev.school_name}` : '')}
+                      style={{
+                        position: 'absolute',
+                        top: evStart * slotH,
+                        height: Math.min(evSlots, TOTAL_SLOTS - evStart) * slotH,
+                        left: 2, right: 2, zIndex: 8,
+                        cursor: 'pointer',
+                      }}
+                      className="rounded overflow-hidden bg-amber-500/20 border border-amber-500/40 hover:bg-amber-500/30 transition-colors"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => { e.stopPropagation(); onEditEvent(ev) }}
+                    >
+                      <p className="text-[9px] font-medium text-amber-300 leading-tight truncate px-1 pt-0.5">{ev.title}</p>
+                    </div>
+                  )
+                })}
               </div>
             )
           })}

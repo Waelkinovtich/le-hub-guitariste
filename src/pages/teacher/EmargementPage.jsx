@@ -1,10 +1,12 @@
-import { useCallback, useState, useEffect } from 'react'
-import { FileDown, CalendarDays, ClipboardCheck, Pencil, Trash2, Check, EyeOff, Eye, Users, ChevronDown, ChevronUp } from 'lucide-react'
+import { useCallback, useState } from 'react'
+import { FileDown, CalendarDays, Pencil, Trash2, EyeOff, Eye, Users, ChevronDown, ChevronUp } from 'lucide-react'
+import AttendanceQuickActions from '../../components/AttendanceQuickActions'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import { useRegisterRefresh } from '../../contexts/RefreshContext'
 import { useUndoRedo } from '../../contexts/UndoRedoContext'
-import { fetchLessonsInRange, updateLessonStatus, fetchGroupSessionAttendance, upsertGroupAttendance } from '../../services/lessons'
+import { fetchLessonsInRange, updateLessonStatus } from '../../services/lessons'
+import GroupMembresPanel from '../../components/GroupMembresPanel'
 import { supabase } from '../../lib/supabase'
 import { fetchSchoolNames } from '../../services/students'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
@@ -67,107 +69,6 @@ function getRange(period) {
 // fmtDuree : utiliser minutesToLabel importé depuis utils/format.js
 const fmtDuree = minutesToLabel
 
-// Statuts d'émargement pour les membres de groupe (sous-ensemble de LESSON_STATUSES)
-const ATTENDANCE_STATUSES = [
-  { value: 'present', label: 'Présent', color: '#22c55e' },
-  { value: 'absent',  label: 'Absent',  color: '#ef4444' },
-  { value: 'excuse',  label: 'Excusé',  color: '#3b82f6' },
-]
-
-/**
- * Panneau de présence par membre pour une séance de groupe.
- * Charge les membres du groupe et leurs statuts depuis group_session_attendance.
- * Dépend du BLOC T4 migration — affiche un avertissement si la table n'existe pas.
- */
-function GroupMembresPanel({ sessionId, groupId, teacherId }) {
-  const [membres, setMembres]         = useState([])
-  const [attendance, setAttendance]   = useState({})  // student_id → status
-  const [loading, setLoading]         = useState(true)
-  const [tableMissing, setTableMissing] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      setLoading(true)
-      // Membres du groupe
-      const { data: membresData } = await supabase
-        .from('group_members')
-        .select('student_id, students:student_id(id, first_name, last_name)')
-        .eq('group_id', groupId)
-      if (cancelled) return
-
-      const m = (membresData ?? []).filter(r => r.student_id)
-      setMembres(m)
-
-      // Attendance — peut échouer si BLOC T4 non exécuté
-      try {
-        const rows = await fetchGroupSessionAttendance(sessionId)
-        if (cancelled) return
-        const map = {}
-        rows.forEach(r => { if (r.student_id) map[r.student_id] = r.status })
-        setAttendance(map)
-      } catch (e) {
-        if (cancelled) return
-        // 42P01 = table inexistante
-        if (e.message.includes('42P01') || e.message.includes('does not exist')) setTableMissing(true)
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    load()
-    return () => { cancelled = true }
-  }, [sessionId, groupId])
-
-  async function handleMemberStatus(studentId, status) {
-    setAttendance(prev => ({ ...prev, [studentId]: status }))
-    try {
-      await upsertGroupAttendance({ teacherId, sessionId, memberKey: { student_id: studentId }, status })
-    } catch (e) {
-      setAttendance(prev => { const n = { ...prev }; delete n[studentId]; return n })
-      alert('Erreur : ' + e.message)
-    }
-  }
-
-  if (loading) return <p className="text-xs text-muted-foreground px-2 py-1">Chargement…</p>
-  if (tableMissing) return (
-    <p className="text-xs text-amber-400 px-2 py-1">
-      Table group_session_attendance manquante — exécutez le BLOC T4 de la migration.
-    </p>
-  )
-  if (membres.length === 0) return <p className="text-xs text-muted-foreground px-2 py-1">Aucun membre lié.</p>
-
-  return (
-    <div className="flex flex-col gap-1 pt-1">
-      {membres.map(m => {
-        const nom = [m.students?.first_name, m.students?.last_name].filter(Boolean).join(' ') || m.student_id?.slice(0, 8)
-        const status = attendance[m.student_id] ?? null
-        return (
-          <div key={m.student_id} className="flex items-center gap-2 text-xs">
-            <span className="w-28 truncate text-foreground font-medium">{nom}</span>
-            <div className="flex gap-1">
-              {ATTENDANCE_STATUSES.map(s => (
-                <button
-                  key={s.value}
-                  type="button"
-                  onClick={() => handleMemberStatus(m.student_id, s.value)}
-                  title={s.label}
-                  className="px-2 py-0.5 rounded-md border text-[10px] font-medium transition-all"
-                  style={{
-                    borderColor: s.color + (status === s.value ? 'CC' : '40'),
-                    color: status === s.value ? s.color : s.color + '80',
-                    background: status === s.value ? s.color + '20' : 'transparent',
-                  }}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
 
 export default function ÉmargementPage() {
   const { user } = useAuth()
@@ -352,30 +253,12 @@ export default function ÉmargementPage() {
                         <td className="px-4 py-3 text-muted-foreground">{lesson.topic}</td>
                         <td className="px-4 py-3 text-muted-foreground">{fmtDuree(lesson.durationMinutes)}</td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            {/* Bouton "Présent" rapide — un seul clic, pas de modale */}
-                            {!isPresent && (
-                              <button
-                                type="button"
-                                onClick={() => handleQuickPresent(lesson)}
-                                title="Marquer présent"
-                                className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
-                              >
-                                <Check className="w-4 h-4" />
-                              </button>
-                            )}
-                            {/* Badge statut — clic pour ouvrir la modale complète (absent/excusé/annulé) */}
-                            <button
-                              type="button"
-                              onClick={() => setStatusLesson(lesson)}
-                              title="Modifier le statut de présence"
-                              className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[36px] rounded-full text-xs font-medium border hover:opacity-80 transition-opacity cursor-pointer"
-                              style={{ backgroundColor: color + '20', borderColor: color + '50', color }}
-                            >
-                              <ClipboardCheck className="w-3 h-3" />
-                              {STATUS_LABELS[effectiveStatus] ?? effectiveStatus}
-                            </button>
-                          </div>
+                          <AttendanceQuickActions
+                            variant="row"
+                            effectiveStatus={effectiveStatus}
+                            onPresent={() => handleQuickPresent(lesson)}
+                            onOpenModal={() => setStatusLesson(lesson)}
+                          />
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1">
@@ -387,14 +270,17 @@ export default function ÉmargementPage() {
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => setDeleteLesson(lesson)}
-                              title="Supprimer ce cours"
-                              className="p-2 min-h-[36px] min-w-[36px] rounded-lg text-muted hover:text-guitar-400 hover:bg-guitar-600/10 transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {/* Suppression uniquement si le cours n'a jamais eu lieu (planifié) */}
+                            {isPlanifie && (
+                              <button
+                                type="button"
+                                onClick={() => setDeleteLesson(lesson)}
+                                title="Supprimer ce cours (jamais donné)"
+                                className="p-2 min-h-[36px] min-w-[36px] rounded-lg text-muted hover:text-guitar-400 hover:bg-guitar-600/10 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -489,10 +375,22 @@ export default function ÉmargementPage() {
         lesson={statusLesson}
         onClose={() => setStatusLesson(null)}
         onUpdated={(newStatus) => {
-          // Mise à jour optimiste : applique le nouveau statut immédiatement pour préserver
-          // la position de défilement — pas de passage par loading=true
           if (newStatus && statusLesson) {
-            setLessonStatusOverrides((prev) => ({ ...prev, [statusLesson.id]: newStatus }))
+            const prev = statusLesson.status
+            const lid = statusLesson.id
+            // Mise à jour optimiste — préserve la position de défilement
+            setLessonStatusOverrides((o) => ({ ...o, [lid]: newStatus }))
+            pushAction?.({
+              label: `Émargement — ${statusLesson.studentName ?? 'cours'}`,
+              undo: async () => {
+                setLessonStatusOverrides((o) => ({ ...o, [lid]: prev }))
+                await updateLessonStatus(lid, prev, null, null)
+              },
+              redo: async () => {
+                setLessonStatusOverrides((o) => ({ ...o, [lid]: newStatus }))
+                await updateLessonStatus(lid, newStatus, null, null)
+              },
+            })
           }
           setStatusLesson(null)
         }}

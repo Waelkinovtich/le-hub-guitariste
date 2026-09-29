@@ -176,6 +176,9 @@ function StepInstrument({ data, onChange }) {
           {INSTRUMENTS_ENSEMBLE.map((i) => <option key={i} value={i}>{i}</option>)}
         </select>
       </Field>
+      <p className="text-xs italic text-muted-foreground -mt-2">
+        Guitare folk et guitare électrique sont plus utilisées pour les musiques actuelles ; la guitare nylon est plus utilisée pour la musique classique.
+      </p>
 
       {/* Champ de précision quand "Autre" est sélectionné */}
       {data.instrument === 'Autre' && (

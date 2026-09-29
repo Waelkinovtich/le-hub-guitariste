@@ -10,13 +10,25 @@ import { supabase } from '../lib/supabase'
 export async function fetchEventsInRange(teacherId, fromDate, toDate) {
   const { data, error } = await supabase
     .from('school_notes_events')
-    .select('id, title, event_date, type_evenement, school_name')
+    .select('id, title, event_date, type_evenement, school_name, start_time, duration_minutes, recurrence_series_id')
     .eq('teacher_id', teacherId)
     .eq('type', 'evenement')
     .gte('event_date', fromDate)
     .lte('event_date', toDate)
     .order('event_date')
   if (error) {
+    // Fallback si colonnes start_time/duration_minutes absentes (BLOC T7e non exécuté)
+    if (error.code === '42703') {
+      const { data: d2 } = await supabase
+        .from('school_notes_events')
+        .select('id, title, event_date, type_evenement, school_name')
+        .eq('teacher_id', teacherId)
+        .eq('type', 'evenement')
+        .gte('event_date', fromDate)
+        .lte('event_date', toDate)
+        .order('event_date')
+      return d2 ?? []
+    }
     console.warn('fetchEventsInRange:', error.message)
     return []
   }
@@ -28,7 +40,7 @@ export async function fetchEventsInRange(teacherId, fromDate, toDate) {
  * Si intervalWeeks > 1 ou endDate fourni, crée une série récurrente jusqu'à endDate.
  * Retourne la première ligne créée.
  */
-export async function createSchoolEvent({ teacherId, schoolName, title, content, eventDate, typeEvenement, intervalWeeks = 1, endDate = null }) {
+export async function createSchoolEvent({ teacherId, schoolName, title, content, eventDate, typeEvenement, intervalWeeks = 1, endDate = null, startTime = null, durationMinutes = null }) {
   const seriesId = (intervalWeeks > 1 || endDate) ? crypto.randomUUID() : null
 
   // Génère les dates de la série
@@ -53,6 +65,8 @@ export async function createSchoolEvent({ teacherId, schoolName, title, content,
     type_evenement:            typeEvenement ?? 'autre',
     recurrence_series_id:      seriesId,
     recurrence_interval_weeks: safeInterval,
+    start_time:                startTime || null,
+    duration_minutes:          durationMinutes ? Number(durationMinutes) : null,
   }))
 
   const { data, error } = await supabase
@@ -73,4 +87,40 @@ export async function createSchoolEvent({ teacherId, schoolName, title, content,
     throw new Error(error.message)
   }
   return data?.[0] ?? null
+}
+
+/** Modifie une seule occurrence d'événement. */
+export async function updateSchoolEventOccurrence(id, { title, startTime, durationMinutes, typeEvenement, schoolName }) {
+  const { error } = await supabase
+    .from('school_notes_events')
+    .update({
+      title:            title.trim(),
+      start_time:       startTime || null,
+      duration_minutes: durationMinutes ? Number(durationMinutes) : null,
+      type_evenement:   typeEvenement ?? 'autre',
+      school_name:      schoolName || null,
+    })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+/** Modifie toutes les occurrences d'une série d'événements. */
+export async function updateSchoolEventSeries(seriesId, { title, startTime, durationMinutes, typeEvenement, schoolName }) {
+  const { error } = await supabase
+    .from('school_notes_events')
+    .update({
+      title:            title.trim(),
+      start_time:       startTime || null,
+      duration_minutes: durationMinutes ? Number(durationMinutes) : null,
+      type_evenement:   typeEvenement ?? 'autre',
+      school_name:      schoolName || null,
+    })
+    .eq('recurrence_series_id', seriesId)
+  if (error) throw new Error(error.message)
+}
+
+/** Supprime une seule occurrence d'événement. */
+export async function deleteSchoolEventOccurrence(id) {
+  const { error } = await supabase.from('school_notes_events').delete().eq('id', id)
+  if (error) throw new Error(error.message)
 }

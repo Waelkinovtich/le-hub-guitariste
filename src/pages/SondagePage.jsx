@@ -354,6 +354,9 @@ function StepLogistique({ data, onChange, availableDurations, isCesu }) {
           {INSTRUMENTS.map((i) => <option key={i} value={i}>{i}</option>)}
         </select>
       </Field>
+      <p className="text-xs italic text-muted-foreground -mt-2">
+        Guitare folk et guitare électrique sont plus utilisées pour les musiques actuelles ; la guitare nylon est plus utilisée pour la musique classique.
+      </p>
       {showDurationPicker && (
         <Field label="Durée de cours souhaitée">
           <div className="flex flex-col gap-2">

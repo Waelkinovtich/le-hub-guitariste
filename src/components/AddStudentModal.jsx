@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Loader2 } from 'lucide-react'
+import { X, Loader2, ChevronDown } from 'lucide-react'
 import { createStudent, updateStudent, syncStudentContexts } from '../services/students'
 import { fetchTeacherSchools, findOrCreateSchool } from '../services/schools'
 import { getSchoolColor } from '../utils/schoolColors'
@@ -101,6 +101,14 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
   const [submitting, setSubmitting] = useState(false)
   const [error, setError]           = useState('')
   const [knownSchools, setKnownSchools] = useState([])
+
+  // Sections tuteurs repliables — dépliées par défaut seulement si des données existent
+  const [tuteur1Open, setTuteur1Open] = useState(
+    Boolean(student && (student.parent1Name || student.parent1Phone || student.parent1Email))
+  )
+  const [tuteur2Open, setTuteur2Open] = useState(
+    Boolean(student && (student.parent2Name || student.parent2Phone || student.parent2Email))
+  )
 
   useEffect(() => {
     fetchTeacherSchools(teacherId).then(setKnownSchools).catch(() => {})
@@ -239,8 +247,11 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
 
           {/* ── Parent / Tuteur 1 ─────────────────────────────────────────── */}
           <div>
-            <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3">Parent / Tuteur 1</p>
-            <div className="space-y-3">
+            <button type="button" onClick={() => setTuteur1Open((o) => !o)} className="flex items-center gap-1.5 text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3 w-full text-left">
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${tuteur1Open ? '' : '-rotate-90'}`} />
+              Parent / Tuteur 1
+            </button>
+            {tuteur1Open && <div className="space-y-3">
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-muted-foreground mb-1.5">Prénom Nom</label>
@@ -277,13 +288,16 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
                   {USAGES_TUTEUR.map((u) => <option key={u} value={u}>{u}</option>)}
                 </select>
               </div>
-            </div>
+            </div>}
           </div>
 
           {/* ── Parent / Tuteur 2 ─────────────────────────────────────────── */}
           <div>
-            <p className="text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3">Parent / Tuteur 2</p>
-            <div className="space-y-3">
+            <button type="button" onClick={() => setTuteur2Open((o) => !o)} className="flex items-center gap-1.5 text-xs font-semibold text-guitar-400 uppercase tracking-wider mb-3 w-full text-left">
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${tuteur2Open ? '' : '-rotate-90'}`} />
+              Parent / Tuteur 2
+            </button>
+            {tuteur2Open && <div className="space-y-3">
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-muted-foreground mb-1.5">Prénom Nom</label>
@@ -320,7 +334,7 @@ export default function AddStudentModal({ teacherId, student, contexts = [], all
                   {USAGES_TUTEUR.map((u) => <option key={u} value={u}>{u}</option>)}
                 </select>
               </div>
-            </div>
+            </div>}
           </div>
 
           {/* ── Cours — cases à cocher indépendantes École + CESU ───────── */}

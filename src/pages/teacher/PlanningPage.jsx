@@ -7,12 +7,14 @@ import { useAuth } from '../../context/AuthContext'
 import HelpTooltip from '../../components/HelpTooltip'
 import { useFetch } from '../../hooks/useFetch'
 import { useRegisterRefresh } from '../../contexts/RefreshContext'
-import { fetchLessonsInRange, updateLessonPlanningStatus } from '../../services/lessons'
+import { fetchLessonsInRange, updateLessonPlanningStatus, updateLessonStatus, getOrCreateGroupSession } from '../../services/lessons'
+import { useUndoRedo } from '../../contexts/UndoRedoContext'
 import { fetchTeacherSchools } from '../../services/schools'
 import { startOfWeek, toISODate } from '../../utils/format'
 import { getPériodes, getCurrentPériode } from '../../utils/vacances'
 import AddLessonModal from '../../components/AddLessonModal'
 import LessonStatusModal from '../../components/LessonStatusModal'
+import GroupAttendanceModal from '../../components/GroupAttendanceModal'
 import { getStatusInfo } from '../../utils/lessonStatus'
 import DeleteLessonModal from '../../components/DeleteLessonModal'
 import YearView from "../../components/YearView"
@@ -20,7 +22,7 @@ import WeekGridView from "../../components/WeekGridView"
 import MonthView from '../../components/MonthView'
 import WeekGridPlanning from '../../components/WeekGridPlanning'
 import { fetchReservedSlots, fetchSlotExceptions, upsertSlotException, deleteSlotException } from '../../services/reservedSlots'
-import { fetchEventsInRange, createSchoolEvent } from '../../services/schoolEvents'
+import { fetchEventsInRange, createSchoolEvent, updateSchoolEventOccurrence, updateSchoolEventSeries, deleteSchoolEventOccurrence } from '../../services/schoolEvents'
 
 const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: 'Mois' }, { value: 'période', label: 'Période scolaire' }, { value: 'année', label: 'Année' }, { value: 'récap', label: 'Récapitulatif' }]
@@ -128,6 +130,7 @@ function RecapView({ lessons, périodes }) {
 export default function PlanningPage() {
   const { user } = useAuth()
   const zone = user.schoolZone ?? 'B'
+  const { pushAction } = useUndoRedo() ?? {}
   const [view, setView] = useState('semaine')
   const [weekOffset, setWeekOffset] = useState(0)
   const [monthOffset, setMonthOffset] = useState(0)
@@ -147,8 +150,17 @@ export default function PlanningPage() {
   const [duplicateDraft, setDuplicateDraft]     = useState(null)
   const [hideEnvisages, setHideEnvisages] = useState(false)
   const [togglingId, setTogglingId] = useState(null)
+  // Overrides optimistes de statut — évite un reload complet après émargement dans le Planning
+  const [lessonStatusOverrides, setLessonStatusOverrides] = useState({})
+  // Modal d'émargement de groupe (tuile groupe → GroupAttendanceModal)
+  const [groupLesson, setGroupLesson] = useState(null)
+  // Résumés de présence par séance de groupe : sessionId → { present, total }
+  const [groupAttendanceSummary, setGroupAttendanceSummary] = useState({})
+
   // Créneaux réservés (hebdomadaires, indépendants de la plage de dates)
-  const [reservedSlots, setReservedSlots] = useState([])
+  const [reservedSlots, setReservedSlots]   = useState([])
+  // get-or-create en cours (évite double-clic sur un créneau réservé lié à un groupe)
+  const [gettingGroupSession, setGettingGroupSession] = useState(false)
   // Exceptions ponctuelles sur les créneaux réservés (T2) — rechargées à chaque changement de semaine
   const [reservedSlotExceptions, setReservedSlotExceptions] = useState([])
 
@@ -156,9 +168,11 @@ export default function PlanningPage() {
   const [schoolEvents, setSchoolEvents] = useState([])
   const [showCreateEvent, setShowCreateEvent] = useState(false)
   // Formulaire de création d'événement
-  const [newEvent, setNewEvent] = useState({ title: '', eventDate: '', typeEvenement: 'reunion', schoolName: '', content: '', intervalWeeks: 1, endDate: '' })
+  const [newEvent, setNewEvent] = useState({ title: '', eventDate: '', typeEvenement: 'reunion', schoolName: '', content: '', intervalWeeks: 1, endDate: '', startTime: '', durationMinutes: 60 })
   const [savingEvent, setSavingEvent] = useState(false)
   const [eventError, setEventError] = useState('')
+  // Édition d'un événement existant (bloc dans la grille)
+  const [editEvent, setEditEvent] = useState(null)
 
   // Coordonnées GPS des écoles indexées par nom (pour les boutons de navigation)
   const [schoolCoords, setSchoolCoords] = useState({})
@@ -263,8 +277,33 @@ export default function PlanningPage() {
     })
   }, [weekStart, lessons])
 
+  // Émargement rapide depuis les tuiles — un geste, pas de modale
+  const handleQuickPresent = useCallback(async (lesson) => {
+    const previousStatus = lesson.status
+    setLessonStatusOverrides((prev) => ({ ...prev, [lesson.id]: 'present' }))
+    try {
+      await updateLessonStatus(lesson.id, 'present', null, null)
+      pushAction?.({
+        label: `Présent — ${lesson.studentName ?? 'cours'}`,
+        undo: async () => {
+          setLessonStatusOverrides((prev) => ({ ...prev, [lesson.id]: previousStatus }))
+          await updateLessonStatus(lesson.id, previousStatus, null, null)
+        },
+        redo: async () => {
+          setLessonStatusOverrides((prev) => ({ ...prev, [lesson.id]: 'present' }))
+          await updateLessonStatus(lesson.id, 'present', null, null)
+        },
+      })
+    } catch (e) {
+      setLessonStatusOverrides((prev) => { const n = { ...prev }; delete n[lesson.id]; return n })
+      alert('Erreur : ' + e.message)
+    }
+  }, [pushAction])
+
   const displayedLessons = useMemo(() => {
-    let all = lessons ?? []
+    let all = (lessons ?? []).map((l) =>
+      lessonStatusOverrides[l.id] ? { ...l, status: lessonStatusOverrides[l.id] } : l
+    )
     if (hideEnvisages) all = all.filter((l) => l.planningStatus !== 'envisage')
     if (selectedDay) return all.filter((l) => l.lessonDate === selectedDay)
     if (view === 'semaine') {
@@ -272,7 +311,7 @@ export default function PlanningPage() {
       return all.filter((l) => l.lessonDate >= from && l.lessonDate <= to)
     }
     return all
-  }, [lessons, selectedDay, view, weekStart, weekEnd, hideEnvisages])
+  }, [lessons, lessonStatusOverrides, selectedDay, view, weekStart, weekEnd, hideEnvisages])
 
   // Génère l'URL de navigation GPS selon la préférence du prof et la disponibilité des
   // coordonnées. Un seul champ destination est renseigné : l'app de navigation démarre
@@ -311,23 +350,43 @@ export default function PlanningPage() {
     return map
   }, [schoolEvents])
 
+  const handleSaveEditEvent = async ({ mode }) => {
+    if (!editEvent) return
+    const { id, recurrence_series_id, _edit } = editEvent
+    try {
+      if (mode === 'series' && recurrence_series_id) {
+        await updateSchoolEventSeries(recurrence_series_id, _edit)
+      } else if (mode === 'delete') {
+        await deleteSchoolEventOccurrence(id)
+      } else {
+        await updateSchoolEventOccurrence(id, _edit)
+      }
+      setEditEvent(null)
+      fetchEventsInRange(user.id, range.from, range.to).then(setSchoolEvents).catch(() => {})
+    } catch (err) {
+      alert('Erreur : ' + err.message)
+    }
+  }
+
   const handleCreateEvent = async (e) => {
     e.preventDefault()
     if (!newEvent.title.trim() || !newEvent.eventDate) { setEventError('Titre et date requis.'); return }
     setSavingEvent(true); setEventError('')
     try {
       await createSchoolEvent({
-        teacherId:      user.id,
-        schoolName:     newEvent.schoolName || null,
-        title:          newEvent.title,
-        content:        newEvent.content,
-        eventDate:      newEvent.eventDate,
-        typeEvenement:  newEvent.typeEvenement,
-        intervalWeeks:  newEvent.intervalWeeks,
-        endDate:        newEvent.intervalWeeks >= 1 && newEvent.endDate ? newEvent.endDate : null,
+        teacherId:       user.id,
+        schoolName:      newEvent.schoolName || null,
+        title:           newEvent.title,
+        content:         newEvent.content,
+        eventDate:       newEvent.eventDate,
+        typeEvenement:   newEvent.typeEvenement,
+        intervalWeeks:   newEvent.intervalWeeks,
+        endDate:         newEvent.intervalWeeks >= 1 && newEvent.endDate ? newEvent.endDate : null,
+        startTime:       newEvent.startTime || null,
+        durationMinutes: newEvent.startTime ? newEvent.durationMinutes : null,
       })
       setShowCreateEvent(false)
-      setNewEvent({ title: '', eventDate: '', typeEvenement: 'reunion', schoolName: '', content: '', intervalWeeks: 1, endDate: '' })
+      setNewEvent({ title: '', eventDate: '', typeEvenement: 'reunion', schoolName: '', content: '', intervalWeeks: 1, endDate: '', startTime: '', durationMinutes: 60 })
       fetchEventsInRange(user.id, range.from, range.to).then(setSchoolEvents).catch(() => {})
     } catch (err) {
       setEventError(err.message)
@@ -485,7 +544,35 @@ export default function PlanningPage() {
             // choisit lui-même la nouvelle date dans la modale.
           })}
           onDurationChange={() => reload()}
-          onEmargement={(lesson) => setStatusLesson(lesson)}
+          buildGpsUrl={buildGpsUrl}
+          onEditEvent={(ev) => setEditEvent({ ...ev, _edit: { title: ev.title, startTime: ev.start_time ?? '', durationMinutes: ev.duration_minutes ?? 60, typeEvenement: ev.type_evenement ?? 'autre', schoolName: ev.school_name ?? '' } })}
+          onEmargement={(lesson) => lesson._groupSessionId ? setGroupLesson(lesson) : setStatusLesson(lesson)}
+          groupAttendanceSummary={groupAttendanceSummary}
+          onQuickPresent={handleQuickPresent}
+          onEmargementReservedSlot={async (rs, date) => {
+            if (gettingGroupSession) return
+            setGettingGroupSession(true)
+            try {
+              const sessionId = await getOrCreateGroupSession({
+                groupId:         rs.groupId,
+                sessionDate:     date,
+                sessionTime:     rs.heureDebut,
+                durationMinutes: rs.dureeMinutes,
+              })
+              setGroupLesson({
+                _groupSessionId: sessionId,
+                _groupId:        rs.groupId,
+                topic:           rs.libelle || 'Groupe',
+                lessonDate:      date,
+              })
+              // Recharger les leçons si une nouvelle séance vient d'être créée
+              reload()
+            } catch (e) {
+              alert('Erreur lors de la création de la séance : ' + e.message)
+            } finally {
+              setGettingGroupSession(false)
+            }
+          }}
           reservedSlotExceptions={reservedSlotExceptions}
           onSlotException={async ({ slotId, exceptionDate, type, newHeureDebut, newDureeMinutes, exceptionId }) => {
             if (type === 'delete') {
@@ -661,6 +748,32 @@ export default function PlanningPage() {
                   </select>
                 </div>
               </div>
+              {/* Heure et durée — rend l'événement visible comme bloc dans la grille */}
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="block text-xs text-muted-foreground mb-1">Heure (optionnel)</label>
+                  <input
+                    type="time"
+                    value={newEvent.startTime}
+                    onChange={(e) => setNewEvent((ev) => ({ ...ev, startTime: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                  />
+                </div>
+                {newEvent.startTime && (
+                  <div className="flex-1">
+                    <label className="block text-xs text-muted-foreground mb-1">Durée (min)</label>
+                    <input
+                      type="number"
+                      min={15}
+                      max={480}
+                      step={15}
+                      value={newEvent.durationMinutes}
+                      onChange={(e) => setNewEvent((ev) => ({ ...ev, durationMinutes: Number(e.target.value) }))}
+                      className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                    />
+                  </div>
+                )}
+              </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">École (optionnel)</label>
                 <input
@@ -724,8 +837,119 @@ export default function PlanningPage() {
       {newLessonDraft  && <AddLessonModal teacherId={user.id} lesson={newLessonDraft}  onClose={() => setNewLessonDraft(null)}  onCreated={() => { reload(); setNewLessonDraft(null) }} />}
       {duplicateDraft  && <AddLessonModal teacherId={user.id} lesson={duplicateDraft}  onClose={() => setDuplicateDraft(null)}  onCreated={() => { reload(); setDuplicateDraft(null) }} />}
       {editLesson      && <AddLessonModal teacherId={user.id} lesson={editLesson}       onClose={() => setEditLesson(null)}      onCreated={() => { reload(); setEditLesson(null) }} />}
-      {statusLesson && <LessonStatusModal lesson={statusLesson} onClose={() => setStatusLesson(null)} onUpdated={() => { reload(); setStatusLesson(null) }} />}
+      {statusLesson && (
+        <LessonStatusModal
+          lesson={statusLesson}
+          onClose={() => setStatusLesson(null)}
+          onUpdated={(newStatus) => {
+            // Mise à jour optimiste : la tuile change immédiatement, pas de reload complet
+            if (newStatus && statusLesson?.id) {
+              const prev = statusLesson.status
+              const lid = statusLesson.id
+              setLessonStatusOverrides((o) => ({ ...o, [lid]: newStatus }))
+              pushAction?.({
+                label: `Émargement — ${statusLesson.studentName ?? 'cours'}`,
+                undo: async () => {
+                  setLessonStatusOverrides((o) => ({ ...o, [lid]: prev }))
+                  await updateLessonStatus(lid, prev, null, null)
+                },
+                redo: async () => {
+                  setLessonStatusOverrides((o) => ({ ...o, [lid]: newStatus }))
+                  await updateLessonStatus(lid, newStatus, null, null)
+                },
+              })
+            }
+            setStatusLesson(null)
+          }}
+        />
+      )}
       {deleteLessonItem && <DeleteLessonModal lesson={deleteLessonItem} onClose={() => setDeleteLessonItem(null)} onDeleted={() => { reload(); setDeleteLessonItem(null) }} />}
+
+      {/* Modal d'édition d'un événement bloc (T7e) */}
+      {editEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button type="button" className="absolute inset-0 bg-void/80 backdrop-blur-sm" onClick={() => setEditEvent(null)} />
+          <div className="relative w-full max-w-sm glass-panel rounded-2xl p-6 shadow-2xl border border-border space-y-3">
+            <h2 className="text-lg font-semibold">Modifier l'événement</h2>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Titre</label>
+              <input
+                type="text"
+                value={editEvent._edit.title}
+                onChange={(e) => setEditEvent((ev) => ({ ...ev, _edit: { ...ev._edit, title: e.target.value } }))}
+                className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+              />
+            </div>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="block text-xs text-muted-foreground mb-1">Heure</label>
+                <input
+                  type="time"
+                  value={editEvent._edit.startTime}
+                  onChange={(e) => setEditEvent((ev) => ({ ...ev, _edit: { ...ev._edit, startTime: e.target.value } }))}
+                  className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs text-muted-foreground mb-1">Durée (min)</label>
+                <input
+                  type="number"
+                  min={15}
+                  max={480}
+                  step={15}
+                  value={editEvent._edit.durationMinutes}
+                  onChange={(e) => setEditEvent((ev) => ({ ...ev, _edit: { ...ev._edit, durationMinutes: Number(e.target.value) } }))}
+                  className="w-full px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                />
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => handleSaveEditEvent({ mode: 'single' })}
+                className="w-full px-4 py-2.5 rounded-xl bg-guitar-600/15 text-guitar-400 border border-guitar-600/30 text-sm font-medium hover:bg-guitar-600/25 transition-colors"
+              >
+                Modifier cette occurrence
+              </button>
+              {editEvent.recurrence_series_id && (
+                <button
+                  type="button"
+                  onClick={() => handleSaveEditEvent({ mode: 'series' })}
+                  className="w-full px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
+                >
+                  Modifier toute la série
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handleSaveEditEvent({ mode: 'delete' })}
+                className="w-full px-4 py-2.5 rounded-xl border border-guitar-600/30 text-guitar-400 text-sm font-medium hover:bg-guitar-600/10 transition-colors"
+              >
+                Supprimer cette occurrence
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditEvent(null)}
+                className="w-full py-2 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {groupLesson && (
+        <GroupAttendanceModal
+          lesson={groupLesson}
+          teacherId={user.id}
+          onClose={() => setGroupLesson(null)}
+          onSummaryChange={({ present, total }) => {
+            if (groupLesson._groupSessionId) {
+              setGroupAttendanceSummary(prev => ({ ...prev, [groupLesson._groupSessionId]: { present, total } }))
+            }
+          }}
+        />
+      )}
     </div>
   )
 }

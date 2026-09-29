@@ -8,12 +8,21 @@ import { supabase } from '../lib/supabase'
 const SELECT = `
   id, teacher_id, school_id, jour_semaine, heure_debut, duree_minutes, libelle, notes, created_at,
   recurrence_interval_weeks,
+  group_id,
   school:schools (id, name)
 `
 
 // SELECT de secours si la colonne recurrence_interval_weeks n'existe pas encore (BLOC 4 migration)
 const SELECT_NO_INTERVAL = `
   id, teacher_id, school_id, jour_semaine, heure_debut, duree_minutes, libelle, notes, created_at,
+  group_id,
+  school:schools (id, name)
+`
+
+// SELECT de secours si group_id n'existe pas encore (BLOC T3 migration non exécuté)
+const SELECT_NO_GROUP = `
+  id, teacher_id, school_id, jour_semaine, heure_debut, duree_minutes, libelle, notes, created_at,
+  recurrence_interval_weeks,
   school:schools (id, name)
 `
 
@@ -30,6 +39,8 @@ function mapSlot(row) {
     notes:                   row.notes ?? null,
     createdAt:               row.created_at,
     recurrenceIntervalWeeks: row.recurrence_interval_weeks ?? 1,
+    // group_id est présent après BLOC T3 migration — null sinon
+    groupId:                 row.group_id ?? null,
   }
 }
 
@@ -46,6 +57,10 @@ export async function fetchReservedSlots(teacherId) {
   if (error?.code === '42703' && error.message.includes('recurrence_interval_weeks')) {
     // Colonne absente : BLOC 4 migration non encore exécuté — fallback sans la colonne
     ;({ data, error } = await tryFetch(SELECT_NO_INTERVAL))
+  }
+  if (error?.code === '42703' && error.message.includes('group_id')) {
+    // group_id absent : BLOC T3 migration non encore exécuté — fallback sans la colonne
+    ;({ data, error } = await tryFetch(SELECT_NO_GROUP))
   }
   if (error) throw new Error(error.message)
   return (data ?? []).map(mapSlot)

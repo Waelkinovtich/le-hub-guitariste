@@ -312,7 +312,8 @@ export default function RattrapagePage() {
     // Exclut les cours CESU : pas d'obligation de rattrapage contractuelle pour CESU.
     // lessonType (type global de l'élève) OU contextType (contexte spécifique du cours)
     // peuvent signaler un cours CESU, notamment pour les élèves à double casquette.
-    const annulés   = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu' && l.contextType !== 'cesu')
+    // cancelReason 'rattrapage_annule' = cours de rattrapage supprimé — ne compte pas comme "à rattraper"
+    const annulés   = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu' && l.contextType !== 'cesu' && l.cancelReason !== 'rattrapage_annule')
     const rattrapés = all.filter((l) => l.status === 'rattrape'    && l.lessonType !== 'cesu' && l.contextType !== 'cesu')
 
     let totalAnnulé  = 0
@@ -352,14 +353,27 @@ export default function RattrapagePage() {
     reload()
   }
 
-  // Annule un rattrapage en remettant le status à 'annule_prof' (additive, pas de DELETE)
+  // Annule un rattrapage :
+  // 1. Le cours de rattrapage (si encore planifié) est marqué annule_prof + cancel_reason='rattrapage_annule'
+  //    pour qu'il n'apparaisse PAS dans la liste "À rattraper".
+  // 2. Le cours original repasse en annule_prof, le lien rattrapage_de_lesson_id est effacé.
   const handleAnnulerRattrapage = useCallback(async (lesson) => {
     if (!window.confirm(`Annuler le rattrapage du ${lesson.dateLabel} pour ${lesson.studentName} ?\nLe cours repassera en « À rattraper ».`)) return
     setCancellingRattrapageId(lesson.id)
     try {
+      // Annuler le cours de rattrapage (seulement s'il n'a pas déjà été dispensé)
+      if (lesson.rattrapageDeLessonId) {
+        const { error: errRatt } = await supabase
+          .from('lessons')
+          .update({ status: 'annule_prof', cancel_reason: 'rattrapage_annule' })
+          .eq('id', lesson.rattrapageDeLessonId)
+          .in('status', ['planifie'])
+        if (errRatt) throw new Error(errRatt.message)
+      }
+      // Remettre le cours original en "à rattraper" et effacer le lien
       const { error } = await supabase
         .from('lessons')
-        .update({ status: 'annule_prof' })
+        .update({ status: 'annule_prof', rattrapage_de_lesson_id: null })
         .eq('id', lesson.id)
       if (error) throw new Error(error.message)
       reload()
@@ -459,7 +473,7 @@ export default function RattrapagePage() {
             <section>
               <h2 className="text-lg font-semibold mb-3">Détail des cours annulés</h2>
               <div className="space-y-2">
-                {(lessons ?? []).map((l) => {
+                {(lessons ?? []).filter((l) => l.cancelReason !== 'rattrapage_annule').map((l) => {
                   const raison     = getRaisonLabel(l.cancelReason)
                   const isPanelOpen = openPanelId === l.id
                   // Un cours avec rattrapage_de_lesson_id est déjà rattrapé
