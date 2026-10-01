@@ -466,3 +466,113 @@ T9  : Vacances scolaires
 T10 : Récapitulatif de période (km, carburant, PDF)
 T11 : Salaires perçus (nouvelle page + SQL)
 T12 : Vérification finale
+
+═══════════════════════════════════════════════════════════
+SESSION 2026-10-01 — Retours terrain (T1 à T7 nouveaux)   EN COURS
+═══════════════════════════════════════════════════════════
+
+T1 (diagnostic absences) — TERMINÉE
+─────────────────────────────────────────────────────────
+Diagnostic confirmé : 3 déclarations présentes en base pour Maxime Saro.
+AbsencesPage et fiche élève les affichent correctement (RLS auth OK).
+Problème : EmargementPage n'a aucun lien avec absence_declarations — les
+cours déclarés restent affichés "planifié". Le prof a corrigé manuellement.
+Fix = T3 (auto-update statut au chargement de EmargementPage).
+
+T2 (AbsencePage mobile UX) — TERMINÉE
+─────────────────────────────────────────────────────────
+Fichier modifié :
+  src/pages/AbsencePage.jsx
+
+Ce qui est fait :
+(a) Multi-sélection : state selectedIds (Set) remplace selectedLessonId (scalar).
+    Chaque cours non déclaré affiche une case checkbox (Square / CheckSquare).
+    Clic toggle la sélection dans le Set.
+(b) Bouton fixé en bas : "Confirmer mes absences (N)" dans une barre fixed bottom-0
+    avec backdrop-blur, visible sans défilement, apparaît uniquement si selectedIds.size > 0.
+    padding-bottom: 24 (pb-24) sur la liste pour ne pas masquer le dernier élément.
+(c) Écran 'done' réécrit : titre "Déclaration terminée" + liste par cours avec icône
+    (vert excusée, orange non excusée, rouge erreur) + date/heure/école + statut textuel.
+    Section "Mes absences déclarées" avec bouton Annuler conservée.
+    Bouton "Déclarer une autre absence" remet à l'étape 'select' et vide doneResults.
+(d) handleDeclare boucle sur tous les cours sélectionnés, collecte {lesson, excused, error}
+    dans doneResults[], passe à 'done' si au moins 1 succès, sinon affiche actionErr.
+(e) handleCancel appelle setDoneResults(null) pour nettoyer l'écran de résultat.
+(f) "Rappel du fonctionnement des absences" inchangé.
+Build ✓, aucune référence obsolète (lastResult, selectedLessonId).
+
+T3 (déclarations → statut EmargementPage) — TERMINÉE
+─────────────────────────────────────────────────────────
+Fichier modifié :
+  src/pages/teacher/EmargementPage.jsx   (+ useEffect T3)
+
+Ce qui est fait :
+- Après chaque chargement (data change), fetch absence_declarations actives
+  (cancelled_at IS NULL) pour teacher_id dans la plage affichée.
+- Compare avec les cours planifié (isGroup=false, status='planifie') via
+  clé studentId|lessonDate|HH:MM.
+- Pour chaque match : updateLessonStatus → 'excuse' (excused=true) ou 'absent'.
+- Mise à jour optimiste via setLessonStatusOverrides ; rollback si erreur réseau.
+- Pas de pushAction (auto-appliquer depuis les données, pas une action utilisateur).
+Build ✓
+T4 (FK erreur Isabelle Chevalier) — TERMINÉE (SQL + code)
+─────────────────────────────────────────────────────────
+SQL dans migration-retours-terrain.sql (BLOC T4a + BLOC T4b) — À exécuter.
+Fichiers modifiés :
+  src/components/GroupMembresPanel.jsx
+  src/pages/groupes/AddMemberModal.jsx
+
+Ce qui est fait :
+- GroupMembresPanel.select : ajout participant_id dans la requête group_members.
+- attendanceKey : utilise m.participant_id ?? m.id pour les externes (compatibilité avant migration).
+- memberKey : retourne { participant_id: m.participant_id } pour les externes (null si migration non faite).
+- handleMemberStatus : si memberKey retourne null → message d'erreur clair, pas de crash.
+- handleTousPresents : idem, ignore silencieusement les membres sans participant_id.
+- AddMemberModal : importe useAuth, récupère teacher_id.
+  addExternal : 1) cherche ou crée fiche ensemble_participants (dédoublonnage ilike prénom+nom),
+  2) insère group_members avec participant_id = id de la fiche créée.
+  Affiche addErr en rouge si une étape échoue.
+Build ✓
+T5 (gérer membres depuis panel groupe) — TERMINÉE
+─────────────────────────────────────────────────────────
+Fichier modifié :
+  src/components/GroupMembresPanel.jsx   (+ gestion membres)
+
+Ce qui est fait :
+- Import UserPlus, Trash2 (lucide-react) + AddMemberModal.
+- État showAddModal + removingId + refreshKey (force rechargement useEffect).
+- handleRemoveMember : confirm() → DELETE group_members WHERE id → refreshKey++.
+  L'émargement existant (group_session_attendance) reste intact (FK SET NULL ou pas de FK sur id).
+- Bouton "Retirer" (Trash2) sur chaque ligne membre, désactivé pendant la suppression.
+- Bouton "+ Ajouter un membre" (UserPlus) en bas du panel → ouvre AddMemberModal.
+  onAdded : ferme modal + refreshKey++ (recharge la liste).
+Build ✓
+T6 (touch bugs EmargementPage) — TERMINÉE
+─────────────────────────────────────────────────────────
+Fichiers modifiés :
+  src/components/AttendanceQuickActions.jsx
+  src/pages/teacher/EmargementPage.jsx
+
+Ce qui est fait :
+- Bug 1 (mauvaise ligne) : touchAction:'manipulation' sur les deux boutons variant="row"
+  → supprime le délai 300ms anti-double-tap, plus de glissement vers la ligne adjacente.
+- Bug 2 (paysage/portrait) : tableau déjà min-w-[600px] + overflow-x-auto (correct).
+  Boutons Pencil/Trash2 : min-h/w [44px] (était 36px) + touchAction:'manipulation'.
+Build ✓
+T7 (Dashboard améliorations) — TERMINÉE
+─────────────────────────────────────────────────────────
+Fichiers modifiés :
+  src/pages/teacher/TeacherDashboard.jsx
+  src/pages/teacher/AbsencesPage.jsx
+
+Ce qui est fait :
+(a) Stats cohérentes : "Prochains cours" (8 du fetch, portée inconnue) remplacé par
+    "À rattraper cette semaine" = weekLessons planifiés restants depuis aujourd'hui.
+(b) Cartes cliquables : chaque StatCard wrappée dans <Link to={stat.href}> avec
+    hover:scale légère. Cibles : Élèves, Planning, Émargement, Élèves.
+(c) Badge "nouvelles absences" : fetch absence_declarations declared_at > last_seen
+    (localStorage 'dashboard_absences_last_seen'). Bandeau orange/bell visible si count > 0,
+    cliquable vers /admin/absences.
+(d) Marquage visite : AbsencesPage useEffect enregistre la date ISO en localStorage
+    à chaque ouverture → le badge disparaît après consultation.
+Build ✓

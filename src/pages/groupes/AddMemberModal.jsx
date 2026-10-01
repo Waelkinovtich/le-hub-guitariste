@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../context/AuthContext'
 import { X, Search } from 'lucide-react'
 
 export default function AddMemberModal({ groupId, onClose, onAdded }) {
+  const { user } = useAuth()
   const [students, setStudents] = useState([])
   const [search, setSearch] = useState('')
   const [mode, setMode] = useState('eleve')
   const [freeForm, setFreeForm] = useState({ first_name: '', last_name: '', instrument: '', school: '' })
   const [saving, setSaving] = useState(false)
+  const [addErr, setAddErr] = useState(null)
 
   useEffect(() => { fetchStudents() }, [])
 
@@ -30,17 +33,54 @@ export default function AddMemberModal({ groupId, onClose, onAdded }) {
   async function addExternal() {
     if (!freeForm.first_name.trim() || !freeForm.last_name.trim()) return
     setSaving(true)
-    await supabase.from('group_members').insert({
-      group_id: groupId,
-      is_external: true,
-      free_first_name: freeForm.first_name,
-      free_last_name: freeForm.last_name,
-      free_instrument: freeForm.instrument,
-      free_school: freeForm.school,
-    })
-    setSaving(false)
-    onAdded()
-    onClose()
+    setAddErr(null)
+    try {
+      // 1. Créer ou retrouver la fiche ensemble_participants (dédoublonnage prénom+nom)
+      let participantId = null
+      const { data: existing } = await supabase
+        .from('ensemble_participants')
+        .select('id')
+        .eq('teacher_id', user.id)
+        .ilike('prenom', freeForm.first_name.trim())
+        .ilike('nom', freeForm.last_name.trim())
+        .maybeSingle()
+      if (existing) {
+        participantId = existing.id
+      } else {
+        const { data: created, error: eErr } = await supabase
+          .from('ensemble_participants')
+          .insert({
+            teacher_id: user.id,
+            prenom: freeForm.first_name.trim(),
+            nom: freeForm.last_name.trim(),
+            instrument: freeForm.instrument.trim() || null,
+            est_eleve: false,
+          })
+          .select('id')
+          .single()
+        if (eErr) throw eErr
+        participantId = created.id
+      }
+
+      // 2. Insérer dans group_members avec le participant_id
+      const { error: mErr } = await supabase.from('group_members').insert({
+        group_id: groupId,
+        is_external: true,
+        participant_id: participantId,
+        free_first_name: freeForm.first_name.trim(),
+        free_last_name: freeForm.last_name.trim(),
+        free_instrument: freeForm.instrument.trim() || null,
+        free_school: freeForm.school.trim() || null,
+      })
+      if (mErr) throw mErr
+
+      onAdded()
+      onClose()
+    } catch (e) {
+      setAddErr(e.message ?? 'Erreur lors de l\'ajout')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const filtered = students.filter(s =>
@@ -110,6 +150,7 @@ export default function AddMemberModal({ groupId, onClose, onAdded }) {
               <label className="text-xs text-muted mb-1 block">Ecole / Structure</label>
               <input value={freeForm.school} onChange={e => setFreeForm({...freeForm, school: e.target.value})} className={inputClass} />
             </div>
+            {addErr && <p className="text-xs text-red-400 px-1">{addErr}</p>}
             <button onClick={addExternal} disabled={saving || !freeForm.first_name.trim() || !freeForm.last_name.trim()}
               className="w-full px-4 py-2 rounded-xl bg-guitar-600 text-white text-sm font-medium hover:bg-guitar-700 disabled:opacity-50 transition-all">
               {saving ? 'Enregistrement...' : 'Ajouter ce membre'}

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { FileDown, CalendarDays, Pencil, Trash2, EyeOff, Eye, Users, ChevronDown, ChevronUp } from 'lucide-react'
 import AttendanceQuickActions from '../../components/AttendanceQuickActions'
 import { useAuth } from '../../context/AuthContext'
@@ -97,6 +97,47 @@ export default function ÉmargementPage() {
   const { data, loading, error, reload } = useFetch(load, [user.id, period])
   useRegisterRefresh(reload)
   const { pushAction } = useUndoRedo() ?? {}
+
+  // T3 — Applique les déclarations d'absence actives sur les cours "planifié" du prof.
+  // Exécuté après chaque chargement (data change). Ne touche que les cours dont le statut
+  // est encore 'planifié' (ni déjà émargé manuellement ni overridé dans cette session).
+  useEffect(() => {
+    if (!data?.lessons?.length) return
+    const lessons = data.lessons.filter((l) => !l.isGroup && l.status === 'planifie')
+    if (lessons.length === 0) return
+
+    ;(async () => {
+      const { data: decls, error: dErr } = await supabase
+        .from('absence_declarations')
+        .select('student_id,lesson_date,lesson_time,excused,cancelled_at')
+        .eq('teacher_id', user.id)
+        .gte('lesson_date', range.from)
+        .lte('lesson_date', range.to)
+        .is('cancelled_at', null)
+      if (dErr || !decls?.length) return
+
+      // Normalise HH:MM:SS → HH:MM pour comparer avec lesson.lesson_time
+      const toHHMM = (t) => (t ?? '').slice(0, 5)
+      const declMap = new Map()
+      for (const d of decls) {
+        declMap.set(`${d.student_id}|${d.lesson_date}|${toHHMM(d.lesson_time)}`, d)
+      }
+
+      for (const lesson of lessons) {
+        const key = `${lesson.studentId}|${lesson.lessonDate}|${toHHMM(lesson.lessonTime)}`
+        const decl = declMap.get(key)
+        if (!decl) continue
+        const newStatus = decl.excused ? 'excuse' : 'absent'
+        // Mise à jour optimiste
+        setLessonStatusOverrides((prev) => ({ ...prev, [lesson.id]: newStatus }))
+        try {
+          await updateLessonStatus(lesson.id, newStatus, null, null)
+        } catch {
+          setLessonStatusOverrides((prev) => { const n = { ...prev }; delete n[lesson.id]; return n })
+        }
+      }
+    })()
+  }, [data, user.id, range.from, range.to]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const periodFiltered = filterLessonsByPeriod(data?.lessons ?? [], periodCtx)
   const allItems = periodFiltered.filter((l) => !filterSchool || l.schoolName === filterSchool || l.student?.school_name === filterSchool || (filterSchool === 'particulier' && !l.student?.school_name && !l.isGroup))
@@ -266,7 +307,8 @@ export default function ÉmargementPage() {
                               type="button"
                               onClick={() => setEditLesson(lesson)}
                               title="Modifier ce cours"
-                              className="p-2 min-h-[36px] min-w-[36px] rounded-lg text-muted hover:text-foreground hover:bg-surface-overlay transition-colors"
+                              className="p-2 min-h-[44px] min-w-[44px] rounded-lg text-muted hover:text-foreground hover:bg-surface-overlay transition-colors"
+                              style={{ touchAction: 'manipulation' }}
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
@@ -276,7 +318,8 @@ export default function ÉmargementPage() {
                                 type="button"
                                 onClick={() => setDeleteLesson(lesson)}
                                 title="Supprimer ce cours (jamais donné)"
-                                className="p-2 min-h-[36px] min-w-[36px] rounded-lg text-muted hover:text-guitar-400 hover:bg-guitar-600/10 transition-colors"
+                                className="p-2 min-h-[44px] min-w-[44px] rounded-lg text-muted hover:text-guitar-400 hover:bg-guitar-600/10 transition-colors"
+                                style={{ touchAction: 'manipulation' }}
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>

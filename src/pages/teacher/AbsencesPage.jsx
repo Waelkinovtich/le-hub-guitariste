@@ -151,6 +151,11 @@ export default function AbsencesPage() {
   const [filterExcused, setFilterExcused] = useState('tous')
   const [activeTab, setActiveTab]         = useState('liste') // 'liste' | 'resume'
 
+  // Marque la visite pour le badge "nouvelles absences" du Dashboard
+  useEffect(() => {
+    try { localStorage.setItem('dashboard_absences_last_seen', new Date().toISOString()) } catch {}
+  }, [])
+
   // ── Chargement / création du lien d'absence ──────────────────────────────
   const loadOrCreateLink = useCallback(async () => {
     if (!user?.id) return

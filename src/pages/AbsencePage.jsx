@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Guitar, Loader2, AlertCircle, CheckCircle2, Clock, X, ChevronDown, ChevronUp, ArrowLeft } from 'lucide-react'
+import { Guitar, Loader2, AlertCircle, CheckCircle2, Clock, X, ChevronDown, ChevronUp, ArrowLeft, Square, CheckSquare } from 'lucide-react'
 import { supabasePublic as supabase } from '../lib/supabase'
 
 // ─── Texte réglementaire imposé (verbatim, ne pas modifier) ──────────────────
@@ -83,12 +83,12 @@ export default function AbsencePage() {
   const [searchErr,   setSearchErr]   = useState(null)
   const [studentData, setStudentData] = useState(null)
 
-  // Cours sélectionné pour la déclaration
-  const [selectedLessonId, setSelectedLessonId] = useState(null)
-  const [declaring,        setDeclaring]        = useState(false)
-  const [actionErr,        setActionErr]        = useState(null)
-  // Résultat de la dernière déclaration
-  const [lastResult,       setLastResult]       = useState(null)
+  // Cours sélectionnés (multi-select) pour la déclaration
+  const [selectedIds,  setSelectedIds]  = useState(new Set())
+  const [declaring,    setDeclaring]    = useState(false)
+  const [actionErr,    setActionErr]    = useState(null)
+  // Résultats après validation (tableau {lesson, excused, error})
+  const [doneResults,  setDoneResults]  = useState(null)
 
   // Copie locale des déclarations (mise à jour optimiste)
   const [declarations, setDeclarations] = useState(null)
@@ -103,8 +103,8 @@ export default function AbsencePage() {
     setSearchErr(null)
     setStudentData(null)
     setDeclarations(null)
-    setLastResult(null)
-    setSelectedLessonId(null)
+    setDoneResults(null)
+    setSelectedIds(new Set())
     try {
       const { data, error } = await supabase.rpc('find_student_for_absence', {
         p_token:     token,
@@ -136,33 +136,48 @@ export default function AbsencePage() {
     setSearchErr(null)
   }
 
-  // ── Étape 3 : Déclaration d'absence ──────────────────────────────────────
+  // ── Étape 3 : Déclaration de plusieurs absences ───────────────────────────
   async function handleDeclare() {
-    if (!selectedLessonId || !studentData) return
+    if (selectedIds.size === 0 || !studentData) return
     setDeclaring(true)
     setActionErr(null)
-    setLastResult(null)
-    try {
-      const { data, error } = await supabase.rpc('declare_absence', {
-        p_token:      token,
-        p_student_id: studentData.student.id,
-        p_lesson_id:  selectedLessonId,
-      })
-      if (error) throw error
-      // Refresh des déclarations
-      const { data: refreshed } = await supabase.rpc('find_student_for_absence', {
-        p_token:     token,
-        p_full_name: nameInput.trim(),
-      })
-      if (refreshed) setDeclarations(refreshed.declarations ?? [])
-      setLastResult({ excused: data.excused, lessonId: selectedLessonId })
-      setSelectedLessonId(null)
+
+    const lessonsToDecl = upcomingLessons.filter((l) => selectedIds.has(l.id))
+    const results = []
+
+    for (const lesson of lessonsToDecl) {
+      try {
+        const { data, error } = await supabase.rpc('declare_absence', {
+          p_token:      token,
+          p_student_id: studentData.student.id,
+          p_lesson_id:  lesson.id,
+        })
+        if (error) throw error
+        results.push({ lesson, excused: data.excused, error: null })
+      } catch (err) {
+        const code = err?.message?.match(/([a-z_]+)$/)?.[1]
+        results.push({ lesson, excused: null, error: libErreur(code ?? '') })
+      }
+    }
+
+    // Refresh des déclarations pour mettre à jour les clés
+    const { data: refreshed } = await supabase.rpc('find_student_for_absence', {
+      p_token:     token,
+      p_full_name: nameInput.trim(),
+    })
+    if (refreshed) setDeclarations(refreshed.declarations ?? [])
+
+    setSelectedIds(new Set())
+    setDeclaring(false)
+
+    // N'afficher l'écran de fin que si au moins une déclaration a réussi
+    const hasSuccess = results.some((r) => r.error === null)
+    if (hasSuccess) {
+      setDoneResults(results)
       setStep('done')
-    } catch (err) {
-      const code = err?.message?.match(/([a-z_]+)$/)?.[1]
-      setActionErr(libErreur(code ?? ''))
-    } finally {
-      setDeclaring(false)
+    } else {
+      // Toutes échouées : rester sur la sélection et afficher l'erreur groupée
+      setActionErr(results.map((r) => r.error).filter(Boolean).join(' · '))
     }
   }
 
@@ -170,7 +185,7 @@ export default function AbsencePage() {
   async function handleCancel(declarationId) {
     setCancellingId(declarationId)
     setActionErr(null)
-    setLastResult(null) // ← correctif bug (a) : réinitialise le résultat précédent
+    setDoneResults(null) // réinitialise les résultats précédents
     try {
       const { error } = await supabase.rpc('cancel_absence_declaration', {
         p_token:          token,
@@ -289,10 +304,10 @@ export default function AbsencePage() {
           </div>
         )}
 
-        {/* ── Étape 3 : Sélection du cours ─────────────────────────────────── */}
+        {/* ── Étape 3 : Sélection des cours ────────────────────────────────── */}
         {step === 'select' && studentData && (
-          <div className="space-y-6">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="pb-24">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-6">
               <button
                 type="button"
                 onClick={() => setStep('confirm')}
@@ -304,7 +319,8 @@ export default function AbsencePage() {
             </div>
 
             <div>
-              <h2 className="text-base font-semibold mb-3">Mes prochains cours</h2>
+              <h2 className="text-base font-semibold mb-1">Mes prochains cours</h2>
+              <p className="text-xs text-muted-foreground mb-3">Sélectionnez un ou plusieurs cours</p>
               {upcomingLessons.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Aucun cours à venir dans la période affichée.</p>
               ) : (
@@ -312,10 +328,9 @@ export default function AbsencePage() {
                   {upcomingLessons.map((lesson) => {
                     const alreadyDeclared = declaredKeys.has(lessonKey(lesson.lesson_date, lesson.lesson_time))
                     const activeDecl = activeDeclForLesson(lesson)
-                    const isSelected = selectedLessonId === lesson.id
+                    const isSelected = selectedIds.has(lesson.id)
 
                     if (alreadyDeclared && activeDecl) {
-                      // Cours avec absence déjà déclarée — bouton "Annuler mon absence"
                       return (
                         <div key={lesson.id} className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 flex items-start justify-between gap-4">
                           <div>
@@ -340,22 +355,33 @@ export default function AbsencePage() {
                       )
                     }
 
-                    // Cours non déclaré — sélectionnable
+                    // Cours non déclaré — sélectionnable (multi-select)
                     return (
                       <button
                         key={lesson.id}
                         type="button"
-                        onClick={() => setSelectedLessonId(isSelected ? null : lesson.id)}
-                        className={`w-full text-left rounded-xl border p-4 transition-all ${
+                        onClick={() => setSelectedIds((prev) => {
+                          const next = new Set(prev)
+                          next.has(lesson.id) ? next.delete(lesson.id) : next.add(lesson.id)
+                          return next
+                        })}
+                        className={`w-full text-left rounded-xl border p-4 transition-all flex items-start gap-3 ${
                           isSelected
                             ? 'border-guitar-600/60 bg-guitar-600/10'
                             : 'border-border-subtle bg-surface-raised hover:border-border hover:bg-surface-overlay'
                         }`}
                       >
-                        <p className="font-medium text-foreground capitalize">{formatDate(lesson.lesson_date)}</p>
-                        <p className="text-sm text-muted-foreground mt-0.5">
-                          {formatTime(lesson.lesson_time)} · {lesson.duration_minutes} min{lesson.school_name ? ` · ${lesson.school_name}` : ''}
-                        </p>
+                        <span className="mt-0.5 shrink-0 text-guitar-400">
+                          {isSelected
+                            ? <CheckSquare className="w-4 h-4" />
+                            : <Square className="w-4 h-4 text-muted-foreground" />}
+                        </span>
+                        <span className="flex-1">
+                          <p className="font-medium text-foreground capitalize">{formatDate(lesson.lesson_date)}</p>
+                          <p className="text-sm text-muted-foreground mt-0.5">
+                            {formatTime(lesson.lesson_time)} · {lesson.duration_minutes} min{lesson.school_name ? ` · ${lesson.school_name}` : ''}
+                          </p>
+                        </span>
                       </button>
                     )
                   })}
@@ -364,47 +390,64 @@ export default function AbsencePage() {
             </div>
 
             {actionErr && (
-              <div className="flex items-start gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5">
+              <div className="flex items-start gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5 mt-4">
                 <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                 <p>{actionErr}</p>
               </div>
             )}
 
-            {selectedLessonId && (
-              <button
-                type="button"
-                disabled={declaring}
-                onClick={handleDeclare}
-                className="w-full py-2.5 rounded-xl bg-guitar-600 text-white text-sm font-medium hover:bg-guitar-600/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {declaring ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                {declaring ? 'Enregistrement…' : 'Confirmer mon absence'}
-              </button>
+            {/* Bouton fixé en bas — toujours visible sans défilement */}
+            {selectedIds.size > 0 && (
+              <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur-sm border-t border-border-subtle z-20">
+                <div className="max-w-lg mx-auto">
+                  <button
+                    type="button"
+                    disabled={declaring}
+                    onClick={handleDeclare}
+                    className="w-full py-3 rounded-xl bg-guitar-600 text-white text-sm font-semibold hover:bg-guitar-600/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {declaring ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    {declaring
+                      ? 'Enregistrement…'
+                      : `Confirmer mes absences (${selectedIds.size})`}
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         )}
 
         {/* ── Étape 4 : Résultat ───────────────────────────────────────────── */}
-        {step === 'done' && lastResult && (
+        {step === 'done' && doneResults && doneResults.length > 0 && (
           <div className="space-y-6">
-            <div className={`flex items-start gap-3 rounded-xl border p-4 ${
-              lastResult.excused
-                ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300'
-                : 'bg-orange-500/10 border-orange-500/25 text-orange-300'
-            }`}>
-              {lastResult.excused
-                ? <CheckCircle2 className="w-5 h-5 mt-0.5 shrink-0" />
-                : <AlertCircle className="w-5 h-5 mt-0.5 shrink-0" />
-              }
-              <div>
-                <p className="font-semibold text-sm">
-                  {lastResult.excused ? 'Absence enregistrée et excusée' : 'Absence enregistrée'}
-                </p>
-                <p className="text-sm mt-1 opacity-80">
-                  {lastResult.excused
-                    ? 'Vous avez prévenu plus de 48 h à l\'avance — votre absence est excusée.'
-                    : 'Délai inférieur à 48 h — votre absence pourra être marquée non excusée.'}
-                </p>
+            <div>
+              <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                Déclaration terminée
+              </h2>
+              <div className="rounded-xl border border-border-subtle bg-surface-raised divide-y divide-border-subtle">
+                {doneResults.map(({ lesson, excused, error }) => (
+                  <div key={lesson.id} className="px-4 py-3 flex items-start gap-3">
+                    {error ? (
+                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-400" />
+                    ) : excused ? (
+                      <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-emerald-400" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-orange-400" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium capitalize">{formatDate(lesson.lesson_date)} — {formatTime(lesson.lesson_time)}</p>
+                      {lesson.school_name && <p className="text-xs text-muted-foreground">{lesson.school_name}</p>}
+                      {error ? (
+                        <p className="text-xs text-red-400 mt-0.5">{error}</p>
+                      ) : (
+                        <p className={`text-xs mt-0.5 ${excused ? 'text-emerald-400' : 'text-orange-400'}`}>
+                          {excused ? 'Excusée (+ de 48 h à l\'avance)' : 'Non excusée (délai inférieur à 48 h)'}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -446,7 +489,7 @@ export default function AbsencePage() {
 
             <button
               type="button"
-              onClick={() => { setStep('select'); setActionErr(null) }}
+              onClick={() => { setStep('select'); setDoneResults(null); setActionErr(null) }}
               className="w-full py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
             >
               Déclarer une autre absence

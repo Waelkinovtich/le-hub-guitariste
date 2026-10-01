@@ -1,11 +1,13 @@
 import { useCallback, useMemo } from 'react'
-import { Users, Calendar, BookOpen, TrendingUp, UserX } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Users, Calendar, BookOpen, TrendingUp, UserX, Bell } from 'lucide-react'
 import HelpTooltip from '../../components/HelpTooltip'
 import StatCard from '../../components/StatCard'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import { useRegisterRefresh } from '../../contexts/RefreshContext'
+import { supabase } from '../../lib/supabase'
 import { fetchTeacherStudents } from '../../services/students'
 import { fetchUpcomingLessons, fetchLessonsInRange } from '../../services/lessons'
 import { endOfWeek, startOfWeek, toISODate } from '../../utils/format'
@@ -13,12 +15,20 @@ import { calculerTauxAbsence } from '../../utils/absenceStats'
 
 const statIcons = [Users, Calendar, BookOpen, TrendingUp]
 
+// Clé localStorage : dernière visite AbsencesPage
+const LS_KEY_ABSENCES = 'dashboard_absences_last_seen'
+
 export default function TeacherDashboard() {
   const { user } = useAuth()
 
   const loadDashboard = useCallback(async () => {
     const weekStart = toISODate(startOfWeek())
     const weekEnd = toISODate(endOfWeek())
+    const today = toISODate(new Date())
+
+    // Dernière consultation de la page absences
+    let lastSeen = null
+    try { lastSeen = localStorage.getItem(LS_KEY_ABSENCES) } catch {}
 
     const [students, upcoming, weekLessons] = await Promise.all([
       fetchTeacherStudents(user.id),
@@ -26,10 +36,23 @@ export default function TeacherDashboard() {
       fetchLessonsInRange({ teacherId: user.id, from: weekStart, to: weekEnd }),
     ])
 
-    const today = toISODate(new Date())
-    const lessonsToday = weekLessons.filter((l) => l.lessonDate === today).length
+    // Nouvelles déclarations depuis la dernière visite
+    let newAbsences = 0
+    try {
+      let q = supabase.from('absence_declarations')
+        .select('id', { count: 'exact', head: true })
+        .eq('teacher_id', user.id)
+        .is('cancelled_at', null)
+      if (lastSeen) q = q.gt('declared_at', lastSeen)
+      const { count } = await q
+      newAbsences = count ?? 0
+    } catch {}
 
-    return { students, upcoming, weekLessons, lessonsToday }
+    const lessonsToday = weekLessons.filter((l) => l.lessonDate === today).length
+    // Cours planifiés restants cette semaine (depuis aujourd'hui)
+    const weekRemaining = weekLessons.filter((l) => l.lessonDate >= today && l.status === 'planifie').length
+
+    return { students, upcoming, weekLessons, lessonsToday, weekRemaining, newAbsences }
   }, [user.id])
 
   const { data, loading, error, reload } = useFetch(loadDashboard, [user.id])
@@ -49,21 +72,25 @@ export default function TeacherDashboard() {
         label: 'Élèves actifs',
         value: String(data.students.length),
         change: data.students.length ? 'Liste à jour' : 'Aucun élève',
+        href: '/professeur/eleves',
       },
       {
         label: 'Cours cette semaine',
         value: String(data.weekLessons.length),
         change: `${data.lessonsToday} aujourd'hui`,
+        href: '/professeur/planning',
       },
       {
-        label: 'Prochains cours',
-        value: String(data.upcoming.length),
-        change: 'À venir',
+        label: 'À rattraper cette semaine',
+        value: String(data.weekRemaining),
+        change: 'Cours planifiés restants',
+        href: '/professeur/emargement',
       },
       {
         label: 'Progression moyenne',
         value: `${avgProgress}%`,
         change: 'Tous élèves',
+        href: '/professeur/eleves',
       },
     ]
   }, [data])
@@ -89,9 +116,25 @@ export default function TeacherDashboard() {
 
       <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
         {stats.map((stat, i) => (
-          <StatCard key={stat.label} {...stat} icon={statIcons[i]} />
+          <Link key={stat.label} to={stat.href} className="block hover:scale-[1.01] transition-transform">
+            <StatCard {...stat} icon={statIcons[i]} />
+          </Link>
         ))}
       </div>
+
+      {/* Badge nouvelles absences */}
+      {data.newAbsences > 0 && (
+        <Link
+          to="/admin/absences"
+          className="flex items-center gap-3 glass-panel rounded-2xl px-5 py-3 mb-6 hover:border-guitar-600/30 transition-colors border border-orange-500/20 bg-orange-500/5"
+        >
+          <Bell className="w-4 h-4 text-orange-400 shrink-0" />
+          <p className="text-sm">
+            <span className="font-semibold text-orange-400">{data.newAbsences} nouvelle{data.newAbsences > 1 ? 's' : ''} absence{data.newAbsences > 1 ? 's' : ''}</span>
+            {' '}déclarée{data.newAbsences > 1 ? 's' : ''} depuis votre dernière visite
+          </p>
+        </Link>
+      )}
 
       {/* ── Encart absences hebdomadaires ──────────────────────────────────── */}
       {/* N'apparaît que si au moins un cours est émargé cette semaine */}

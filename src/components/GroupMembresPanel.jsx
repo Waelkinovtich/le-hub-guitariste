@@ -5,7 +5,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchGroupSessionAttendance, upsertGroupAttendance } from '../services/lessons'
-import { Check } from 'lucide-react'
+import { Check, UserPlus, Trash2 } from 'lucide-react'
+import AddMemberModal from '../pages/groupes/AddMemberModal'
 
 // Statuts disponibles pour l'émargement des membres de groupe
 const ATTENDANCE_STATUSES = [
@@ -26,6 +27,9 @@ export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSum
   const [attendance, setAttendance]     = useState({})  // student_id → status
   const [loading, setLoading]           = useState(true)
   const [tableMissing, setTableMissing] = useState(false)
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [removingId, setRemovingId]     = useState(null)
+  const [refreshKey, setRefreshKey]     = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -33,7 +37,7 @@ export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSum
       setLoading(true)
       const { data: membresData } = await supabase
         .from('group_members')
-        .select('id, student_id, is_external, free_first_name, free_last_name, free_instrument, students:student_id(id, first_name, last_name)')
+        .select('id, student_id, participant_id, is_external, free_first_name, free_last_name, free_instrument, students:student_id(id, first_name, last_name)')
         .eq('group_id', groupId)
       if (cancelled) return
 
@@ -63,15 +67,18 @@ export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSum
     }
     load()
     return () => { cancelled = true }
-  }, [sessionId, groupId])
+  }, [sessionId, groupId, refreshKey])
 
-  // Clé d'attendance locale : student_id pour les élèves liés, 'ext-{member.id}' pour les externes
+  // Clé d'attendance locale : student_id pour les élèves liés, 'ext-{participant_id}' pour les externes
   function attendanceKey(m) {
-    return m.student_id ? m.student_id : 'ext-' + m.id
+    return m.student_id ? m.student_id : 'ext-' + (m.participant_id ?? m.id)
   }
   // memberKey pour upsertGroupAttendance : { student_id } ou { participant_id }
   function memberKey(m) {
-    return m.student_id ? { student_id: m.student_id } : { participant_id: m.id }
+    if (m.student_id) return { student_id: m.student_id }
+    if (m.participant_id) return { participant_id: m.participant_id }
+    // Migration T4 SQL non encore exécutée — retourne null pour bloquer l'upsert proprement
+    return null
   }
 
   async function handleMemberStatus(m, status) {
@@ -81,8 +88,14 @@ export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSum
     setAttendance(next)
     const present = Object.values(next).filter(s => s === 'present').length
     onSummaryChange?.({ present, total: membres.length })
+    const mk = memberKey(m)
+    if (!mk) {
+      setAttendance({ ...attendance })
+      alert(`Impossible d'émarger "${m.free_first_name} ${m.free_last_name}" : migration T4 non exécutée (participant_id manquant).`)
+      return
+    }
     try {
-      await upsertGroupAttendance({ teacherId, sessionId, memberKey: memberKey(m), status })
+      await upsertGroupAttendance({ teacherId, sessionId, memberKey: mk, status })
     } catch (e) {
       const reverted = { ...attendance, [key]: prev }
       setAttendance(reverted)
@@ -99,9 +112,10 @@ export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSum
     onSummaryChange?.({ present: membres.length, total: membres.length })
     try {
       await Promise.all(
-        membres.map(m =>
-          upsertGroupAttendance({ teacherId, sessionId, memberKey: memberKey(m), status: 'present' })
-        )
+        membres.map(m => {
+          const mk = memberKey(m)
+          return mk ? upsertGroupAttendance({ teacherId, sessionId, memberKey: mk, status: 'present' }) : Promise.resolve()
+        })
       )
     } catch (e) {
       // Rechargement en cas d'erreur partielle
@@ -112,6 +126,23 @@ export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSum
       const present = rows.filter(r => r.status === 'present').length
       onSummaryChange?.({ present, total: membres.length })
       alert('Erreur partielle : ' + e.message)
+    }
+  }
+
+  async function handleRemoveMember(m) {
+    const nom = m.student_id
+      ? [m.students?.first_name, m.students?.last_name].filter(Boolean).join(' ')
+      : [m.free_first_name, m.free_last_name].filter(Boolean).join(' ')
+    if (!window.confirm(`Retirer "${nom}" du groupe ?`)) return
+    setRemovingId(m.id)
+    try {
+      const { error } = await supabase.from('group_members').delete().eq('id', m.id)
+      if (error) throw error
+      setRefreshKey((k) => k + 1)
+    } catch (e) {
+      alert('Erreur : ' + e.message)
+    } finally {
+      setRemovingId(null)
     }
   }
 
@@ -126,6 +157,7 @@ export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSum
   const presentCount = Object.values(attendance).filter(s => s === 'present').length
 
   return (
+    <>
     <div className="flex flex-col gap-1 pt-1">
       {/* Bouton "Tout le monde présent" */}
       {presentCount < membres.length && (
@@ -148,8 +180,8 @@ export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSum
         const status = attendance[key] ?? null
         return (
           <div key={key} className="flex items-center gap-2 text-xs">
-            <span className="w-32 truncate text-foreground font-medium">{nom}</span>
-            <div className="flex gap-1">
+            <span className="w-28 truncate text-foreground font-medium">{nom}</span>
+            <div className="flex gap-1 flex-1">
               {ATTENDANCE_STATUSES.map(s => (
                 <button
                   key={s.value}
@@ -167,9 +199,38 @@ export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSum
                 </button>
               ))}
             </div>
+            <button
+              type="button"
+              disabled={removingId === m.id}
+              onClick={() => handleRemoveMember(m)}
+              title="Retirer du groupe"
+              className="shrink-0 p-1 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
           </div>
         )
       })}
+
+      {/* Bouton Ajouter un membre */}
+      <button
+        type="button"
+        onClick={() => setShowAddModal(true)}
+        className="flex items-center gap-1.5 self-start mt-2 px-2 py-1 rounded-md text-xs font-medium
+                   border border-border-subtle text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors"
+      >
+        <UserPlus className="w-3 h-3" />
+        Ajouter un membre
+      </button>
     </div>
+
+    {showAddModal && (
+      <AddMemberModal
+        groupId={groupId}
+        onClose={() => setShowAddModal(false)}
+        onAdded={() => { setShowAddModal(false); setRefreshKey((k) => k + 1) }}
+      />
+    )}
+    </>
   )
 }

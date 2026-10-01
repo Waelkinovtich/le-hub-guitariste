@@ -93,7 +93,7 @@ export default function AttendanceQuickActions({
             ? 'bg-emerald-500/15 text-emerald-400'
             : 'text-emerald-500/50 hover:text-emerald-400 hover:bg-emerald-500/10'
         }`}
-        style={{ minWidth: 44, minHeight: 44 }}
+        style={{ minWidth: 44, minHeight: 44, touchAction: 'manipulation' }}
         aria-pressed={isPresent}
       >
         <Check className="w-5 h-5" />
@@ -106,7 +106,7 @@ export default function AttendanceQuickActions({
         title={isEmarged && !isPresent ? (badge?.title ?? effectiveStatus) + ' — modifier' : '✗ Absent, excusé ou annulé'}
         className="inline-flex items-center justify-center rounded-full transition-colors"
         style={{
-          minWidth: 44, minHeight: 44,
+          minWidth: 44, minHeight: 44, touchAction: 'manipulation',
           background: isEmarged && !isPresent ? (badge?.color ?? '#ef4444') + '18' : 'transparent',
           color:      isEmarged && !isPresent ? (badge?.color ?? '#ef4444') : 'rgba(239,68,68,0.4)',
         }}
