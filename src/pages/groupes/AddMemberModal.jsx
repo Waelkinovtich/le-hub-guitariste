@@ -12,6 +12,7 @@ export default function AddMemberModal({ groupId, onClose, onAdded }) {
   const [saving, setSaving] = useState(false)
   const [addErr, setAddErr] = useState(null)
 
+  // eslint-disable-next-line no-use-before-define
   useEffect(() => { fetchStudents() }, [])
 
   async function fetchStudents() {

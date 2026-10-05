@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useEffect } from 'react'
+import { useCallback, useMemo, useState, useEffect, useRef } from 'react'
 import { Plus, Pencil, Trash2, ClipboardCheck, ChevronLeft, ChevronRight, Download, HelpCircle, Eye, EyeOff, Navigation, CalendarPlus } from 'lucide-react'
 import { downloadIcs } from '../../utils/icsExport'
 import { currentSchoolYear } from '../../services/schools'
@@ -7,7 +7,9 @@ import { useAuth } from '../../context/AuthContext'
 import HelpTooltip from '../../components/HelpTooltip'
 import { useFetch } from '../../hooks/useFetch'
 import { useRegisterRefresh } from '../../contexts/RefreshContext'
-import { fetchLessonsInRange, updateLessonPlanningStatus, updateLessonStatus, getOrCreateGroupSession } from '../../services/lessons'
+import { fetchLessonsInRange, updateLessonPlanningStatus, updateLessonStatus, getOrCreateGroupSession, updateLesson } from '../../services/lessons'
+import { syncAbsenceDeclarations } from '../../services/absenceDeclarations'
+import { supabase } from '../../lib/supabase'
 import { useUndoRedo } from '../../contexts/UndoRedoContext'
 import { fetchTeacherSchools } from '../../services/schools'
 import { startOfWeek, toISODate } from '../../utils/format'
@@ -23,6 +25,7 @@ import MonthView from '../../components/MonthView'
 import WeekGridPlanning from '../../components/WeekGridPlanning'
 import { fetchReservedSlots, fetchSlotExceptions, upsertSlotException, deleteSlotException } from '../../services/reservedSlots'
 import { fetchEventsInRange, createSchoolEvent, updateSchoolEventOccurrence, updateSchoolEventSeries, deleteSchoolEventOccurrence } from '../../services/schoolEvents'
+import BackToDashboard from '../../components/BackToDashboard'
 
 const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: 'Mois' }, { value: 'période', label: 'Période scolaire' }, { value: 'année', label: 'Année' }, { value: 'récap', label: 'Récapitulatif' }]
@@ -252,6 +255,25 @@ export default function PlanningPage() {
   const { data: lessons, loading, error, reload } = useFetch(load, [user.id, range.from, range.to])
   useRegisterRefresh(reload)
 
+  // T2a — Synchronise les statuts avec les déclarations d'absence (même logique qu'Émargement)
+  useEffect(() => {
+    if (!lessons?.length) return
+    const nonGroupLessons = lessons.filter((l) => !l.isGroup)
+    if (nonGroupLessons.length === 0) return
+    syncAbsenceDeclarations({
+      supabaseClient: supabase,
+      teacherId: user.id,
+      from: range.from,
+      to: range.to,
+      lessons: nonGroupLessons,
+      updateStatus: updateLessonStatus,
+      onOverride: (id, status) =>
+        setLessonStatusOverrides((prev) => ({ ...prev, [id]: status })),
+      onClearOverride: (id) =>
+        setLessonStatusOverrides((prev) => { const n = { ...prev }; delete n[id]; return n }),
+    })
+  }, [lessons, user.id, range.from, range.to]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const weekLabel = useMemo(() => {
     const opts = { day: 'numeric', month: 'long' }
     return 'Semaine du ' + weekStart.toLocaleDateString('fr-FR', opts) + ' au ' + weekEnd.toLocaleDateString('fr-FR', { ...opts, year: 'numeric' })
@@ -410,6 +432,7 @@ export default function PlanningPage() {
 
   return (
     <div className="p-6 sm:p-8 max-w-7xl">
+      <BackToDashboard />
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
           <div className="flex items-center gap-2">
@@ -548,7 +571,35 @@ export default function PlanningPage() {
             // lessonDate et lessonTime volontairement absents : l'utilisateur
             // choisit lui-même la nouvelle date dans la modale.
           })}
-          onDurationChange={() => reload()}
+          onDurationChange={(lesson, newMinutes) => {
+            const prevMinutes = lesson.durationMinutes
+            pushAction?.({
+              label: `Durée — ${lesson.studentName ?? 'cours'}`,
+              undo: async () => {
+                await updateLesson(lesson.id, {
+                  studentId:       lesson.studentId,
+                  lessonDate:      lesson.lessonDate,
+                  lessonTime:      lesson.lessonTime,
+                  durationMinutes: prevMinutes,
+                  topic:           lesson.topic ?? '',
+                  notes:           lesson.notes ?? null,
+                })
+                reload()
+              },
+              redo: async () => {
+                await updateLesson(lesson.id, {
+                  studentId:       lesson.studentId,
+                  lessonDate:      lesson.lessonDate,
+                  lessonTime:      lesson.lessonTime,
+                  durationMinutes: newMinutes,
+                  topic:           lesson.topic ?? '',
+                  notes:           lesson.notes ?? null,
+                })
+                reload()
+              },
+            })
+            reload()
+          }}
           buildGpsUrl={buildGpsUrl}
           onEditEvent={(ev) => setEditEvent({ ...ev, _edit: { title: ev.title, startTime: ev.start_time ?? '', durationMinutes: ev.duration_minutes ?? 60, typeEvenement: ev.type_evenement ?? 'autre', schoolName: ev.school_name ?? '' } })}
           onEmargement={(lesson) => lesson._groupSessionId ? setGroupLesson(lesson) : setStatusLesson(lesson)}

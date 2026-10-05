@@ -225,6 +225,7 @@ export async function fetchSchoolsOverview(teacherId) {
     supabase.from('profiles').select(PROFILE_SCORE_COLUMNS).eq('id', teacherId).maybeSingle(),
   ])
 
+  // eslint-disable-next-line no-use-before-define
   const currentYear = currentSchoolYear()
   const countMap = {}
   const rateMap = {}
@@ -241,8 +242,9 @@ export async function fetchSchoolsOverview(teacherId) {
       ...s,
       studentCount: countMap[s.id] ?? 0,
       currentNetRate: netHourlyRate,
+      // eslint-disable-next-line no-use-before-define
       priorityScore: computePriorityScore(s, { profile, netHourlyRate, weights }),
-      // Indicateur direct, indépendant du score pondéré — voir calculerRendementHoraireNetReel.
+      // eslint-disable-next-line no-use-before-define
       netHourlyYieldReal: calculerRendementHoraireNetReel(s, { netHourlyRate }),
     }
   })

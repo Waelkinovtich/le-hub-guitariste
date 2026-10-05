@@ -6,6 +6,7 @@ import { useFetch } from '../../hooks/useFetch'
 import { useRegisterRefresh } from '../../contexts/RefreshContext'
 import { useUndoRedo } from '../../contexts/UndoRedoContext'
 import { fetchLessonsInRange, updateLessonStatus } from '../../services/lessons'
+import { syncAbsenceDeclarations } from '../../services/absenceDeclarations'
 import GroupMembresPanel from '../../components/GroupMembresPanel'
 import { supabase } from '../../lib/supabase'
 import { fetchSchoolNames } from '../../services/students'
@@ -18,6 +19,7 @@ import LessonStatusModal from '../../components/LessonStatusModal'
 import AddLessonModal from '../../components/AddLessonModal'
 import DeleteLessonModal from '../../components/DeleteLessonModal'
 import HelpTooltip from '../../components/HelpTooltip'
+import BackToDashboard from '../../components/BackToDashboard'
 
 const PERIODS = [
   { value: 'aujourd_hui', label: "Aujourd'hui" },
@@ -98,45 +100,26 @@ export default function ÉmargementPage() {
   useRegisterRefresh(reload)
   const { pushAction } = useUndoRedo() ?? {}
 
-  // T3 — Applique les déclarations d'absence actives sur les cours "planifié" du prof.
-  // Exécuté après chaque chargement (data change). Ne touche que les cours dont le statut
-  // est encore 'planifié' (ni déjà émargé manuellement ni overridé dans cette session).
+  // T2 — Synchronise les statuts de cours avec les déclarations d'absence actives.
+  // Forward : planifié + déclaration → absent/excuse (absence_reason='declaration_eleve').
+  // Backward : absent/excuse (declaration_eleve) + déclaration annulée → planifié.
   useEffect(() => {
     if (!data?.lessons?.length) return
-    const lessons = data.lessons.filter((l) => !l.isGroup && l.status === 'planifie')
-    if (lessons.length === 0) return
+    const nonGroupLessons = data.lessons.filter((l) => !l.isGroup)
+    if (nonGroupLessons.length === 0) return
 
-    ;(async () => {
-      const { data: decls, error: dErr } = await supabase
-        .from('absence_declarations')
-        .select('student_id,lesson_date,lesson_time,excused,cancelled_at')
-        .eq('teacher_id', user.id)
-        .gte('lesson_date', range.from)
-        .lte('lesson_date', range.to)
-        .is('cancelled_at', null)
-      if (dErr || !decls?.length) return
-
-      // Normalise HH:MM:SS → HH:MM pour comparer avec lesson.lesson_time
-      const toHHMM = (t) => (t ?? '').slice(0, 5)
-      const declMap = new Map()
-      for (const d of decls) {
-        declMap.set(`${d.student_id}|${d.lesson_date}|${toHHMM(d.lesson_time)}`, d)
-      }
-
-      for (const lesson of lessons) {
-        const key = `${lesson.studentId}|${lesson.lessonDate}|${toHHMM(lesson.lessonTime)}`
-        const decl = declMap.get(key)
-        if (!decl) continue
-        const newStatus = decl.excused ? 'excuse' : 'absent'
-        // Mise à jour optimiste
-        setLessonStatusOverrides((prev) => ({ ...prev, [lesson.id]: newStatus }))
-        try {
-          await updateLessonStatus(lesson.id, newStatus, null, null)
-        } catch {
-          setLessonStatusOverrides((prev) => { const n = { ...prev }; delete n[lesson.id]; return n })
-        }
-      }
-    })()
+    syncAbsenceDeclarations({
+      supabaseClient: supabase,
+      teacherId: user.id,
+      from: range.from,
+      to: range.to,
+      lessons: nonGroupLessons,
+      updateStatus: updateLessonStatus,
+      onOverride: (id, status) =>
+        setLessonStatusOverrides((prev) => ({ ...prev, [id]: status })),
+      onClearOverride: (id) =>
+        setLessonStatusOverrides((prev) => { const n = { ...prev }; delete n[id]; return n }),
+    })
   }, [data, user.id, range.from, range.to]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const periodFiltered = filterLessonsByPeriod(data?.lessons ?? [], periodCtx)
@@ -196,6 +179,7 @@ export default function ÉmargementPage() {
   return (
     <>
     <div className="p-6 sm:p-8 max-w-5xl">
+      <BackToDashboard />
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
           <div className="flex items-center gap-2">
@@ -267,8 +251,59 @@ export default function ÉmargementPage() {
           {lessons.length === 0 ? (
             <div className="glass-panel rounded-2xl p-8 text-center text-muted-foreground">Aucun cours sur cette période.</div>
           ) : (
-            <div className="glass-panel rounded-2xl overflow-hidden overflow-x-auto">
-              <table className="w-full text-sm min-w-[600px]">
+            <>
+            {/* ── Vue cartes mobile (< lg) — évite le scroll container imbriqué qui
+                   décale les touches sur iOS (scrollTop du parent non compensé) ── */}
+            <div className="lg:hidden space-y-2">
+              {lessons.map((lesson) => {
+                const effectiveStatus = lessonStatusOverrides[lesson.id] ?? lesson.status
+                const color = STATUS_COLORS[effectiveStatus] ?? '#7f8c8d'
+                const isPlanifie = effectiveStatus === 'planifie'
+                return (
+                  <div key={lesson.id} className="glass-panel rounded-xl p-4">
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-sm leading-tight truncate">{lesson.studentName}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {lesson.dateLabel} · {lesson.timeLabel} · {fmtDuree(lesson.durationMinutes)}
+                        </p>
+                        {lesson.topic && <p className="text-xs text-muted-foreground truncate">{lesson.topic}</p>}
+                      </div>
+                      <span className="shrink-0 text-xs font-semibold px-2 py-1 rounded-lg whitespace-nowrap"
+                        style={{ background: color + '20', color }}>
+                        {STATUS_LABELS[effectiveStatus]}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <AttendanceQuickActions
+                        variant="row"
+                        effectiveStatus={effectiveStatus}
+                        onPresent={() => handleQuickPresent(lesson)}
+                        onOpenModal={() => setStatusLesson(lesson)}
+                      />
+                      <div className="flex items-center gap-1">
+                        <button type="button" onClick={() => setEditLesson(lesson)}
+                          title="Modifier" style={{ touchAction: 'manipulation' }}
+                          className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-muted hover:text-foreground hover:bg-surface-overlay transition-colors">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        {isPlanifie && (
+                          <button type="button" onClick={() => setDeleteLesson(lesson)}
+                            title="Supprimer" style={{ touchAction: 'manipulation' }}
+                            className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* ── Vue tableau desktop (≥ lg) ── */}
+            <div className="hidden lg:block glass-panel rounded-2xl overflow-hidden">
+              <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border-subtle text-left text-muted-foreground">
                     <th className="px-4 py-3 font-medium">Date</th>
@@ -284,16 +319,15 @@ export default function ÉmargementPage() {
                   {lessons.map((lesson) => {
                     const effectiveStatus = lessonStatusOverrides[lesson.id] ?? lesson.status
                     const color = STATUS_COLORS[effectiveStatus] ?? '#7f8c8d'
-                    const isPresent = effectiveStatus === 'present'
                     const isPlanifie = effectiveStatus === 'planifie'
                     return (
                       <tr key={lesson.id} className="border-b border-border-subtle last:border-0">
-                        <td className="px-4 py-3">{lesson.dateLabel}</td>
-                        <td className="px-4 py-3">{lesson.timeLabel}</td>
-                        <td className="px-4 py-3 font-medium">{lesson.studentName}</td>
-                        <td className="px-4 py-3 text-muted-foreground">{lesson.topic}</td>
-                        <td className="px-4 py-3 text-muted-foreground">{fmtDuree(lesson.durationMinutes)}</td>
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-0">{lesson.dateLabel}</td>
+                        <td className="px-4 py-0">{lesson.timeLabel}</td>
+                        <td className="px-4 py-0 font-medium">{lesson.studentName}</td>
+                        <td className="px-4 py-0 text-muted-foreground">{lesson.topic}</td>
+                        <td className="px-4 py-0 text-muted-foreground">{fmtDuree(lesson.durationMinutes)}</td>
+                        <td className="px-4 py-0">
                           <AttendanceQuickActions
                             variant="row"
                             effectiveStatus={effectiveStatus}
@@ -301,26 +335,17 @@ export default function ÉmargementPage() {
                             onOpenModal={() => setStatusLesson(lesson)}
                           />
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-0">
                           <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => setEditLesson(lesson)}
+                            <button type="button" onClick={() => setEditLesson(lesson)}
                               title="Modifier ce cours"
-                              className="p-2 min-h-[44px] min-w-[44px] rounded-lg text-muted hover:text-foreground hover:bg-surface-overlay transition-colors"
-                              style={{ touchAction: 'manipulation' }}
-                            >
+                              className="p-2 min-h-[44px] min-w-[44px] rounded-lg text-muted hover:text-foreground hover:bg-surface-overlay transition-colors">
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
-                            {/* Suppression uniquement si le cours n'a jamais eu lieu (planifié) */}
                             {isPlanifie && (
-                              <button
-                                type="button"
-                                onClick={() => setDeleteLesson(lesson)}
+                              <button type="button" onClick={() => setDeleteLesson(lesson)}
                                 title="Supprimer ce cours (jamais donné)"
-                                className="p-2 min-h-[44px] min-w-[44px] rounded-lg text-muted hover:text-guitar-400 hover:bg-guitar-600/10 transition-colors"
-                                style={{ touchAction: 'manipulation' }}
-                              >
+                                className="p-2 min-h-[44px] min-w-[44px] rounded-lg text-muted hover:text-guitar-400 hover:bg-guitar-600/10 transition-colors">
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             )}
@@ -332,6 +357,7 @@ export default function ÉmargementPage() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
 
           {groupSessions.length > 0 && (

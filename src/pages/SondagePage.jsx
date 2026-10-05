@@ -166,6 +166,14 @@ function StepNiveau({ data, onChange }) {
   )
 }
 
+const defaultTuteur = () => ({ prenom: '', nom: '', role: '', role_precision: '', phone: '', email: '', purpose: '' })
+
+const defaultPersonSupp = () => ({
+  prenom: '', nom: '', birth_year: '', email: '', phone: '',
+  instrument: '',
+  school_name: '', registration_type: 'nouvelle', availabilities: {},
+})
+
 function StepTuteurs({ data, onChange }) {
   const addTuteur = () => {
     if (data.tuteurs.length >= 2) return
@@ -691,18 +699,6 @@ function StepInscriptions({ data, onChange, schools, suppSchedules, suppLoading,
 
 // ─── État initial ─────────────────────────────────────────────────────────────
 
-// Structure interne d'un tuteur — guardian1_role/guardian2_role nécessitent la migration SQL
-const defaultTuteur = () => ({ prenom: '', nom: '', role: '', role_precision: '', phone: '', email: '', purpose: '' })
-
-// Structure d'une personne supplémentaire — suit le même parcours que le répondant principal
-// (identité, école/CESU, créneaux disponibles). Nécessite la migration SQL bloc T1b.
-const defaultPersonSupp = () => ({
-  prenom: '', nom: '', birth_year: '', email: '', phone: '',
-  // instrument : ajouté pour stocker le choix d'instrument de la personne supplémentaire
-  // (même liste que le répondant principal — nécessite la colonne sur survey_registrations)
-  instrument: '',
-  school_name: '', registration_type: 'nouvelle', availabilities: {},
-})
 
 const defaultForm = {
   first_name: '', last_name: '', birth_year: '', email: '', phone: '',
@@ -714,6 +710,27 @@ const defaultForm = {
   desired_duration_minutes: null,
   expectations: '',
   inscriptions_supplementaires: [],
+}
+
+// ─── Mise en page ─────────────────────────────────────────────────────────────
+
+function Shell({ children }) {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-start py-10 px-4">
+      <div className="w-full max-w-xl">
+        <div className="flex items-center gap-3 mb-10">
+          <div className="w-10 h-10 rounded-xl guitar-gradient flex items-center justify-center flex-shrink-0">
+            <Guitar className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <p className="font-display text-xl leading-tight">Cours de guitare</p>
+            <p className="text-xs text-muted-foreground">Fiche d&apos;inscription</p>
+          </div>
+        </div>
+        <div className="glass-panel rounded-2xl p-6 sm:p-8">{children}</div>
+      </div>
+    </div>
+  )
 }
 
 // ─── Page principale ──────────────────────────────────────────────────────────
@@ -1096,26 +1113,5 @@ export default function SondagePage() {
         )}
       </div>
     </Shell>
-  )
-}
-
-// ─── Mise en page ─────────────────────────────────────────────────────────────
-
-function Shell({ children }) {
-  return (
-    <div className="min-h-screen flex flex-col items-center justify-start py-10 px-4">
-      <div className="w-full max-w-xl">
-        <div className="flex items-center gap-3 mb-10">
-          <div className="w-10 h-10 rounded-xl guitar-gradient flex items-center justify-center flex-shrink-0">
-            <Guitar className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <p className="font-display text-xl leading-tight">Cours de guitare</p>
-            <p className="text-xs text-muted-foreground">Fiche d&apos;inscription</p>
-          </div>
-        </div>
-        <div className="glass-panel rounded-2xl p-6 sm:p-8">{children}</div>
-      </div>
-    </div>
   )
 }

@@ -6,6 +6,7 @@ import { getSchoolColor, SCHOOL_COLOR_DEFAULT } from '../utils/schoolColors'
 import DeleteLessonModal from './DeleteLessonModal'
 import { supabase } from '../lib/supabase'
 import AttendanceQuickActions from './AttendanceQuickActions'
+import { useUndoRedo } from '../contexts/UndoRedoContext'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -627,6 +628,8 @@ function ReservedSlotEditPanel({ slot, onClose, onSaved }) {
 // onCascadeRequest(displacedLesson, newDay, newTime, durationMinutes) : intercepte le DnD
 //   pour que le parent recalcule un créneau alternatif pour la leçon déplacée.
 export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = [], reservedSlotExceptions = [], validDropZones = [], eventsByDay = {}, onNewLesson, onSelectLesson, onDuplicate, onDeleteLesson, onMoveLesson, onDragStart, onDragEnd, onViewStudent, onDurationChange, onDegrouper = null, allowOverlap = false, outsideAvailIds = null, originalProposalMap = null, conflictSelectedIds = null, onToggleConflictSelect = null, cascadeEnabled = false, onCascadeRequest = null, onEditReservedSlot = null, onSlotException = null, onEmargement = null, onQuickPresent = null, groupAttendanceSummary = {}, onEmargementReservedSlot = null, buildGpsUrl = null, onEditEvent = null, schoolZone = null }) {
+  const { pushAction } = useUndoRedo() ?? {}
+
   // Date du jour (ISO) — sert à T3 (icône cours passé non émargé)
   const TODAY_ISO = new Date().toISOString().slice(0, 10)
 
@@ -911,7 +914,38 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
           notes:           lesson.notes ?? null,
         })
       }
-      // Succès : l'état local est déjà correct, rien de plus à faire
+      // Succès — pushAction pour undo/redo
+      const prevDate = lesson.lessonDate
+      const prevTime = lesson.lessonTime
+      pushAction?.({
+        label: `Déplacé — ${lesson.studentName ?? 'cours'}`,
+        undo: async () => {
+          setLocalLessons((prev) => prev.map((l) =>
+            l.id === lesson.id ? { ...l, lessonDate: prevDate, lessonTime: prevTime } : l
+          ))
+          await updateLesson(lesson.id, {
+            studentId:       lesson.studentId,
+            lessonDate:      prevDate,
+            lessonTime:      prevTime,
+            durationMinutes: lesson.durationMinutes,
+            topic:           lesson.topic ?? '',
+            notes:           lesson.notes ?? null,
+          })
+        },
+        redo: async () => {
+          setLocalLessons((prev) => prev.map((l) =>
+            l.id === lesson.id ? { ...l, lessonDate: m.currentDay, lessonTime: newTime } : l
+          ))
+          await updateLesson(lesson.id, {
+            studentId:       lesson.studentId,
+            lessonDate:      m.currentDay,
+            lessonTime:      newTime,
+            durationMinutes: lesson.durationMinutes,
+            topic:           lesson.topic ?? '',
+            notes:           lesson.notes ?? null,
+          })
+        },
+      })
     } catch (err) {
       // Échec : rollback immédiat vers la position d'origine
       setLocalLessons((prev) => prev.map((l) =>
@@ -924,7 +958,7 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
   // fait passer onToggleConflictSelect de null à une vraie fonction — sans cette dep, endMove
   // garderait null indéfiniment et le toggle de sélection ne fonctionnerait jamais).
   // idsEnChevauchement : requis pour le clic simple sur les leçons orange (chevauchement manuel)
-  }, [lessonsByDay, onSelectLesson, showMoveError, onMoveLesson, onToggleConflictSelect, cascadeEnabled, onCascadeRequest, allowOverlap, reservedByDay, idsEnChevauchement])
+  }, [lessonsByDay, onSelectLesson, showMoveError, onMoveLesson, onToggleConflictSelect, cascadeEnabled, onCascadeRequest, allowOverlap, reservedByDay, idsEnChevauchement, pushAction])
 
   // ── Handlers pointer du conteneur de grille ───────────────────────────────
 

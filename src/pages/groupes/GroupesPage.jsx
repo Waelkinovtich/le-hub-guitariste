@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { Plus, Users, Music2, Trash2, CalendarDays, AlertTriangle, Loader2 } from 'lucide-react'
 import HelpTooltip from '../../components/HelpTooltip'
+import BackToDashboard from '../../components/BackToDashboard'
 import CreateGroupModal from './CreateGroupModal'
 import { usePeriod } from '../../context/PeriodContext'
 
@@ -24,6 +25,7 @@ export default function GroupesPage() {
   const [deletingAll, setDeletingAll] = useState(false)
   const [deleteAllError, setDeleteAllError] = useState('')
 
+  // eslint-disable-next-line no-use-before-define
   useEffect(() => { fetchGroups() }, [])
 
   async function fetchGroups() {
@@ -113,6 +115,7 @@ export default function GroupesPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
+      <BackToDashboard />
       <div className="flex items-center justify-between mb-6">
         <div>
           <div className="flex items-center gap-1.5">
@@ -122,6 +125,13 @@ export default function GroupesPage() {
           <p className="text-sm text-muted mt-1">Gérez vos cours collectifs, répétitions et ensembles</p>
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            to="/professeur/groupes/musiciens"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
+          >
+            <Music2 className="w-4 h-4" />
+            Musiciens
+          </Link>
           {groups.length > 0 && (
             <button
               onClick={deleteAllGroups}

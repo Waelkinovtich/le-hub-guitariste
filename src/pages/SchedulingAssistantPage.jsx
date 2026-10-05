@@ -201,6 +201,7 @@ function mapLessonRowToGrille(dbRow, studentName, schoolName) {
 // ScoreBadge importé depuis components/ScoreBadge.jsx.
 
 function ProposalCard({ response, proposals, onConfirm, confirming, schools = [], isLocked = false, onToggleLock, onViewStudent }) {
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [chosen, setChosen] = useState(null)
   const [done, setDone] = useState(false)
@@ -251,7 +252,15 @@ function ProposalCard({ response, proposals, onConfirm, confirming, schools = []
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {response.school_name || 'École non précisée'}
+              {schoolInfo?.id ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/admin/ecoles/${schoolInfo.id}`)}
+                  className="hover:underline underline-offset-2 hover:text-foreground transition-colors"
+                >
+                  {response.school_name}
+                </button>
+              ) : (response.school_name || 'École non précisée')}
               {response.level ? ` · ${response.level}` : ''}
             </p>
             {(response.submitted_at || response.created_at) && (
@@ -1324,6 +1333,7 @@ export default function SchedulingAssistantPage() {
     if (err) { alert('Erreur lors de la sauvegarde : ' + err.message); return }
     setSavedSnapshotId(data?.id ?? null)
     // Recharge la liste pour l'afficher à jour
+    // eslint-disable-next-line no-use-before-define
     handleLoadSnapshots()
   }, [teacherInfo, proposalOverrides, lockedIds, responses, weekOffset])
 

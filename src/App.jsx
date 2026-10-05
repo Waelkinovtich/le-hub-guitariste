@@ -27,6 +27,7 @@ const SettingsPage           = lazy(() => import('./pages/teacher/SettingsPage')
 const RattrapagePage         = lazy(() => import('./pages/teacher/RattrapagePage'))
 const GroupesPage            = lazy(() => import('./pages/groupes/GroupesPage'))
 const GroupDetailPage        = lazy(() => import('./pages/groupes/GroupDetailPage'))
+const MusicienEnsemblePage   = lazy(() => import('./pages/groupes/MusicienEnsemblePage'))
 const StudentDashboard       = lazy(() => import('./pages/student/StudentDashboard'))
 const StudentExercisesPage   = lazy(() => import('./pages/student/StudentExercisesPage'))
 const StudentProgressPage    = lazy(() => import('./pages/student/StudentProgressPage'))
@@ -116,6 +117,7 @@ function AppShell() {
             <Route path="emargement" element={<EmargementPage />} />
             <Route path="groupes" element={<GroupesPage />} />
             <Route path="groupes/:id" element={<GroupDetailPage />} />
+            <Route path="groupes/musiciens" element={<MusicienEnsemblePage />} />
             <Route path="exercices" element={<ExercisesPage />} />
             <Route path="reglages" element={<SettingsPage />} />
             <Route path="rattrapage" element={<RattrapagePage />} />

@@ -42,6 +42,7 @@ export default function CreateGroupModal({ onClose, onCreated, userId, editGroup
   const [saving, setSaving] = useState(false)
   const [schools, setSchools] = useState([])
 
+  // eslint-disable-next-line no-use-before-define
   useEffect(() => { loadSchools() }, [])
 
   async function loadSchools() {

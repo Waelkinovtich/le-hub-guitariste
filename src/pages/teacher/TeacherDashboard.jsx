@@ -1,6 +1,6 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Users, Calendar, BookOpen, TrendingUp, UserX, Bell } from 'lucide-react'
+import { Users, Calendar, BookOpen, TrendingUp, UserX, Bell, ChevronDown, ChevronUp } from 'lucide-react'
 import HelpTooltip from '../../components/HelpTooltip'
 import StatCard from '../../components/StatCard'
 import { LoadingBlock, ErrorBlock } from '../../components/DataState'
@@ -32,7 +32,7 @@ export default function TeacherDashboard() {
 
     const [students, upcoming, weekLessons] = await Promise.all([
       fetchTeacherStudents(user.id),
-      fetchUpcomingLessons({ teacherId: user.id, limit: 8 }),
+      fetchUpcomingLessons({ teacherId: user.id, limit: 10 }),
       fetchLessonsInRange({ teacherId: user.id, from: weekStart, to: weekEnd }),
     ])
 
@@ -48,11 +48,14 @@ export default function TeacherDashboard() {
       newAbsences = count ?? 0
     } catch {}
 
+    const studentsToday = weekLessons
+      .filter((l) => l.lessonDate === today && !l.isGroup)
+      .map((l) => ({ id: l.studentId, name: l.studentName, time: l.lessonTime ?? l.timeLabel, status: l.status }))
     const lessonsToday = weekLessons.filter((l) => l.lessonDate === today).length
     // Cours planifiés restants cette semaine (depuis aujourd'hui)
     const weekRemaining = weekLessons.filter((l) => l.lessonDate >= today && l.status === 'planifie').length
 
-    return { students, upcoming, weekLessons, lessonsToday, weekRemaining, newAbsences }
+    return { students, upcoming, weekLessons, lessonsToday, weekRemaining, newAbsences, studentsToday }
   }, [user.id])
 
   const { data, loading, error, reload } = useFetch(loadDashboard, [user.id])
@@ -81,7 +84,7 @@ export default function TeacherDashboard() {
         href: '/professeur/planning',
       },
       {
-        label: 'À rattraper cette semaine',
+        label: 'Cours restants cette semaine',
         value: String(data.weekRemaining),
         change: 'Cours planifiés restants',
         href: '/professeur/emargement',
@@ -95,11 +98,13 @@ export default function TeacherDashboard() {
     ]
   }, [data])
 
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false)
+
   if (loading) return <LoadingBlock />
   if (error) return <ErrorBlock message={error} onRetry={reload} />
 
   const recentStudents = data.students.slice(0, 4)
-  const upcoming = data.upcoming.slice(0, 4)
+  const upcomingVisible = showAllUpcoming ? data.upcoming : data.upcoming.slice(0, 2)
 
   // Calcul du taux d'absence de la semaine (cours émargés uniquement)
   const absenceSemaine = calculerTauxAbsence(data.weekLessons)
@@ -172,30 +177,75 @@ export default function TeacherDashboard() {
       <div className="grid lg:grid-cols-5 gap-6">
         <section className="lg:col-span-3 glass-panel rounded-2xl p-6">
           <h2 className="text-lg font-semibold mb-4">Prochains cours</h2>
-          {upcoming.length === 0 ? (
+          {data.upcoming.length === 0 ? (
             <p className="text-sm text-muted-foreground py-6 text-center">Aucun cours planifié</p>
           ) : (
-            <ul className="space-y-3">
-              {upcoming.map((lesson) => (
-                <li
-                  key={lesson.id}
-                  className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 p-4 rounded-xl bg-surface/50 border border-border-subtle hover:border-guitar-600/20 transition-colors"
+            <>
+              <ul className="space-y-3">
+                {upcomingVisible.map((lesson) => (
+                  <li
+                    key={lesson.id}
+                    className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 p-4 rounded-xl bg-surface/50 border border-border-subtle hover:border-guitar-600/20 transition-colors"
+                  >
+                    <div className="sm:w-28 shrink-0">
+                      <p className="text-sm font-medium text-guitar-400">{lesson.dateLabel}</p>
+                      <p className="text-xs text-muted">{lesson.timeLabel}</p>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium">{lesson.studentName}</p>
+                      <p className="text-sm text-muted-foreground truncate">{lesson.topic}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {data.upcoming.length > 2 && (
+                <button
+                  onClick={() => setShowAllUpcoming((v) => !v)}
+                  className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground py-2 rounded-xl hover:bg-surface-overlay transition-colors"
                 >
-                  <div className="sm:w-28 shrink-0">
-                    <p className="text-sm font-medium text-guitar-400">{lesson.dateLabel}</p>
-                    <p className="text-xs text-muted">{lesson.timeLabel}</p>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium">{lesson.studentName}</p>
-                    <p className="text-sm text-muted-foreground truncate">{lesson.topic}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                  {showAllUpcoming
+                    ? <><ChevronUp className="w-3.5 h-3.5" /> Réduire</>
+                    : <><ChevronDown className="w-3.5 h-3.5" /> {data.upcoming.length - 2} de plus</>
+                  }
+                </button>
+              )}
+            </>
           )}
         </section>
 
-        <section className="lg:col-span-2 glass-panel rounded-2xl p-6">
+        <section className="lg:col-span-2 space-y-6">
+          {data.studentsToday.length > 0 && (
+            <div className="glass-panel rounded-2xl p-6">
+              <h2 className="text-lg font-semibold mb-4">Élèves du jour</h2>
+              <ul className="space-y-3">
+                {data.studentsToday.map((s, i) => (
+                  <li key={s.id ?? i} className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-guitar-600/20 flex items-center justify-center text-xs font-medium text-guitar-400 shrink-0">
+                      {(s.name ?? '?')[0]}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{s.name}</p>
+                      <p className="text-xs text-muted-foreground">{s.time ? s.time.slice(0, 5) : '—'}</p>
+                    </div>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                      s.status === 'planifie' ? 'bg-surface-overlay text-muted-foreground'
+                      : s.status === 'present' ? 'bg-emerald-500/15 text-emerald-400'
+                      : s.status === 'absent' || s.status === 'excuse' ? 'bg-orange-500/15 text-orange-400'
+                      : 'bg-surface-overlay text-muted-foreground'
+                    }`}>
+                      {s.status === 'planifie' ? 'À venir'
+                        : s.status === 'present' ? 'Présent'
+                        : s.status === 'absent' ? 'Absent'
+                        : s.status === 'excuse' ? 'Excusé'
+                        : s.status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="glass-panel rounded-2xl p-6">
           <h2 className="text-lg font-semibold mb-4">Élèves</h2>
           {recentStudents.length === 0 ? (
             <p className="text-sm text-muted-foreground py-6 text-center">Ajoutez des élèves dans Supabase</p>
@@ -224,6 +274,7 @@ export default function TeacherDashboard() {
               ))}
             </ul>
           )}
+          </div>
         </section>
       </div>
     </div>

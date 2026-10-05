@@ -85,6 +85,7 @@ export async function fetchLessonsInRange({ teacherId, from, to }) {
   const lessons = (data ?? []).map((row) => mapLesson({ ...row, recurrence_interval_weeks: row.recurrence_interval_weeks ?? 1 }))
   let groupSessions = []
   try {
+    // eslint-disable-next-line no-use-before-define
     groupSessions = await fetchGroupSessionsInRange({ teacherId, from, to })
   } catch (e) {
     console.error('Erreur seances groupe:', e)
@@ -412,31 +413,59 @@ export async function fetchGroupSeriesDateRange(seriesId) {
 export async function updateRecurrenceRange({ groupId, newStartDate, newEndDate, intervalWeeks, template, suspendDuringHolidays = false, zone = null }) {
   const safeInterval = Math.max(1, Math.round(intervalWeeks))
 
-  // 1. Connaître les dates déjà émargées (non-planifie) pour ne pas les écraser
-  const { data: existing, error: fetchErr } = await supabase
+  // 1. Fetch toutes les occurrences de la série (émargées ET planifiées)
+  const { data: allExisting, error: fetchErr } = await supabase
     .from(TABLES.lessons)
-    .select('lesson_date, status')
+    .select('id, lesson_date, lesson_time, duration_minutes, status')
     .eq('recurrence_group', groupId)
-    .neq('status', 'planifie')
   if (fetchErr) throw new Error(fetchErr.message)
-  const emargéDates = new Set((existing ?? []).map((r) => r.lesson_date))
 
-  // 2. Supprimer toutes les leçons planifie de la série (passées ET futures)
-  const { error: delErr } = await supabase
-    .from(TABLES.lessons)
-    .delete()
-    .eq('recurrence_group', groupId)
-    .eq('status', 'planifie')
-  if (delErr) throw new Error(delErr.message)
+  // Dates émargées (ne jamais toucher)
+  const emargéDates = new Set(
+    (allExisting ?? []).filter((r) => r.status !== 'planifie').map((r) => r.lesson_date)
+  )
 
-  // 3. Générer et insérer les nouvelles occurrences (planifie), en sautant les émargées
+  // 2. Calculer le planning cible
   const pad = (n) => String(n).padStart(2, '0')
-  const rows = []
-  let current = new Date(newStartDate + 'T00:00:00')
-  const end   = new Date(newEndDate + 'T00:00:00')
-  while (current <= end) {
-    const iso = current.getFullYear() + '-' + pad(current.getMonth() + 1) + '-' + pad(current.getDate())
+  const targetDates = new Set()
+  let cur = new Date(newStartDate + 'T00:00:00')
+  const end = new Date(newEndDate + 'T00:00:00')
+  while (cur <= end) {
+    const iso = cur.getFullYear() + '-' + pad(cur.getMonth() + 1) + '-' + pad(cur.getDate())
     if (!emargéDates.has(iso) && !(suspendDuringHolidays && enVacances(iso, zone))) {
+      targetDates.add(iso)
+    }
+    cur.setDate(cur.getDate() + 7 * safeInterval)
+  }
+
+  // 3. Parmi les planifié, séparer "standard" (inchangés) et "modifiés manuellement"
+  //    Un planifié est "modifié" si son heure ou sa durée diffèrent du template,
+  //    ou si sa date n'est PAS dans le planning cible (cours déplacé manuellement).
+  const planifiéLessons = (allExisting ?? []).filter((r) => r.status === 'planifie')
+  const manuallyModified = planifiéLessons.filter((r) =>
+    r.lesson_time !== template.lessonTime ||
+    r.duration_minutes !== template.durationMinutes ||
+    !targetDates.has(r.lesson_date)
+  )
+  const manualDates = new Set(manuallyModified.map((r) => r.lesson_date))
+  const standardIds  = planifiéLessons
+    .filter((r) => !manualDates.has(r.lesson_date))
+    .map((r) => r.id)
+
+  // 4. Supprimer seulement les occurrences standard (pas les modifiées)
+  if (standardIds.length > 0) {
+    const { error: delErr } = await supabase
+      .from(TABLES.lessons)
+      .delete()
+      .in('id', standardIds)
+    if (delErr) throw new Error(delErr.message)
+  }
+
+  // 5. Insérer les nouvelles occurrences, en sautant les dates déjà couvertes
+  const occupiedDates = new Set([...emargéDates, ...manualDates])
+  const rows = []
+  for (const iso of targetDates) {
+    if (!occupiedDates.has(iso)) {
       rows.push({
         teacher_id:                template.teacherId,
         student_id:                template.studentId,
@@ -452,12 +481,13 @@ export async function updateRecurrenceRange({ groupId, newStartDate, newEndDate,
         suspend_during_holidays:   suspendDuringHolidays,
       })
     }
-    current.setDate(current.getDate() + 7 * safeInterval)
   }
-  if (rows.length === 0) return 0
-  const { error: insErr } = await supabase.from(TABLES.lessons).insert(rows)
-  if (insErr) throw new Error(insErr.message)
-  return rows.length
+  if (rows.length > 0) {
+    const { error: insErr } = await supabase.from(TABLES.lessons).insert(rows)
+    if (insErr) throw new Error(insErr.message)
+  }
+
+  return { inserted: rows.length, preserved: manuallyModified.length }
 }
 
 /**
@@ -468,40 +498,66 @@ export async function updateRecurrenceRange({ groupId, newStartDate, newEndDate,
 export async function updateGroupSessionRange({ seriesId, groupId, newStartDate, newEndDate, intervalWeeks, sessionTime, durationMinutes, suspendDuringHolidays = false, zone = null }) {
   const safeInterval = Math.max(1, Math.round(intervalWeeks))
 
-  // 1. Dater les séances déjà effectuées pour ne pas les supprimer
-  const { data: done, error: fetchErr } = await supabase
+  // 1. Fetch toutes les séances de la série
+  const { data: allExisting, error: fetchErr } = await supabase
     .from('group_sessions')
-    .select('session_date')
+    .select('id, session_date, session_time, duration_minutes, status')
     .eq('recurrence_series_id', seriesId)
-    .eq('status', 'effectuee')
   if (fetchErr) throw new Error(fetchErr.message)
-  const effectueeDates = new Set((done ?? []).map((r) => r.session_date))
 
-  // 2. Supprimer les séances non-effectuées (planifie, prevue, etc.)
-  const { error: delErr } = await supabase
-    .from('group_sessions')
-    .delete()
-    .eq('recurrence_series_id', seriesId)
-    .neq('status', 'effectuee')
-  if (delErr) throw new Error(delErr.message)
+  const effectueeDates = new Set(
+    (allExisting ?? []).filter((r) => r.status === 'effectuee').map((r) => r.session_date)
+  )
 
-  // 3. Recréer, en sautant les dates déjà effectuées et les vacances si demandé
-  const dates = buildGroupSessionDates(newStartDate, newEndDate, safeInterval, { suspendDuringHolidays, zone })
-  const rows  = dates
-    .filter((d) => !effectueeDates.has(d))
-    .map((d) => ({
-      group_id:                  groupId,
-      session_date:              d,
-      session_time:              sessionTime,
-      duration_minutes:          durationMinutes,
-      recurrence_series_id:      seriesId,
-      recurrence_interval_weeks: safeInterval,
-      suspend_during_holidays:   suspendDuringHolidays,
-    }))
-  if (rows.length === 0) return 0
-  const { error: insErr } = await supabase.from('group_sessions').insert(rows)
-  if (insErr) throw new Error(insErr.message)
-  return rows.length
+  // 2. Calculer le planning cible
+  const targetDates = new Set(
+    buildGroupSessionDates(newStartDate, newEndDate, safeInterval, { suspendDuringHolidays, zone })
+      .filter((d) => !effectueeDates.has(d))
+  )
+
+  // 3. Séparer planifiées standard vs modifiées manuellement
+  const planifiees = (allExisting ?? []).filter((r) => r.status !== 'effectuee')
+  const manuallyModified = planifiees.filter((r) =>
+    r.session_time !== sessionTime ||
+    r.duration_minutes !== durationMinutes ||
+    !targetDates.has(r.session_date)
+  )
+  const manualDates = new Set(manuallyModified.map((r) => r.session_date))
+  const standardIds = planifiees
+    .filter((r) => !manualDates.has(r.session_date))
+    .map((r) => r.id)
+
+  // 4. Supprimer seulement les standard
+  if (standardIds.length > 0) {
+    const { error: delErr } = await supabase
+      .from('group_sessions')
+      .delete()
+      .in('id', standardIds)
+    if (delErr) throw new Error(delErr.message)
+  }
+
+  // 5. Insérer les nouvelles, en sautant les dates déjà occupées
+  const occupied = new Set([...effectueeDates, ...manualDates])
+  const rows = []
+  for (const d of targetDates) {
+    if (!occupied.has(d)) {
+      rows.push({
+        group_id:                  groupId,
+        session_date:              d,
+        session_time:              sessionTime,
+        duration_minutes:          durationMinutes,
+        recurrence_series_id:      seriesId,
+        recurrence_interval_weeks: safeInterval,
+        suspend_during_holidays:   suspendDuringHolidays,
+      })
+    }
+  }
+  if (rows.length > 0) {
+    const { error: insErr } = await supabase.from('group_sessions').insert(rows)
+    if (insErr) throw new Error(insErr.message)
+  }
+
+  return { inserted: rows.length, preserved: manuallyModified.length }
 }
 
 // ─── Présence aux séances de groupe (group_session_attendance) ───────────────

@@ -136,6 +136,9 @@ export default function AbsencePage() {
     setSearchErr(null)
   }
 
+  // ── Données dérivées (avant les handlers qui les utilisent) ─────────────
+  const upcomingLessons = studentData?.upcoming_lessons ?? []
+
   // ── Étape 3 : Déclaration de plusieurs absences ───────────────────────────
   async function handleDeclare() {
     if (selectedIds.size === 0 || !studentData) return
@@ -204,7 +207,6 @@ export default function AbsencePage() {
   }
 
   // ── Données dérivées ──────────────────────────────────────────────────────
-  const upcomingLessons = studentData?.upcoming_lessons ?? []
   const allDeclarations = declarations ?? []
   const now = new Date()
   const isFuture = (lesson) => new Date(lesson.lesson_date + 'T' + (lesson.lesson_time ?? '00:00:00')) > now

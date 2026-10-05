@@ -576,3 +576,47 @@ Ce qui est fait :
 (d) Marquage visite : AbsencesPage useEffect enregistre la date ISO en localStorage
     à chaque ouverture → le badge disparaît après consultation.
 Build ✓
+
+═══════════════════════════════════════════════════════════
+SESSION CHANTIER OCTOBRE 2026 — Tâches T1–T8
+Mis à jour : 2026-10-05
+═══════════════════════════════════════════════════════════
+
+T1b/c (Émargement extérieur — wrong-row + paysage)
+────────────────────────────────────────────────────
+Layout card mobile + touchAction manipulation. Build ✓
+
+T2 (Sync absences declaration_eleve)
+─────────────────────────────────────
+src/services/absenceDeclarations.js créé (syncAbsenceDeclarations partagée).
+PlanningPage + EmargementPage : appelée à chaque changement de statut.
+AbsencePage : correctif no-use-before-define (upcomingLessons déplacé). Build ✓
+
+T3 (Protection leçons manuelles + preview congés)
+──────────────────────────────────────────────────
+updateRecurrenceRange/updateGroupSessionRange : leçons manuellement déplacées préservées.
+SettingsPage : panel ambre de confirmation avant "Appliquer à toutes". Build ✓
+
+T4 (Dashboard + bouton retour)
+────────────────────────────────
+BackToDashboard.jsx créé. Dashboard : label, expansible, élèves du jour. Build ✓
+
+T5 (Musiciens d'ensemble)
+──────────────────────────
+MusicienEnsemblePage.jsx créé : liste, édition inline, doublons, historique. Build ✓
+
+T6 (pushAction drag + durée WeekGridPlanning)
+──────────────────────────────────────────────
+Drag et resize branchés sur pushAction undo/redo. Build ✓
+
+T7 (Écoles cliquables SchedulingAssistantPage)
+───────────────────────────────────────────────
+ProposalCard : schoolInfo.id → navigate('/admin/ecoles/:id'). Build ✓
+
+T8 (ESLint no-undef / no-use-before-define)
+────────────────────────────────────────────
+Zéro erreur sur tout src/. 18 fichiers corrigés. Build ✓
+
+MIGRATION SQL
+─────────────
+Aucun changement de schéma requis. migration-chantier-octobre.sql = vide.

@@ -154,6 +154,16 @@ function SubSectionLinks({ links, badgeFn }) {
   )
 }
 
+// Badge numérique affiché sur un item de nav
+function NavBadge({ count }) {
+  if (!count) return null
+  return (
+    <span className="ml-auto shrink-0 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-guitar-600 text-white text-[10px] font-bold px-1">
+      {count > 99 ? '99+' : count}
+    </span>
+  )
+}
+
 function SondagesDropdown({ badges = {} }) {
   const location = useLocation()
   const isActive = location.pathname.startsWith('/admin/sondages')
@@ -319,16 +329,6 @@ function useBadges(userId) {
   }, [userId])
 
   return badges
-}
-
-// Badge numérique affiché sur un item de nav
-function NavBadge({ count }) {
-  if (!count) return null
-  return (
-    <span className="ml-auto shrink-0 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-guitar-600 text-white text-[10px] font-bold px-1">
-      {count > 99 ? '99+' : count}
-    </span>
-  )
 }
 
 // ─── Sidebar enseignant avec drag-and-drop ────────────────────────────────────

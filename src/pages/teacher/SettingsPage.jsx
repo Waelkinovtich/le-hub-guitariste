@@ -167,6 +167,7 @@ export default function SettingsPage() {
   const [errorZone, setErrorZone]   = useState(null)
   const [applyingHolidays, setApplyingHolidays] = useState(false)
   const [appliedHolidays, setAppliedHolidays]   = useState(false)
+  const [holidaysPreview, setHolidaysPreview]   = useState(null) // { seriesCount, lessonCount } | null
 
   // ── Profil professionnel ───────────────────────────────────────────────────
   const [prof, setProf] = useState({
@@ -518,6 +519,7 @@ export default function SettingsPage() {
 
   function handleCopyCalendarUrl() {
     if (!calendarToken) return
+    // eslint-disable-next-line no-use-before-define
     const url = calendarIcsUrl(calendarToken)
     navigator.clipboard.writeText(url).then(() => {
       setCopiedCal(true)
@@ -636,12 +638,19 @@ export default function SettingsPage() {
             </button>
             <button
               onClick={async () => {
-                if (!confirm('Activer "Pas de cours pendant les vacances" sur toutes vos séries d\'école ? (ne supprime aucun cours)')) return
                 setApplyingHolidays(true)
                 try {
-                  await applyHolidaysToAllSchoolSeries(user.id)
-                  setAppliedHolidays(true)
-                  setTimeout(() => setAppliedHolidays(false), 3000)
+                  const { data, error } = await supabase
+                    .from('lessons')
+                    .select('recurrence_group')
+                    .eq('teacher_id', user.id)
+                    .eq('context_type', 'ecole')
+                    .eq('status', 'planifie')
+                    .eq('suspend_during_holidays', false)
+                  if (error) throw new Error(error.message)
+                  const lessons = data ?? []
+                  const series = new Set(lessons.map((l) => l.recurrence_group).filter(Boolean))
+                  setHolidaysPreview({ seriesCount: series.size, lessonCount: lessons.length })
                 } catch (e) {
                   setErrorZone(e.message)
                 } finally {
@@ -654,6 +663,52 @@ export default function SettingsPage() {
               {applyingHolidays ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CalendarDays className="w-3.5 h-3.5" />}
               {appliedHolidays ? 'Appliqué !' : 'Appliquer à toutes mes séries d\'école'}
             </button>
+
+            {holidaysPreview && (
+              <div className="mt-3 p-4 rounded-xl border border-amber-400/40 bg-amber-500/10 text-sm space-y-3">
+                <p className="font-medium text-amber-700 dark:text-amber-300">Aperçu de l'opération</p>
+                <p className="text-muted-foreground">
+                  {holidaysPreview.seriesCount === 0
+                    ? "Toutes vos séries d’école ont déjà cette option activée."
+                    : <>
+                        <strong>{holidaysPreview.seriesCount}</strong> série{holidaysPreview.seriesCount > 1 ? 's' : ''} concernée{holidaysPreview.seriesCount > 1 ? 's' : ''}
+                        {' '}({holidaysPreview.lessonCount} cours planifié{holidaysPreview.lessonCount > 1 ? 's' : ''}).<br/>
+                        Aucun cours ne sera supprimé — seul le flag "pas de cours pendant les vacances" sera activé.
+                      </>
+                  }
+                </p>
+                <div className="flex gap-2">
+                  {holidaysPreview.seriesCount > 0 && (
+                    <button
+                      onClick={async () => {
+                        setApplyingHolidays(true)
+                        try {
+                          await applyHolidaysToAllSchoolSeries(user.id)
+                          setAppliedHolidays(true)
+                          setHolidaysPreview(null)
+                          setTimeout(() => setAppliedHolidays(false), 3000)
+                        } catch (e) {
+                          setErrorZone(e.message)
+                        } finally {
+                          setApplyingHolidays(false)
+                        }
+                      }}
+                      disabled={applyingHolidays}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium disabled:opacity-50"
+                    >
+                      {applyingHolidays ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                      Confirmer
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setHolidaysPreview(null)}
+                    className="px-4 py-2 rounded-xl border border-border-subtle text-sm hover:bg-surface-overlay"
+                  >
+                    Annuler
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>

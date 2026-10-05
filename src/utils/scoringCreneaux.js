@@ -558,6 +558,7 @@ export function computeAllProposals({
   const map = {}
 
   for (const response of responsesTriees) {
+    // eslint-disable-next-line no-use-before-define
     const proposals = computeProposals({ response, existingLessons: virtualLessons, ...sharedArgs })
     map[response.id] = proposals
 
@@ -601,6 +602,7 @@ export function computeAllProposals({
         { lessonDate: proposalP.candidateDate, lessonTime: proposalP.startTime, durationMinutes: proposalP.durationMinutes },
       ]
 
+      // eslint-disable-next-line no-use-before-define
       const nouvellesProposalsP = computeProposals({
         response: studentP,
         existingLessons: virtualPourRecalcP,
