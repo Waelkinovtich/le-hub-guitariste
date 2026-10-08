@@ -711,3 +711,69 @@ RevenueTrackingPage ne lit pas lessons du tout. Elle agrège des entrées de rev
 (virements reçus par employeur). La distinction CESU est basée sur school_structure='particulier_cesu'
 de l'entrée de revenu — c'est correct : le CESU concerne le type d'employeur, pas le
 context_type d'un cours individuel. Aucune correction.
+
+═══════════════════════════════════════════════════════════
+SESSION 2026-10-08 (suite) — context_type via students table
+═══════════════════════════════════════════════════════════
+
+Contexte : survey_responses n'a PAS de colonne lesson_type. L'appel
+  resolveContextType({ lesson_type: response.lesson_type ?? null })
+  recevait toujours undefined → retournait null. Corrigé dans cette session.
+
+T1 — Fetch lesson_type depuis students (lecture réseau avant la boucle)
+─────────────────────────────────────────────────────────────────────────
+Fichier modifié : src/pages/SchedulingAssistantPage.jsx
+  - buildLessonRows : ajout paramètre contextType = null (6e argument).
+    Suppression de l'appel interne resolveContextType(response.lesson_type).
+    La valeur est désormais passée par les callers.
+  - handleConfirm (2 lignes ajoutées) :
+    fetch students(lesson_type) pour resolveStudentId(response) → resolveContextType(stuData).
+    Passe contextType à buildLessonRows.
+  - handleActerSelection :
+    AVANT la boucle : collecte tous les studentIds (Set), UNE requête
+    students.select('id, lesson_type').in('id', [...]).
+    Construit Map<studentId, lesson_type>.
+    Dans la boucle : resolveContextType({ lesson_type: map.get(sid) ?? null }).
+    Passe contextType à buildLessonRows.
+  - handleConfirmContact : même correction que handleConfirm.
+
+Fichier modifié : src/pages/SurveyResultsPage.jsx
+  - handleConfirm dans SlotAssignPanel :
+    fetch students(lesson_type) pour studentId → resolveContextType(stuData).
+    Passe contextType à createRecurringLessons (signature inchangée).
+
+T2 — Fallback (aucun élève lié)
+────────────────────────────────
+Diagnostic SQL créé (lecture seule, non exécuté) :
+  migration-chantier-octobre-2.sql — BLOC 1 (vérif colonnes), BLOC 2 (corrélation
+  school_name / lesson_type), BLOC 3 (réponses sans élève lié).
+À exécuter manuellement pour valider la règle :
+  school_name IS NOT NULL → 'ecole', absent → 'cesu'.
+Le fallback code n'est PAS encore implémenté : si la règle est vérifiée, ajouter
+  la logique dans les callers (response.school_name → contextType = 'ecole' / 'cesu').
+
+T3 — Grep tous les appels resolveContextType
+──────────────────────────────────────────────
+SurveyResultsPage.jsx l.471 : resolveContextType(stuData)              ✓ corrigé
+SchedulingAssistantPage.jsx l.2508, 2565, 2628 : resolveContextType(stuData) ✓ corrigés
+lessons.js l.38 : student?.lesson_type → lecture sur objet student réel      ✓ OK
+
+T4 — Trace par cas concret
+────────────────────────────
+Élève école (SurveyResultsPage) :
+  response.matched_student_id='uuid-A' → fetch students → lesson_type='ecole'
+  → resolveContextType → 'ecole' → lessons.insert context_type='ecole' ✓
+
+Élève particulier (SurveyResultsPage) :
+  response.matched_student_id='uuid-B' → fetch students → lesson_type='particulier'
+  → resolveContextType → 'cesu' → lessons.insert context_type='cesu' ✓
+
+handleActerSelection (3 réponses, SchedulingAssistantPage) :
+  UNE requête → Map{ A→'ecole', B→'particulier', C→'ecole' }
+  → 3 appels buildLessonRows avec contextType 'ecole', 'cesu', 'ecole' ✓
+
+Sans fiche élève (studentId null) :
+  contextType = null → lessons.insert context_type=null (fallback T2 à implémenter) ✓
+
+Build ✓ — 0 nouvelle erreur eslint dans les fichiers modifiés.
+Erreurs pré-existantes dans d'autres fichiers inchangées (non introduites par cette session).

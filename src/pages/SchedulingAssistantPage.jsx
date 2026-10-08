@@ -145,7 +145,7 @@ function resolveStudentId(response) {
  *
  * @param {number} intervalWeeks  Espacement en semaines (1 = hebdo, défaut historique).
  */
-function buildLessonRows(teacherId, response, proposal, endDate, intervalWeeks = 1) {
+function buildLessonRows(teacherId, response, proposal, endDate, intervalWeeks = 1, contextType = null) {
   const safeInterval = Math.max(1, Math.round(intervalWeeks))
   const pad = (n) => String(n).padStart(2, '0')
   const groupId = crypto.randomUUID()
@@ -166,7 +166,7 @@ function buildLessonRows(teacherId, response, proposal, endDate, intervalWeeks =
       topic:                     'Cours de guitare',
       recurrence_group:          groupId,
       recurrence_interval_weeks: safeInterval,
-      context_type:              resolveContextType({ lesson_type: response.lesson_type ?? null }),
+      context_type:              contextType,
     })
     current.setDate(current.getDate() + 7 * safeInterval)
   }
@@ -2501,7 +2501,13 @@ export default function SchedulingAssistantPage() {
     setConfirming(true)
     try {
       const [, endYear] = currentSchoolYear().split('-').map(Number)
-      const rows = buildLessonRows(teacherInfo.id, response, proposal, `${endYear}-06-30`)
+      const studentId = resolveStudentId(response)
+      let contextType = null
+      if (studentId) {
+        const { data: stuData } = await supabase.from('students').select('lesson_type').eq('id', studentId).maybeSingle()
+        contextType = resolveContextType(stuData)
+      }
+      const rows = buildLessonRows(teacherInfo.id, response, proposal, `${endYear}-06-30`, 1, contextType)
       const { error: insErr } = await supabase.from('lessons').insert(rows)
       if (insErr) throw new Error(insErr.message)
 
@@ -2535,14 +2541,31 @@ export default function SchedulingAssistantPage() {
 
     const newLessonRows = []
 
+    // Pré-charger lesson_type pour tous les élèves concernés — une seule requête.
+    const allStudentIds = [...new Set(
+      [...selectedIds]
+        .map((id) => responses.find((r) => r.id === id))
+        .filter(Boolean)
+        .map(resolveStudentId)
+        .filter(Boolean)
+    )]
+    const studentLessonTypeMap = new Map()
+    if (allStudentIds.length > 0) {
+      const { data: stuRows } = await supabase.from('students').select('id, lesson_type').in('id', allStudentIds)
+      ;(stuRows ?? []).forEach((s) => studentLessonTypeMap.set(s.id, s.lesson_type))
+    }
+
     for (const responseId of selectedIds) {
       const response = responses.find((r) => r.id === responseId)
       if (!response) continue
       const proposal = proposalOverrides[responseId] ?? proposalsMap[responseId]?.[0]
       if (!proposal) continue
 
+      const sid = resolveStudentId(response)
+      const contextType = resolveContextType(sid ? { lesson_type: studentLessonTypeMap.get(sid) ?? null } : null)
+
       try {
-        const rows = buildLessonRows(teacherInfo.id, response, proposal, endDate)
+        const rows = buildLessonRows(teacherInfo.id, response, proposal, endDate, 1, contextType)
         const { data: inserted, error: insErr } = await supabase
           .from('lessons').insert(rows)
           .select('id, lesson_date, lesson_time, duration_minutes, student_id, recurrence_group')
@@ -2598,7 +2621,13 @@ export default function SchedulingAssistantPage() {
     setConfirmingContact(true)
     try {
       const [, endYear] = currentSchoolYear().split('-').map(Number)
-      const rows = buildLessonRows(teacherInfo.id, response, proposal, `${endYear}-06-30`)
+      const studentId = resolveStudentId(response)
+      let contextType = null
+      if (studentId) {
+        const { data: stuData } = await supabase.from('students').select('lesson_type').eq('id', studentId).maybeSingle()
+        contextType = resolveContextType(stuData)
+      }
+      const rows = buildLessonRows(teacherInfo.id, response, proposal, `${endYear}-06-30`, 1, contextType)
 
       // .select() récupère les IDs insérés pour mise à jour optimiste de existingLessons
       const { data: inserted, error: insErr } = await supabase

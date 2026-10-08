@@ -467,7 +467,8 @@ function SlotAssignPanel({ response, onConfirmed, onClose }) {
       const startTime = parseStartTime(selection.slots[0])
       const studentId = response.matched_student_id ?? response.student_id ?? null
       if (!studentId) throw new Error(`Réponse ${response.id} : aucun identifiant élève exploitable — impossible de créer les cours.`)
-      const count = await createRecurringLessons(teacherId, studentId, selection.day, startTime, totalMinutes, resolveContextType({ lesson_type: response.lesson_type ?? null }))
+      const { data: stuData } = await supabase.from('students').select('lesson_type').eq('id', studentId).maybeSingle()
+      const count = await createRecurringLessons(teacherId, studentId, selection.day, startTime, totalMinutes, resolveContextType(stuData))
       const { error: updErr } = await supabase
         .from('survey_responses')
         .update({ status: 'confirme', assigned_day: selection.day, assigned_time: parseStartTime(selection.slots[0]) })
