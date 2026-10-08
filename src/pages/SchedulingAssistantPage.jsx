@@ -9,6 +9,7 @@ import WeekGridPlanning from '../components/WeekGridPlanning'
 import { computeAllProposals, computeProposals, scoreCandidate, parseStartTime, JOURS_FR, timeToMinutes, intersectionDisponibilitesCollectives } from '../utils/scoringCreneaux'
 import { currentSchoolYear } from '../services/schools'
 import { createRecurringGroupSessions } from '../services/lessons'
+import { resolveContextType } from '../utils/resolveContextType'
 import { fetchReservedSlots, updateReservedSlot } from '../services/reservedSlots'
 import { useRefreshContext } from '../contexts/RefreshContext'
 import { exportPlanningPDF } from '../utils/exportPDF'
@@ -165,6 +166,7 @@ function buildLessonRows(teacherId, response, proposal, endDate, intervalWeeks =
       topic:                     'Cours de guitare',
       recurrence_group:          groupId,
       recurrence_interval_weeks: safeInterval,
+      context_type:              resolveContextType({ lesson_type: response.lesson_type ?? null }),
     })
     current.setDate(current.getDate() + 7 * safeInterval)
   }

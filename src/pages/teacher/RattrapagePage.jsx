@@ -125,6 +125,7 @@ function RattrapagePanel({ lesson, teacherId, zone, onConfirmed, onClose }) {
           duration_minutes: lesson.durationMinutes,
           topic:            'Rattrapage — ' + (lesson.topic || 'Cours de guitare'),
           status:           'planifie',
+          context_type:     lesson.contextType ?? null,
         })
         .select('id')
         .single()

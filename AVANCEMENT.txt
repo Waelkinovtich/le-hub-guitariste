@@ -673,3 +673,41 @@ Résultat : 0 erreur no-undef, 0 erreur no-use-before-define sur tout src/. Buil
 T6 Checklist
 ─────────────
 Fichier créé : CHECKLIST-VERIFICATION.txt (11 écrans, 3 points risqués en tête).
+
+═══════════════════════════════════════════════════════════
+SESSION 2026-10-08 — context_type résolution
+═══════════════════════════════════════════════════════════
+
+T1 — resolveContextType + chemins de création
+───────────────────────────────────────────────
+Fichier créé : src/utils/resolveContextType.js
+  Fonction pure : 'ecole'→'ecole', 'particulier'→'cesu', sinon null.
+  4 cas de test en commentaire.
+
+Chemins de création trouvés et leur état AVANT correction :
+  lessons.js:createLesson (l.109)           — contextType vient du caller, OK
+  lessons.js:createRecurringLessons (l.163) — contextType vient du caller, OK
+  lessons.js:updateRecurrenceInterval (l.220) — template.contextType, OK
+  lessons.js:updateRecurrenceRange (l.477)  — template.contextType, OK
+  AddLessonModal (l.134/138)                — form.contextType chargé depuis contexts, OK
+  SurveyResultsPage createRecurringLessons locale (l.390) — MANQUANT → corrigé
+    · Ajout paramètre contextType + call resolveContextType(response.lesson_type)
+    · Suppression context_type: null ajouté le 8 octobre
+  SchedulingAssistantPage buildLessonRows (l.156) — MANQUANT → corrigé
+    · Ajout context_type: resolveContextType(response.lesson_type)
+    · Import resolveContextType ajouté
+  RattrapagePage confirmRattrapage (l.128)  — MANQUANT → corrigé
+    · Ajout context_type: lesson.contextType ?? null
+Build ✓ Eslint no-undef/no-use-before-define : 0 erreur.
+
+T2 — Régénération de série
+────────────────────────────
+Déjà fait : RecurrencePanel:144 passe contextType: lesson.contextType ?? lesson.context_type ?? null
+au template de updateRecurrenceRange et updateGroupSessionRange. Aucune correction.
+
+T3 — RevenueTrackingPage CESU
+───────────────────────────────
+RevenueTrackingPage ne lit pas lessons du tout. Elle agrège des entrées de revenus
+(virements reçus par employeur). La distinction CESU est basée sur school_structure='particulier_cesu'
+de l'entrée de revenu — c'est correct : le CESU concerne le type d'employeur, pas le
+context_type d'un cours individuel. Aucune correction.

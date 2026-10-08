@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { resolveContextType } from '../utils/resolveContextType'
 import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home, Link2, Link, Merge, Search, X, UserPlus, CheckCircle2, Copy } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { trierSlots, slotStartMinutes } from '../utils/creneauxSort'
@@ -369,7 +370,7 @@ async function getTeacherId() {
   return data?.id ?? null
 }
 
-async function createRecurringLessons(teacherId, studentId, dayName, startTime, durationMinutes) {
+async function createRecurringLessons(teacherId, studentId, dayName, startTime, durationMinutes, contextType = null) {
   const groupId = crypto.randomUUID()
   const startDate = nextDateForDay(dayName)
   const endDate = '2027-06-30'
@@ -388,7 +389,7 @@ async function createRecurringLessons(teacherId, studentId, dayName, startTime, 
       status: 'planifie',
       topic: 'Cours de guitare',
       recurrence_group: groupId,
-      context_type: null,
+      context_type: contextType,
     })
     current.setDate(current.getDate() + 7)
   }
@@ -466,7 +467,7 @@ function SlotAssignPanel({ response, onConfirmed, onClose }) {
       const startTime = parseStartTime(selection.slots[0])
       const studentId = response.matched_student_id ?? response.student_id ?? null
       if (!studentId) throw new Error(`Réponse ${response.id} : aucun identifiant élève exploitable — impossible de créer les cours.`)
-      const count = await createRecurringLessons(teacherId, studentId, selection.day, startTime, totalMinutes)
+      const count = await createRecurringLessons(teacherId, studentId, selection.day, startTime, totalMinutes, resolveContextType({ lesson_type: response.lesson_type ?? null }))
       const { error: updErr } = await supabase
         .from('survey_responses')
         .update({ status: 'confirme', assigned_day: selection.day, assigned_time: parseStartTime(selection.slots[0]) })
