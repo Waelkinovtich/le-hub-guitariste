@@ -2647,7 +2647,7 @@ export default function SchedulingAssistantPage() {
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Assistant planning</h1>
+              <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Assistant de planning</h1>
               <HelpTooltip texte="Génère des propositions de créneaux en croisant vos disponibilités, celles des élèves et les contraintes de chaque école. Configurez les créneaux dans la page Créneaux écoles." position="bottom" />
             </div>
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">

@@ -1,4 +1,3 @@
-/* eslint no-use-before-define: ["error", { "functions": false }] */
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { ChevronLeft, User, Calendar, School, Mail, Phone, MapPin, Guitar, Users, BookOpen, ClipboardList, Clock, Check, Loader2, Pencil, Trash2, Home, Link2, Link, Merge, Search, X, UserPlus, CheckCircle2, Copy } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -389,6 +388,7 @@ async function createRecurringLessons(teacherId, studentId, dayName, startTime, 
       status: 'planifie',
       topic: 'Cours de guitare',
       recurrence_group: groupId,
+      context_type: null,
     })
     current.setDate(current.getDate() + 7)
   }

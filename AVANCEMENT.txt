@@ -620,3 +620,56 @@ Zéro erreur sur tout src/. 18 fichiers corrigés. Build ✓
 MIGRATION SQL
 ─────────────
 Aucun changement de schéma requis. migration-chantier-octobre.sql = vide.
+
+═══════════════════════════════════════════════════════════
+SESSION CHANTIER OCTOBRE 2026 — Tâches T1-T8 (suite)
+Mis à jour : 2026-10-05
+═══════════════════════════════════════════════════════════
+
+T1 Sidebar — Musiciens d'ensemble
+──────────────────────────────────
+Route déjà présente (App.jsx:120).
+Sidebar : "Groupes & Répétitions" converti de type:link en dropdown (GroupesDropdown).
+Sous-liens : Groupes & Répétitions (/professeur/groupes), Musiciens d'ensemble (/professeur/groupes/musiciens).
+Fichiers modifiés : src/components/Sidebar.jsx. Build ✓
+
+T2 EnsembleSondagePage (lecture seule)
+────────────────────────────────────────
+1 bloc : fonction Shell déplacée de la fin du fichier (ligne ~762) vers avant export default
+(ligne ~421). Contenu identique sauf encodage apostrophe (d'ensemble → d&apos;ensemble).
+Aucune modification de comportement.
+
+T3 Noms des pages
+──────────────────
+"Assistant planning" → "Assistant de planning" dans Sidebar (planningLinks) et dans le h1
+de SchedulingAssistantPage. Aucune autre occurrence non conforme trouvée.
+Fichiers modifiés : src/components/Sidebar.jsx, src/pages/SchedulingAssistantPage.jsx. Build ✓
+
+T4 context_type
+────────────────
+Chemins vérifiés :
+- lessons.js createLesson / updateLesson / createRecurringLessons / updateRecurrenceRange : OK
+- AddLessonModal : OK (champ contextType dans le formulaire)
+- SurveyResultsPage createRecurringLessons : MANQUANT → ajouté context_type: null (cours
+  particuliers sans contexte spécifique, aucune info disponible dans SlotAssignPanel)
+- SchedulingAssistantPage : crée des group_sessions, pas des lessons → sans objet
+Diagnostic SQL en attente (migration-chantier-octobre-2.sql à créer et exécuter manuellement) :
+  SELECT context_type, count(*) FROM lessons GROUP BY context_type ORDER BY count DESC;
+RevenueTrackingPage : distingue CESU via school_structure='particulier_cesu' sur les
+entrées de revenus, pas via context_type des cours — correct pour une page de revenus
+employeur. Pas de correction nécessaire.
+Cours existants avec context_type NULL : non confirmé (SQL non exécuté).
+Fichiers modifiés : src/pages/SurveyResultsPage.jsx. Build ✓
+
+T5 Contrôle ESLint automatique
+────────────────────────────────
+eslint.config.js : ajout rules no-undef:error, no-use-before-define:[error,{functions:false,...}].
+package.json : ajout script "verifier" = build + eslint src/.
+SurveyResultsPage.jsx : suppression commentaire eslint de fichier (devenu redondant).
+Suppression des // eslint-disable-next-line no-use-before-define dans 10 fichiers
+(devenus inutiles avec functions:false global).
+Résultat : 0 erreur no-undef, 0 erreur no-use-before-define sur tout src/. Build ✓
+
+T6 Checklist
+─────────────
+Fichier créé : CHECKLIST-VERIFICATION.txt (11 écrans, 3 points risqués en tête).

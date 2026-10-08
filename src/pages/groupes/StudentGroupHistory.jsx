@@ -7,7 +7,6 @@ export default function StudentGroupHistory({ studentId }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // eslint-disable-next-line no-use-before-define
     if (studentId) load()
   }, [studentId])
 

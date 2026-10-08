@@ -418,6 +418,40 @@ function validerEtape(stepId, form) {
   return true
 }
 
+// ─── Mise en page ─────────────────────────────────────────────────────────────
+
+function Shell({ children, label }) {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-start py-10 px-4">
+      <div className="w-full max-w-xl">
+        <div className="flex items-center gap-3 mb-10">
+          <div className="w-10 h-10 rounded-xl guitar-gradient flex items-center justify-center flex-shrink-0">
+            <Music2 className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <p className="font-display text-xl leading-tight">Répétitions d&apos;ensemble</p>
+            <p className="text-xs text-muted-foreground">
+              {label ? label : 'Inscription — disponibilités'}
+            </p>
+          </div>
+        </div>
+
+        {/* Bandeau distinctif — clairement séparé du sondage cours individuel */}
+        <div className="mb-5 rounded-xl border border-border-subtle bg-surface-raised px-4 py-3">
+          <p className="text-sm text-foreground font-medium mb-0.5">📣 Inscription aux répétitions d&apos;ensemble</p>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Ce formulaire concerne uniquement les <strong>jeux d&apos;ensemble et la musique de groupe</strong>.
+            Il est indépendant des cours de guitare individuels.
+            Si vous cherchez à vous inscrire aux cours de guitare, utilisez le lien qui vous a été envoyé séparément.
+          </p>
+        </div>
+
+        <div className="glass-panel rounded-2xl p-6 sm:p-8">{children}</div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Page principale ──────────────────────────────────────────────────────────
 
 export default function EnsembleSondagePage() {
@@ -726,36 +760,4 @@ export default function EnsembleSondagePage() {
   )
 }
 
-// ─── Mise en page ─────────────────────────────────────────────────────────────
 
-function Shell({ children, label }) {
-  return (
-    <div className="min-h-screen flex flex-col items-center justify-start py-10 px-4">
-      <div className="w-full max-w-xl">
-        <div className="flex items-center gap-3 mb-10">
-          <div className="w-10 h-10 rounded-xl guitar-gradient flex items-center justify-center flex-shrink-0">
-            <Music2 className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <p className="font-display text-xl leading-tight">Répétitions d'ensemble</p>
-            <p className="text-xs text-muted-foreground">
-              {label ? label : 'Inscription — disponibilités'}
-            </p>
-          </div>
-        </div>
-
-        {/* Bandeau distinctif — clairement séparé du sondage cours individuel */}
-        <div className="mb-5 rounded-xl border border-border-subtle bg-surface-raised px-4 py-3">
-          <p className="text-sm text-foreground font-medium mb-0.5">📣 Inscription aux répétitions d'ensemble</p>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Ce formulaire concerne uniquement les <strong>jeux d'ensemble et la musique de groupe</strong>.
-            Il est indépendant des cours de guitare individuels.
-            Si vous cherchez à vous inscrire aux cours de guitare, utilisez le lien qui vous a été envoyé séparément.
-          </p>
-        </div>
-
-        <div className="glass-panel rounded-2xl p-6 sm:p-8">{children}</div>
-      </div>
-    </div>
-  )
-}

@@ -8,7 +8,6 @@ export default function GroupAttendanceModal({ session, members, onClose }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
-  // eslint-disable-next-line no-use-before-define
   useEffect(() => { loadAttendances() }, [session.id])
 
   async function loadAttendances() {

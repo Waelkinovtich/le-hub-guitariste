@@ -519,7 +519,6 @@ export default function SettingsPage() {
 
   function handleCopyCalendarUrl() {
     if (!calendarToken) return
-    // eslint-disable-next-line no-use-before-define
     const url = calendarIcsUrl(calendarToken)
     navigator.clipboard.writeText(url).then(() => {
       setCopiedCal(true)

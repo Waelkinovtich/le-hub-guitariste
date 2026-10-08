@@ -85,7 +85,6 @@ export async function fetchLessonsInRange({ teacherId, from, to }) {
   const lessons = (data ?? []).map((row) => mapLesson({ ...row, recurrence_interval_weeks: row.recurrence_interval_weeks ?? 1 }))
   let groupSessions = []
   try {
-    // eslint-disable-next-line no-use-before-define
     groupSessions = await fetchGroupSessionsInRange({ teacherId, from, to })
   } catch (e) {
     console.error('Erreur seances groupe:', e)

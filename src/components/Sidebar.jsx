@@ -33,7 +33,7 @@ const absencesLinks = [
 
 const planningLinks = [
   { to: '/professeur/planning',       icon: Calendar, label: 'Planning' },
-  { to: '/admin/planning-intelligent', icon: Brain,    label: 'Assistant planning' },
+  { to: '/admin/planning-intelligent', icon: Brain,    label: 'Assistant de planning' },
 ]
 
 const ecolesLinks = [
@@ -61,7 +61,7 @@ const ALL_NAV_ITEMS = [
   { id: 'eleves',          type: 'link', to: '/professeur/eleves',     icon: Users,           label: 'Élèves' },
   { id: 'planning',        type: 'dropdown', label: 'Planning' },
   { id: 'emargement',      type: 'link', to: '/professeur/emargement', icon: ClipboardCheck,  label: 'Émargement' },
-  { id: 'groupes',         type: 'link', to: '/professeur/groupes',    icon: Music2,          label: 'Groupes & Répétitions' },
+  { id: 'groupes',         type: 'custom',                              icon: Music2,          label: 'Groupes & Répétitions' },
   { id: 'exercices',       type: 'link', to: '/professeur/exercices',  icon: BookOpen,        label: 'Exercices' },
   { id: 'rattrapage',      type: 'link', to: '/professeur/rattrapage', icon: RotateCcw,       label: 'Rattrapage' },
   { id: 'ecoles',          type: 'dropdown', label: 'Écoles' },
@@ -230,6 +230,48 @@ function SondagesDropdown({ badges = {} }) {
 // (ex-dropdown avec 2 sous-liens supprimé, toute la logique est dans ObjectivesPage.jsx)
 function ObjectifsNav() {
   return <NavItem to="/admin/objectifs" icon={Target} label="Objectifs & Simulateur" />
+}
+
+const groupesLinks = [
+  { to: '/professeur/groupes',           icon: Music2,  label: 'Groupes & Répétitions' },
+  { to: '/professeur/groupes/musiciens', icon: Users,   label: 'Musiciens d’ensemble' },
+]
+
+function GroupesDropdown() {
+  const location = useLocation()
+  const isActive = location.pathname.startsWith('/professeur/groupes')
+  const [open, setOpen] = useState(isActive)
+
+  return (
+    <div>
+      <button
+        type="button" onClick={() => setOpen((v) => !v)}
+        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+          isActive ? 'text-guitar-400' : 'text-muted-foreground hover:text-foreground hover:bg-surface-overlay'
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <Music2 className="w-4 h-4 shrink-0" />Groupes &amp; Répétitions
+        </div>
+        {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+      </button>
+      {open && (
+        <div className="mt-1 ml-4 pl-3 border-l border-border-subtle space-y-0.5">
+          {groupesLinks.map((link) => (
+            <NavLink key={link.to} to={link.to} end
+              className={({ isActive: a }) =>
+                'flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition-all ' +
+                (a ? 'bg-guitar-600/15 text-guitar-400 border border-guitar-600/25'
+                   : 'text-muted-foreground hover:text-foreground hover:bg-surface-overlay')
+              }
+            >
+              <link.icon className="w-3.5 h-3.5 shrink-0" />{link.label}
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function PlanningDropdown() {
@@ -539,6 +581,7 @@ function TeacherNav({ userId }) {
               ) : item.type === 'link' ? (
                 <NavItem to={item.to} icon={item.icon} label={item.label} end={item.end} />
               ) : null}
+              {item.id === 'groupes' && <GroupesDropdown />}
               {item.id === 'ecoles' && <EcolesDropdown />}
               {item.id === 'sondages' && <SondagesDropdown badges={badges} />}
               {item.id === 'planning' && <PlanningDropdown />}

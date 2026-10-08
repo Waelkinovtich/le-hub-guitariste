@@ -39,7 +39,6 @@ export default function GroupDetailPage() {
   const [showEdit, setShowEdit] = useState(false)
 
   useEffect(() => {
-    // eslint-disable-next-line no-use-before-define
     if (id) loadData()
   }, [id])
 

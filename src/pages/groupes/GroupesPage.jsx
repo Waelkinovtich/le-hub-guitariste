@@ -25,7 +25,6 @@ export default function GroupesPage() {
   const [deletingAll, setDeletingAll] = useState(false)
   const [deleteAllError, setDeleteAllError] = useState('')
 
-  // eslint-disable-next-line no-use-before-define
   useEffect(() => { fetchGroups() }, [])
 
   async function fetchGroups() {
