@@ -9,11 +9,12 @@ import { useFetch } from '../../hooks/useFetch'
 import { useRegisterRefresh } from '../../contexts/RefreshContext'
 import { supabase } from '../../lib/supabase'
 import { fetchTeacherStudents } from '../../services/students'
-import { fetchUpcomingLessons, fetchLessonsInRange, countRattrapageLessons } from '../../services/lessons'
+import { fetchUpcomingLessons, fetchLessonsInRange, fetchRattrapageStats } from '../../services/lessons'
 import { endOfWeek, startOfWeek, toISODate } from '../../utils/format'
 import { calculerTauxAbsence } from '../../utils/absenceStats'
 
 const statIcons = [Users, Calendar, BookOpen, TrendingUp]
+const fmtH = (m) => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? String(m % 60).padStart(2, '0') : ''}` : `${m}min`
 
 // Cause incohérence "Cours semaine" vs "Prochains cours" :
 //   weekLessons = tous statuts sur lun-dim courant (y compris annulé/émargé).
@@ -44,12 +45,13 @@ export default function TeacherDashboard() {
     try { lastSeenAbs = localStorage.getItem(LS_KEY_ABSENCES) } catch { /* localStorage indisponible */ }
     try { lastSeenCancels = localStorage.getItem(LS_KEY_CANCELLATIONS) } catch { /* localStorage indisponible */ }
 
-    const [students, upcoming, weekLessons, rattrapageCount] = await Promise.all([
+    const [students, upcoming, weekLessons, rattrapageStats] = await Promise.all([
       fetchTeacherStudents(user.id),
       fetchUpcomingLessons({ teacherId: user.id, limit: 10 }),
       fetchLessonsInRange({ teacherId: user.id, from: weekStart, to: weekEnd }),
-      countRattrapageLessons(user.id),
+      fetchRattrapageStats(user.id),
     ])
+    const rattrapageCount = rattrapageStats.count
 
     // Nouvelles déclarations depuis la dernière visite
     let newAbsences = 0
@@ -82,7 +84,7 @@ export default function TeacherDashboard() {
     // Cours planifiés restants cette semaine (depuis aujourd'hui)
     const weekRemaining = weekLessons.filter((l) => l.lessonDate >= today && l.status === 'planifie').length
 
-    return { students, upcoming, weekLessons, lessonsToday, weekRemaining, newAbsences, newCancellations, studentsToday, rattrapageCount }
+    return { students, upcoming, weekLessons, lessonsToday, weekRemaining, newAbsences, newCancellations, studentsToday, rattrapageCount, rattrapageMinutes: rattrapageStats.minutesRestant }
   }, [user.id])
 
   const { data, loading, error, reload } = useFetch(loadDashboard, [user.id])
@@ -106,8 +108,6 @@ export default function TeacherDashboard() {
     const minsRemaining = data.weekLessons
       .filter((l) => l.status === 'planifie')
       .reduce((s, l) => s + (l.durationMinutes ?? 0), 0)
-    const fmtH = (m) => m >= 60 ? `${Math.floor(m/60)}h${m%60 ? String(m%60).padStart(2,'0') : ''}` : `${m}min`
-
     return [
       {
         label: 'Élèves actifs',
@@ -143,7 +143,6 @@ export default function TeacherDashboard() {
   if (loading) return <LoadingBlock />
   if (error) return <ErrorBlock message={error} onRetry={reload} />
 
-  const recentStudents = data.students.slice(0, 4)
   // T4d : filtrer les prochains cours sur status=planifie uniquement
   const upcomingPlanifie = (data.upcoming ?? []).filter((l) => l.status === 'planifie')
   const upcomingVisible = showAllUpcoming ? upcomingPlanifie : upcomingPlanifie.slice(0, 2)
@@ -328,36 +327,13 @@ export default function TeacherDashboard() {
             </div>
           )}
 
-          <div className="glass-panel rounded-2xl p-6">
-          <h2 className="text-lg font-semibold mb-4">Élèves</h2>
-          {recentStudents.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-6 text-center">Ajoutez des élèves dans Supabase</p>
-          ) : (
-            <ul className="space-y-4">
-              {recentStudents.map((student) => (
-                <li key={student.id} className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-guitar-600/20 flex items-center justify-center text-sm font-medium text-guitar-400">
-                    {student.firstName[0]}
-                    {student.lastName[0]}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{student.name}</p>
-                    <p className="text-xs text-muted">{student.level ?? '—'}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium">{student.progress}%</p>
-                    <div className="w-16 h-1.5 rounded-full bg-surface-overlay mt-1 overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-guitar-600"
-                        style={{ width: `${student.progress}%` }}
-                      />
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+          {data.rattrapageMinutes > 0 && (
+            <Link to="/professeur/rattrapage" className="block glass-panel rounded-2xl p-6 hover:scale-[1.01] transition-transform">
+              <h2 className="text-lg font-semibold mb-2">Heures à rattraper</h2>
+              <p className="text-3xl font-bold text-guitar-400">{fmtH(data.rattrapageMinutes)}</p>
+              <p className="text-sm text-muted-foreground mt-1">{data.rattrapageCount} cours annulé{data.rattrapageCount > 1 ? 's' : ''} — voir le détail →</p>
+            </Link>
           )}
-          </div>
         </section>
       </div>
     </div>

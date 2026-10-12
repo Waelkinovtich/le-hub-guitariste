@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import { useRegisterRefresh } from '../../contexts/RefreshContext'
-import { fetchCancelledLessons } from '../../services/lessons'
+import { fetchCancelledLessons, deleteLesson, updateStudentsNotified } from '../../services/lessons'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
 import { getRaisonLabel } from '../../utils/lessonStatus'
 import { minutesToLabel } from '../../utils/format'
 import ScoreBadge from '../../components/ScoreBadge'
-import { RotateCcw, CalendarDays, Search, Check, Loader2, AlertCircle, X, ChevronDown, Ban } from 'lucide-react'
+import { RotateCcw, CalendarDays, Search, Check, Loader2, AlertCircle, X, ChevronDown, Ban, Trash2, BellRing } from 'lucide-react'
 import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
 import { supabase } from '../../lib/supabase'
 import { computeProposals } from '../../utils/scoringCreneaux'
@@ -301,6 +301,7 @@ export default function RattrapagePage() {
   const [cancellingRattrapageId, setCancellingRattrapageId] = useState(null)
   const [abandonningId, setAbandonningId] = useState(null)
   const [rétablissantId, setRétablissantId] = useState(null)
+  const [deletingLessonId, setDeletingLessonId] = useState(null)
   const [abandonnéesOuvertes, setAbandonnéesOuvertes] = useState(false)
 
   const zone = user?.schoolZone ?? 'B'
@@ -405,6 +406,20 @@ export default function RattrapagePage() {
       alert(`Erreur : ${e.message}`)
     } finally {
       setAbandonningId(null)
+    }
+  }, [reload])
+
+  // Supprime définitivement un cours annulé de la base de données.
+  const handleSupprimerCours = useCallback(async (lesson) => {
+    if (!window.confirm(`Supprimer définitivement la séance du ${lesson.dateLabel} pour ${lesson.studentName} ?\nCette action est irréversible.`)) return
+    setDeletingLessonId(lesson.id)
+    try {
+      await deleteLesson(lesson.id)
+      reload()
+    } catch (e) {
+      alert('Erreur : ' + e.message)
+    } finally {
+      setDeletingLessonId(null)
     }
   }, [reload])
 
@@ -535,6 +550,15 @@ export default function RattrapagePage() {
                               {raison.emoji} {raison.label}
                             </span>
                           )}
+                          <button
+                            type="button"
+                            title={l.studentsNotified ? 'Élèves prévenus — cliquez pour annuler' : 'Marquer les élèves comme prévenus'}
+                            onClick={async () => { try { await updateStudentsNotified(l.id, !l.studentsNotified); reload() } catch { /* tolérant */ } }}
+                            className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-xs transition-colors ${l.studentsNotified ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400' : 'border-border-subtle text-muted-foreground hover:text-emerald-400 hover:border-emerald-500/40'}`}
+                          >
+                            <BellRing className="w-3 h-3" />
+                            {l.studentsNotified ? 'Prévenus' : 'Prévenir ?'}
+                          </button>
                           {déjàRattrapé ? (
                             <div className="flex items-center gap-1.5">
                               <span className="text-xs px-2 py-1 rounded-full font-medium bg-green-500/15 text-green-400">
@@ -576,6 +600,18 @@ export default function RattrapagePage() {
                                   ? <Loader2 className="w-3 h-3 animate-spin" />
                                   : <Ban className="w-3 h-3" />}
                                 Abandonner cette séance
+                              </button>
+                              <button
+                                type="button"
+                                disabled={deletingLessonId === l.id}
+                                onClick={() => handleSupprimerCours(l)}
+                                title="Supprimer définitivement ce cours de la base de données"
+                                className="flex items-center gap-1 px-2 py-1.5 rounded-lg border border-red-500/30 text-xs text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+                              >
+                                {deletingLessonId === l.id
+                                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                                  : <Trash2 className="w-3 h-3" />}
+                                Supprimer ce cours
                               </button>
                             </div>
                           )}

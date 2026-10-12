@@ -80,6 +80,7 @@ export default function ÉmargementPage() {
   const [statusOverrides, setStatusOverrides] = useState({})         // group sessions
   const [lessonStatusOverrides, setLessonStatusOverrides] = useState({}) // cours individuels
   const [showOnlyUnemarged, setShowOnlyUnemarged] = useState(false)
+  const [filterStat, setFilterStat] = useState(null) // null | 'present' | 'absent' | 'excuse' | 'annule_prof' | 'planifie'
   const [statusLesson, setStatusLesson] = useState(null)
   const [editLesson, setEditLesson]     = useState(null)
   const [deleteLesson, setDeleteLesson] = useState(null)
@@ -128,9 +129,13 @@ export default function ÉmargementPage() {
     .filter((l) => !filterSchool || l.schoolName === filterSchool || l.student?.school_name === filterSchool || (filterSchool === 'particulier' && !l.student?.school_name && !l.isGroup))
   const allLessons = allItems.filter((l) => !l.isGroup)
   // Filtre "non émargés" : status === 'planifie' (jamais modifié depuis la création)
-  const lessons = showOnlyUnemarged
-    ? allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'planifie')
-    : allLessons
+  const lessons = (() => {
+    let base = showOnlyUnemarged
+      ? allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'planifie')
+      : allLessons
+    if (filterStat) base = base.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === filterStat)
+    return base
+  })()
   const groupSessions = allItems.filter((l) => l.isGroup)
   const schools = data?.schools ?? []
 
@@ -238,17 +243,28 @@ export default function ÉmargementPage() {
         <>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
             {[
-              { label: 'Total', value: lessons.length, color: '#7f8c8d' },
-              { label: 'Présents', value: presents, color: '#27ae60' },
-              { label: 'Absents', value: absents, color: '#e74c3c' },
-              { label: 'Excusés', value: excuses, color: '#e67e22' },
-              { label: 'Taux', value: taux + '%', color: '#3498db' },
-            ].map((stat) => (
-              <div key={stat.label} className="glass-panel rounded-xl p-4 text-center">
-                <p className="text-2xl font-bold" style={{ color: stat.color }}>{stat.value}</p>
-                <p className="text-xs text-muted-foreground mt-1">{stat.label}</p>
-              </div>
-            ))}
+              { label: 'Total',    value: allLessons.length, color: '#7f8c8d', key: null },
+              { label: 'Présents', value: presents,          color: '#27ae60', key: 'present' },
+              { label: 'Absents',  value: absents,           color: '#e74c3c', key: 'absent' },
+              { label: 'Excusés',  value: excuses,           color: '#e67e22', key: 'excuse' },
+              { label: 'Taux',     value: taux + '%',        color: '#3498db', key: null },
+            ].map((stat) => {
+              const isActive = filterStat === stat.key && stat.key !== null
+              return (
+                <button
+                  key={stat.label}
+                  type="button"
+                  onClick={() => setFilterStat(stat.key && !isActive ? stat.key : null)}
+                  title={stat.key ? (isActive ? 'Retirer le filtre' : `Filtrer : ${stat.label}`) : undefined}
+                  style={{ minHeight: 44 }}
+                  className={`glass-panel rounded-xl p-4 text-center transition-colors ${stat.key ? 'hover:bg-surface-overlay cursor-pointer' : 'cursor-default'} ${isActive ? 'ring-2 ring-inset' : ''}`}
+                  {...(isActive ? { style: { minHeight: 44, outlineColor: stat.color } } : { style: { minHeight: 44 } })}
+                >
+                  <p className="text-2xl font-bold" style={{ color: stat.color }}>{stat.value}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{stat.label}{isActive ? ' ✓' : ''}</p>
+                </button>
+              )
+            })}
           </div>
 
           {lessons.length === 0 ? (

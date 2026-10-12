@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useCallback, useState, useEffect } from 'react'
-import { ArrowLeft, Pencil, Trash2, Phone, Mail, NotebookPen, Send, Plus, X, ChevronDown, ChevronUp, Loader2, AlertCircle, Check, TrendingUp as TrendingUpIcon } from 'lucide-react'
+import { ArrowLeft, Pencil, Trash2, Phone, Mail, NotebookPen, Send, Plus, X, ChevronDown, ChevronUp, Loader2, AlertCircle, Check, TrendingUp as TrendingUpIcon, Download } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import {
@@ -705,6 +705,29 @@ export default function StudentDetailPage() {
   if (error) return <ErrorBlock message={error} />
   if (!data?.student) return <ErrorBlock message="Élève introuvable." />
 
+  // Construit et télécharge un fichier .vcf (vCard 3.0) pour l'élève.
+  function buildVCard(s) {
+    const lines = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      `FN:${[s.firstName, s.lastName].filter(Boolean).join(' ')}`,
+      `N:${s.lastName ?? ''};${s.firstName ?? ''};;;`,
+    ]
+    if (s.studentPhone || s.phone) lines.push(`TEL;TYPE=CELL:${s.studentPhone || s.phone}`)
+    if (s.parent1Phone) lines.push(`TEL;TYPE=HOME:${s.parent1Phone}`)
+    if (s.email) lines.push(`EMAIL:${s.email}`)
+    if (s.parent1Email) lines.push(`EMAIL;TYPE=HOME:${s.parent1Email}`)
+    if (s.schoolName) lines.push(`ORG:${s.schoolName}`)
+    lines.push('END:VCARD')
+    const blob = new Blob([lines.join('\r\n')], { type: 'text/vcard;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${[s.firstName, s.lastName].filter(Boolean).join('_') || 'contact'}.vcf`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const { student, schools, allStudents, paidByThis } = data
   const color = student.lessonType === 'ecole' ? getSchoolColor(student.schoolName, schools) : '#dc2626'
   const hasParent1 = student.parent1Name || student.parent1Phone || student.parent1Email
@@ -736,10 +759,14 @@ export default function StudentDetailPage() {
             {student.age && <p className="text-sm text-muted-foreground">{student.age} ans</p>}
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button onClick={() => setShowEdit(true)} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">
             <Pencil className="w-4 h-4" />
             Modifier
+          </button>
+          <button onClick={() => buildVCard(student)} title="Exporter le contact (.vcf)" className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">
+            <Download className="w-4 h-4" />
+            Contact
           </button>
           <button onClick={handleDelete} disabled={deleting} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-guitar-600/40 text-guitar-400 text-sm font-medium hover:bg-guitar-600/10 transition-colors disabled:opacity-60">
             <Trash2 className="w-4 h-4" />

@@ -1665,6 +1665,19 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           }}
                         />
                       )}
+                      {/* Indicateur "élèves prévenus" : prof a marqué les élèves comme notifiés */}
+                      {lesson.studentsNotified && lesson.status === 'annule_prof' && !estSelectablePourGroupe && (
+                        <div
+                          aria-hidden
+                          title="Élèves prévenus"
+                          style={{
+                            position: 'absolute', top: 2, left: 2, zIndex: 20,
+                            width: 6, height: 6, borderRadius: '50%',
+                            background: '#10b981',
+                            pointerEvents: 'none',
+                          }}
+                        />
+                      )}
                       {/* Indicateur "finalement présent" : l'élève a annulé sa déclaration */}
                       {lesson.absenceReason === 'finalement_present' && !estSelectablePourGroupe && (
                         <div
@@ -1788,7 +1801,9 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                         </button>
                       )}
 
-                      {/* Bouton récurrence — cours individuel récurrent confirmé */}
+                      {/* Bouton récurrence — cours individuel récurrent confirmé
+                          Sur ordinateur : opacity-0, visible au survol (group-hover).
+                          Sur tablette/tactile : toujours visible (touch:opacity-100). */}
                       {isConfirme && (lesson.recurrenceGroup || lesson.recurrence_group) && !estSelectablePourGroupe && (
                         <button
                           type="button"
@@ -1796,10 +1811,11 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           title="Modifier la récurrence"
                           onPointerDown={(e) => e.stopPropagation()}
                           onClick={(e) => { e.stopPropagation(); setRecurrenceEditLesson(lesson) }}
-                          style={{ minWidth: 28, minHeight: 28 }}
-                          className="absolute top-0 left-6 z-20 p-0.5 rounded-br-md bg-void/50 text-white/80
-                                     hover:text-guitar-400 transition-colors
-                                     focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
+                          style={{ minWidth: 44, minHeight: 44 }}
+                          className="absolute top-0 left-0 z-20 p-1 rounded-br-md bg-void/50 text-white/80
+                                     opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100
+                                     hover:text-guitar-400 transition-opacity
+                                     focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-guitar-400"
                         >
                           <Repeat2 className="w-3 h-3" />
                         </button>
@@ -1813,10 +1829,11 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           title="Modifier la récurrence du groupe"
                           onPointerDown={(e) => e.stopPropagation()}
                           onClick={(e) => { e.stopPropagation(); setRecurrenceEditLesson(lesson) }}
-                          style={{ minWidth: 28, minHeight: 28 }}
-                          className="absolute top-0 left-6 z-20 p-0.5 rounded-br-md bg-void/50 text-white/80
-                                     hover:text-emerald-400 transition-colors
-                                     focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                          style={{ minWidth: 44, minHeight: 44 }}
+                          className="absolute top-0 left-0 z-20 p-1 rounded-br-md bg-void/50 text-white/80
+                                     opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100
+                                     hover:text-emerald-400 transition-opacity
+                                     focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
                         >
                           <Repeat2 className="w-3 h-3" />
                         </button>

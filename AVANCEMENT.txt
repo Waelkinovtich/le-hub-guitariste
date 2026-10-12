@@ -999,3 +999,84 @@ T2 cause : fonctionnalité jamais implémentée (confirmé session précédente)
 T2 zone : PlanningPage déjà lisait user.schoolZone ?? 'B' ; SchedulingAssistantPage
   lit désormais aussi user.schoolZone via WeekGridPlanning.schoolZone
 Build ✓ — 0 nouvelle erreur dans les fichiers modifiés.
+
+════════════════════════════════════════════════════════════════════════════════
+SESSION CHANTIER OCTOBRE 2026 — Tâches B–G (prédicat vacances + nouveautés)
+Mis à jour : 2026-10-12
+════════════════════════════════════════════════════════════════════════════════
+
+Tâche A — Prédicat vacances partagé                                    TERMINÉE
+────────────────────────────────────────────────────────────────────────────────
+Fait en session précédente. Ne pas refaire.
+Voir : PlanningPage.jsx confirmHolidayRemoval, EmargementPage.jsx filtre vacances,
+  RecapPage.jsx STATUS_PLANIFIE, SchedulingAssistantPage.jsx lessonsForGrid,
+  WeekGridPlanning.jsx masquage tuiles vacances, migration-chantier-octobre-4.sql BLOC 6.
+
+Tâche B — Bouton « Supprimer ce cours » dans RattrapagePage            TERMINÉE
+────────────────────────────────────────────────────────────────────────────────
+Fichier modifié : src/pages/teacher/RattrapagePage.jsx
+  Preuve : RattrapagePage.jsx:413  const handleSupprimerCours = useCallback(async (lesson) => {
+  Preuve : RattrapagePage.jsx:607  onClick={() => handleSupprimerCours(l)}
+
+Bouton Trash2 sur chaque cours non rattrapé (visible uniquement avant le rattrapage).
+Confirmation window.confirm avant suppression physique (DELETE via deleteLesson).
+Spinner deletingLessonId pendant l'opération. reload() après succès.
+
+Tâche C — Case « Élèves prévenus » (students_notified) + icône tuile   TERMINÉE
+────────────────────────────────────────────────────────────────────────────────
+Fichiers modifiés :
+  src/services/lessons.js              (+ updateStudentsNotified + studentsNotified dans mapLesson)
+  src/pages/teacher/RattrapagePage.jsx (+ bouton toggle Prévenir ?/Prévenus)
+  src/components/WeekGridPlanning.jsx  (+ point vert sur tuile annule_prof si studentsNotified)
+Fichier créé : migration-chantier-octobre-5.sql
+  BLOC 1 : ALTER TABLE public.lessons ADD COLUMN IF NOT EXISTS students_notified boolean NOT NULL DEFAULT false
+
+  Preuve service : lessons.js  export async function updateStudentsNotified(lessonId, value)
+  Preuve tuile   : WeekGridPlanning.jsx:1669  {lesson.studentsNotified && lesson.status === 'annule_prof' ...
+  Preuve toggle  : RattrapagePage.jsx:556  onClick={async () => { try { await updateStudentsNotified(l.id, !l.studentsNotified); reload() } ...
+
+SQL dans migration-chantier-octobre-5.sql — À EXÉCUTER avant utilisation.
+
+Tâche D — Remplacer encart « Élèves » par « Heures à rattraper »       TERMINÉE
+────────────────────────────────────────────────────────────────────────────────
+Fichier modifié : src/pages/teacher/TeacherDashboard.jsx
+  - fetchRattrapageStats remplace countRattrapageLessons
+  - Encart "Élèves" supprimé ; encart "Heures à rattraper" affiché si rattrapageMinutes > 0
+
+  Preuve import  : TeacherDashboard.jsx:12  import { ..., fetchRattrapageStats } from '../../services/lessons'
+  Preuve rendu   : TeacherDashboard.jsx:330  {data.rattrapageMinutes > 0 && (
+  Preuve texte   : TeacherDashboard.jsx:332  <h2 className="text-lg font-semibold mb-2">Heures à rattraper</h2>
+
+Tâche E — Export vCard (.vcf) sur StudentDetailPage                    TERMINÉE
+────────────────────────────────────────────────────────────────────────────────
+Fichier modifié : src/pages/teacher/StudentDetailPage.jsx
+  Preuve fn    : StudentDetailPage.jsx:709  function buildVCard(s) {
+  Preuve bouton: StudentDetailPage.jsx:767  <button onClick={() => buildVCard(student)} title="Exporter le contact (.vcf)" ...
+
+Génère un vCard 3.0 (FN, N, TEL CELL, TEL HOME, EMAIL, ORG) et déclenche le téléchargement.
+Prénom_Nom.vcf — Blob text/vcard, revokeObjectURL après click.
+
+Tâche F — Pastilles statistiques EmargementPage cliquables             TERMINÉE
+────────────────────────────────────────────────────────────────────────────────
+Fichier modifié : src/pages/teacher/EmargementPage.jsx
+  Preuve état   : EmargementPage.jsx:83   const [filterStat, setFilterStat] = useState(null)
+  Preuve filtre : EmargementPage.jsx:136  if (filterStat) base = base.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === filterStat)
+  Preuve tile   : EmargementPage.jsx:252  const isActive = filterStat === stat.key && stat.key !== null
+
+Pastilles Total/Présents/Absents/Excusés/Taux converties en <button>.
+Clic toggle : filtre la liste sur le statut correspondant.
+Total et Taux ont key:null → non filtrables (cursor-default).
+Tile active : ring-2 + suffixe ✓ dans le label.
+
+Tâche G — Icône « Modifier la récurrence » survol-seulement (desktop)  TERMINÉE
+────────────────────────────────────────────────────────────────────────────────
+Fichier modifié : src/components/WeekGridPlanning.jsx
+  Preuve : WeekGridPlanning.jsx:1816  opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100
+
+Desktop (pointer:fine) : opacity-0, visible au survol (group-hover:opacity-100).
+Tactile/tablette (pointer:coarse) : toujours visible ([@media(pointer:coarse)]:opacity-100).
+Zone tactile ≥ 44 px (style={{ minWidth: 44, minHeight: 44 }}).
+Variante Tailwind v4 arbitraire utilisée ([@media(...)]) — pas de classe custom nécessaire.
+
+Build final : ✓ (à relancer pour confirmer)
+ESLint : à vérifier (npm run verifier)

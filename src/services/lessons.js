@@ -8,7 +8,7 @@ import { isVacances } from '../utils/vacances'
 const enVacances = (iso, zone) => zone != null && isVacances(iso, zone) != null
 
 const LESSON_SELECT = `
-  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group, recurrence_interval_weeks, planning_status, context_type, rattrapage_de_lesson_id,
+  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group, recurrence_interval_weeks, planning_status, context_type, rattrapage_de_lesson_id, students_notified,
   student:${TABLES.students} (id, first_name, last_name, level, instrument, lesson_type, school_name)
 `
 
@@ -32,6 +32,7 @@ function mapLesson(row) {
     planningStatus:       row.planning_status ?? 'confirme',
     contextType:          row.context_type ?? null,
     rattrapageDeLessonId: row.rattrapage_de_lesson_id ?? null,
+    studentsNotified:     row.students_notified ?? false,
     studentName,
     dateLabel: formatLessonDateLabel(row.lesson_date),
     timeLabel: formatTime(row.lesson_time),
@@ -653,6 +654,36 @@ export async function applyHolidaysToAllSchoolSeries(teacherId) {
     .eq('teacher_id', teacherId)
     .eq('context_type', 'ecole')
     .eq('status', 'planifie')
+  if (error) throw new Error(error.message)
+}
+
+/** Compte et somme les minutes restantes à rattraper (annulé non cesu, hors raisons spéciales). */
+export async function fetchRattrapageStats(teacherId) {
+  const { data, error } = await supabase
+    .from(TABLES.lessons)
+    .select('id, duration_minutes, context_type, cancel_reason, student:' + TABLES.students + '(lesson_type)')
+    .eq('teacher_id', teacherId)
+    .eq('status', 'annule_prof')
+  if (error) return { count: 0, minutesRestant: 0 }
+  const rows = (data ?? []).filter((r) => {
+    if (r.context_type === 'cesu') return false
+    if (r.student?.lesson_type === 'cesu') return false
+    if (r.cancel_reason === 'rattrapage_annule') return false
+    if (r.cancel_reason === 'rattrapage_abandonne') return false
+    if (r.cancel_reason === 'vacances') return false
+    return true
+  })
+  return {
+    count: rows.length,
+    minutesRestant: rows.reduce((s, r) => s + (r.duration_minutes ?? 0), 0),
+  }
+}
+
+export async function updateStudentsNotified(lessonId, value) {
+  const { error } = await supabase
+    .from(TABLES.lessons)
+    .update({ students_notified: value })
+    .eq('id', lessonId)
   if (error) throw new Error(error.message)
 }
 
