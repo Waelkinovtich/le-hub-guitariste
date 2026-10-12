@@ -6,12 +6,13 @@ import { X } from 'lucide-react'
 import GroupMembresPanel from './GroupMembresPanel'
 
 /**
- * @param {object}   lesson          Objet lesson complet (lesson._groupSessionId, lesson._groupId, lesson.topic, lesson.lessonDate)
+ * @param {object}   lesson          Objet lesson complet (lesson._groupSessionId, lesson._groupId, lesson.topic, lesson.lessonDate, lesson.groupType, lesson.schoolName, lesson.sessionStatus)
  * @param {string}   teacherId       UUID de l'enseignant
  * @param {Function} onClose         () → ferme le modal
  * @param {Function} onSummaryChange ({ present, total }) → met à jour le badge tuile dans PlanningPage
+ * @param {Function} [onCancelled]   () → callback après annulation de la séance
  */
-export default function GroupAttendanceModal({ lesson, teacherId, onClose, onSummaryChange }) {
+export default function GroupAttendanceModal({ lesson, teacherId, onClose, onSummaryChange, onCancelled }) {
   if (!lesson) return null
 
   function handleBackdrop(e) {
@@ -55,6 +56,13 @@ export default function GroupAttendanceModal({ lesson, teacherId, onClose, onSum
           groupId={lesson._groupId}
           teacherId={teacherId}
           onSummaryChange={onSummaryChange}
+          groupType={lesson.groupType}
+          lessonDate={lesson.lessonDate}
+          lessonTime={lesson.lessonTime}
+          durationMinutes={lesson.durationMinutes}
+          schoolName={lesson.schoolName}
+          sessionDbStatus={lesson.sessionStatus}
+          onCancelled={onCancelled ?? onClose}
         />
       </div>
     </div>

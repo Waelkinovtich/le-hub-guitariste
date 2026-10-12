@@ -409,15 +409,27 @@ export default function RattrapagePage() {
     }
   }, [reload])
 
-  // Supprime définitivement un cours annulé de la base de données.
+  // Supprime définitivement un cours annulé.
+  // Conditions requises : annule_prof, jamais rattrapé, pas de déclaration d'absence liée.
   const handleSupprimerCours = useCallback(async (lesson) => {
-    if (!window.confirm(`Supprimer définitivement la séance du ${lesson.dateLabel} pour ${lesson.studentName} ?\nCette action est irréversible.`)) return
+    if (!window.confirm(
+      `Supprimer définitivement la séance du ${lesson.dateLabel} pour ${lesson.studentName} ?\n\n` +
+      `Cette action est irréversible : le cours sera effacé de la base de données et ne pourra pas être récupéré.`
+    )) return
     setDeletingLessonId(lesson.id)
     try {
       await deleteLesson(lesson.id)
       reload()
     } catch (e) {
-      alert('Erreur : ' + e.message)
+      const msg = e.message ?? ''
+      if (msg.includes('23503') || msg.toLowerCase().includes('foreign key') || msg.toLowerCase().includes('violates')) {
+        alert(
+          `Impossible de supprimer ce cours : d'autres données lui sont liées (déclaration d'absence, entrée de revenu ou déplacement).\n\n` +
+          `Utilisez plutôt « Abandonner cette séance » pour la masquer sans la supprimer.`
+        )
+      } else {
+        alert('Erreur : ' + msg)
+      }
     } finally {
       setDeletingLessonId(null)
     }
@@ -601,18 +613,21 @@ export default function RattrapagePage() {
                                   : <Ban className="w-3 h-3" />}
                                 Abandonner cette séance
                               </button>
-                              <button
-                                type="button"
-                                disabled={deletingLessonId === l.id}
-                                onClick={() => handleSupprimerCours(l)}
-                                title="Supprimer définitivement ce cours de la base de données"
-                                className="flex items-center gap-1 px-2 py-1.5 rounded-lg border border-red-500/30 text-xs text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
-                              >
-                                {deletingLessonId === l.id
-                                  ? <Loader2 className="w-3 h-3 animate-spin" />
-                                  : <Trash2 className="w-3 h-3" />}
-                                Supprimer ce cours
-                              </button>
+                              {/* Visible seulement si annule_prof, jamais rattrapé, pas d'absence/présence déclarée */}
+                              {!l.absenceReason && (
+                                <button
+                                  type="button"
+                                  disabled={deletingLessonId === l.id}
+                                  onClick={() => handleSupprimerCours(l)}
+                                  title="Supprimer définitivement ce cours — irréversible, uniquement si aucune donnée liée"
+                                  className="flex items-center gap-1 px-2 py-1.5 rounded-lg border border-red-500/30 text-xs text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+                                >
+                                  {deletingLessonId === l.id
+                                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                                    : <Trash2 className="w-3 h-3" />}
+                                  Supprimer ce cours
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>

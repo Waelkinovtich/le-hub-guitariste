@@ -23,11 +23,15 @@ import BackToDashboard from '../../components/BackToDashboard'
 
 const PERIODS = [
   { value: 'aujourd_hui', label: "Aujourd'hui" },
-  { value: 'semaine', label: 'Cette semaine' },
-  { value: 'mois', label: 'Ce mois' },
-  { value: 'trimestre', label: 'Ce trimestre' },
-  { value: 'année', label: 'Cette année' },
+  { value: 'semaine',     label: 'Cette semaine' },
+  { value: 'mois',        label: 'Ce mois' },
+  { value: 'trimestre',   label: 'Ce trimestre' },
+  { value: 'année',       label: 'Cette année' },
+  { value: 'mois_precis', label: 'Mois…' },
+  { value: 'plage_libre', label: 'Plage…' },
 ]
+
+const SS_KEY = 'emargement_filters'
 
 // Reconstruits depuis lessonStatus.js — source unique de vérité.
 const STATUS_COLORS = LESSON_STATUSES.reduce((acc, s) => { acc[s.value] = s.color; return acc }, {})
@@ -63,20 +67,58 @@ function getRange(period) {
     const end = new Date(now.getFullYear(), q * 3 + 3, 0)
     return { from: fmt(start), to: fmt(end), label: 'T' + (q + 1) + ' ' + now.getFullYear() }
   }
+  if (period === 'mois_precis') {
+    // customMonth = 'YYYY-MM' passé en extra
+    return null // calculé à l'usage
+  }
+  if (period === 'plage_libre') {
+    return null // calculé à l'usage
+  }
   const start = new Date(now.getFullYear(), 0, 1)
   const end = new Date(now.getFullYear(), 11, 31)
   return { from: fmt(start), to: fmt(end), label: String(now.getFullYear()) }
+}
+
+function getRangeForCustomMonth(ym) {
+  // ym = 'YYYY-MM'
+  const [y, m] = ym.split('-').map(Number)
+  const pad = (n) => String(n).padStart(2, '0')
+  const fmt = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+  const start = new Date(y, m - 1, 1)
+  const end   = new Date(y, m, 0)
+  return { from: fmt(start), to: fmt(end), label: start.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }) }
 }
 
 // fmtDuree : utiliser minutesToLabel importé depuis utils/format.js
 const fmtDuree = minutesToLabel
 
 
+// Valeur actuelle du mois courant au format 'YYYY-MM'
+function currentYM() {
+  const d = new Date()
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+}
+
 export default function ÉmargementPage() {
   const { user } = useAuth()
   const { period: periodCtx } = usePeriod()
-  const [period, setPeriod] = useState('mois')
-  const [filterSchool, setFilterSchool] = useState('')
+
+  // Restauration sessionStorage
+  const [period, setPeriod] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(SS_KEY))?.period ?? 'mois' } catch { return 'mois' }
+  })
+  const [filterSchool, setFilterSchool] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(SS_KEY))?.filterSchool ?? '' } catch { return '' }
+  })
+  const [customMonth, setCustomMonth] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(SS_KEY))?.customMonth ?? currentYM() } catch { return currentYM() }
+  })
+  const [customFrom, setCustomFrom] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(SS_KEY))?.customFrom ?? '' } catch { return '' }
+  })
+  const [customTo, setCustomTo] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(SS_KEY))?.customTo ?? '' } catch { return '' }
+  })
   const [statusOverrides, setStatusOverrides] = useState({})         // group sessions
   const [lessonStatusOverrides, setLessonStatusOverrides] = useState({}) // cours individuels
   const [showOnlyUnemarged, setShowOnlyUnemarged] = useState(false)
@@ -87,17 +129,36 @@ export default function ÉmargementPage() {
   // Séances de groupe dont le panneau membres est ouvert (Set de sessionId)
   const [openGroupPanels, setOpenGroupPanels] = useState(new Set())
 
-  const range = getRange(period)
+  // Mémoriser les filtres pour le retour sur la page
+  useEffect(() => {
+    try { sessionStorage.setItem(SS_KEY, JSON.stringify({ period, filterSchool, customMonth, customFrom, customTo })) } catch { /* storage indisponible */ }
+  }, [period, filterSchool, customMonth, customFrom, customTo])
+
+  // Calcule la plage active selon le mode de période
+  const range = (() => {
+    if (period === 'mois_precis') return getRangeForCustomMonth(customMonth)
+    if (period === 'plage_libre') {
+      if (customFrom && customTo && customFrom <= customTo) {
+        const fmt = (s) => s
+        const label = customFrom === customTo ? customFrom : `${customFrom} → ${customTo}`
+        return { from: fmt(customFrom), to: fmt(customTo), label }
+      }
+      return null
+    }
+    return getRange(period)
+  })()
 
   const load = useCallback(async () => {
+    if (!range) return { lessons: [], schools: [] }
     const [lessons, schools] = await Promise.all([
       fetchLessonsInRange({ teacherId: user.id, from: range.from, to: range.to }),
       fetchSchoolNames(user.id),
     ])
     return { lessons, schools }
-  }, [user.id, range.from, range.to])
+  }, [user.id, range?.from, range?.to]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, loading, error, reload } = useFetch(load, [user.id, period])
+  const rangeKey = range ? `${range.from}_${range.to}` : 'null'
+  const { data, loading, error, reload } = useFetch(load, [user.id, rangeKey])
   useRegisterRefresh(reload)
   const { pushAction } = useUndoRedo() ?? {}
 
@@ -105,7 +166,7 @@ export default function ÉmargementPage() {
   // Forward : planifié + déclaration → absent/excuse (absence_reason='declaration_eleve').
   // Backward : absent/excuse (declaration_eleve) + déclaration annulée → planifié.
   useEffect(() => {
-    if (!data?.lessons?.length) return
+    if (!range || !data?.lessons?.length) return
     const nonGroupLessons = data.lessons.filter((l) => !l.isGroup)
     if (nonGroupLessons.length === 0) return
 
@@ -140,6 +201,7 @@ export default function ÉmargementPage() {
   const schools = data?.schools ?? []
 
   const handleExport = () => {
+    if (!range) return
     exportÉmargementPDF({
       lessons,
       school: filterSchool || 'Tous',
@@ -149,6 +211,31 @@ export default function ÉmargementPage() {
       teacherPhone:   user.phone,
       teacherEmail:   user.email,
     })
+  }
+
+  const handleExportCSV = () => {
+    if (!range) return
+    const LABELS = { present: 'Présent', absent: 'Absent', excuse: 'Excusé', annule_prof: 'Annulé', planifie: 'Planifié', rattrape: 'Rattrapé' }
+    const rows = lessons.map((l) => {
+      const status = lessonStatusOverrides[l.id] ?? l.status
+      return [
+        l.studentName ?? '',
+        l.lessonDate ?? '',
+        (l.lessonTime ?? '').slice(0, 5),
+        LABELS[status] ?? status,
+        l.schoolName ?? l.student?.school_name ?? (l.isGroup ? 'Groupe' : 'Particulier'),
+      ]
+    })
+    const header = ['Élève', 'Date', 'Heure', 'Statut', 'École']
+    const csv = [header, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\r\n')
+    // BOM UTF-8 pour Excel français
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `emargement_${range.from}_${range.to}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   // Marque immédiatement "présent" sans ouvrir la modale — clic unique pour l'action la plus fréquente.
@@ -196,10 +283,16 @@ export default function ÉmargementPage() {
           </div>
           <p className="text-muted-foreground mt-1">Feuilles de présence et exports PDF</p>
         </div>
-        <button type="button" onClick={handleExport} disabled={lessons.length === 0} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
-          <FileDown className="w-4 h-4" />
-          Exporter en PDF
-        </button>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={handleExportCSV} disabled={lessons.length === 0 || !range} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors disabled:opacity-50">
+            <FileDown className="w-4 h-4" />
+            CSV
+          </button>
+          <button type="button" onClick={handleExport} disabled={lessons.length === 0 || !range} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
+            <FileDown className="w-4 h-4" />
+            PDF
+          </button>
+        </div>
       </header>
 
       {periodCtx.mode !== 'toutes' && (
@@ -210,7 +303,7 @@ export default function ÉmargementPage() {
       )}
 
       <div className="flex flex-wrap gap-3 mb-6">
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {PERIODS.map((p) => (
             <button key={p.value} type="button" onClick={() => setPeriod(p.value)}
               className={'px-3 py-2 rounded-xl border text-sm font-medium transition-colors ' + (period === p.value ? 'guitar-gradient text-white border-transparent' : 'border-border-subtle hover:bg-surface-overlay')}>
@@ -218,6 +311,26 @@ export default function ÉmargementPage() {
             </button>
           ))}
         </div>
+        {/* Sélecteur mois précis */}
+        {period === 'mois_precis' && (
+          <input
+            type="month"
+            value={customMonth}
+            max={currentYM()}
+            onChange={(e) => setCustomMonth(e.target.value || currentYM())}
+            className="px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+          />
+        )}
+        {/* Sélecteur plage libre */}
+        {period === 'plage_libre' && (
+          <div className="flex items-center gap-2">
+            <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
+              className="px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
+            <span className="text-muted-foreground text-sm">→</span>
+            <input type="date" value={customTo} min={customFrom} onChange={(e) => setCustomTo(e.target.value)}
+              className="px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
+          </div>
+        )}
         <select value={filterSchool} onChange={(e) => setFilterSchool(e.target.value)} className="px-3 py-2 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600">
           <option value="">Toutes écoles</option>
           <option value="particulier">Cours particuliers</option>

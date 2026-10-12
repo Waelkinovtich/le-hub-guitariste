@@ -4,8 +4,8 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { fetchGroupSessionAttendance, upsertGroupAttendance } from '../services/lessons'
-import { Check, UserPlus, Trash2 } from 'lucide-react'
+import { fetchGroupSessionAttendance, upsertGroupAttendance, cancelGroupSession } from '../services/lessons'
+import { Check, UserPlus, Trash2, Ban } from 'lucide-react'
 import AddMemberModal from '../pages/groupes/AddMemberModal'
 
 // Statuts disponibles pour l'émargement des membres de groupe
@@ -21,11 +21,19 @@ const ATTENDANCE_STATUSES = [
  * @param {string}   groupId          UUID du groupe (music_groups.id)
  * @param {string}   teacherId        UUID de l'enseignant connecté
  * @param {Function} onSummaryChange  ({ present, total }) → appelé après chaque modification
+ * @param {string}   [groupType]      Type du groupe ('ensemble' → pas de rattrapage individuel)
+ * @param {string}   [lessonDate]     Date de la séance (pour créer des cours annulés)
+ * @param {string}   [lessonTime]     Heure de la séance
+ * @param {number}   [durationMinutes] Durée
+ * @param {string}   [schoolName]     École liée au groupe
+ * @param {string}   [sessionDbStatus] Statut actuel en base (pour masquer le bouton si déjà annulée)
+ * @param {Function} [onCancelled]    () → callback après annulation (ferme la modal, recharge)
  */
-export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSummaryChange }) {
+export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSummaryChange, groupType, lessonDate, lessonTime, durationMinutes, schoolName, sessionDbStatus, onCancelled }) {
   const [membres, setMembres]           = useState([])
   const [attendance, setAttendance]     = useState({})  // student_id → status
   const [loading, setLoading]           = useState(true)
+  const [cancelling, setCancelling]     = useState(false)
   const [tableMissing, setTableMissing] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
   const [removingId, setRemovingId]     = useState(null)
@@ -105,6 +113,23 @@ export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSum
     }
   }
 
+  async function handleCancelSession() {
+    const isEnsemble = (groupType ?? '').toLowerCase().includes('ensemble')
+    const msg = isEnsemble
+      ? `Annuler cette séance d'ensemble ?\nAucun rattrapage ne sera créé.`
+      : `Annuler cette séance de groupe ?\nUn cours « Annulé par le professeur » sera créé pour chaque élève membre afin d'être rattrapé.`
+    if (!window.confirm(msg)) return
+    setCancelling(true)
+    try {
+      await cancelGroupSession({ sessionId, groupType, members: membres, teacherId, lessonDate, lessonTime, durationMinutes, schoolName })
+      onCancelled?.()
+    } catch (e) {
+      alert('Erreur : ' + e.message)
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   async function handleTousPresents() {
     const next = {}
     membres.forEach(m => { next[attendanceKey(m)] = 'present' })
@@ -159,6 +184,20 @@ export default function GroupMembresPanel({ sessionId, groupId, teacherId, onSum
   return (
     <>
     <div className="flex flex-col gap-1 pt-1">
+      {/* Bouton "Annulé par le professeur" — visible si séance pas encore annulée et callback fourni */}
+      {onCancelled && sessionDbStatus !== 'annulee' && (
+        <button
+          type="button"
+          disabled={cancelling}
+          onClick={handleCancelSession}
+          className="flex items-center gap-1.5 self-start mb-2 px-2 py-1 rounded-md text-xs font-medium
+                     border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+        >
+          <Ban className="w-3 h-3" />
+          {cancelling ? 'Annulation…' : 'Annulé par le professeur'}
+        </button>
+      )}
+
       {/* Bouton "Tout le monde présent" */}
       {presentCount < membres.length && (
         <button

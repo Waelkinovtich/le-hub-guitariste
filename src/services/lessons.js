@@ -118,6 +118,48 @@ export async function updateLesson(lessonId, input) {
   return mapLesson(data)
 }
 
+/**
+ * Annule une séance de groupe « par le professeur ».
+ * group_sessions.status → 'annulee', cancel_reason → 'annule_prof'.
+ * Pour les groupes école (groupType !== 'ensemble') : crée une entrée lessons annule_prof
+ * par membre ayant un student_id, afin qu'ils apparaissent dans la page Rattrapage.
+ * Pour les ensembles : annule uniquement la séance, sans rattrapage individuel.
+ * Tolère l'absence de la colonne cancel_reason (code 42703).
+ */
+export async function cancelGroupSession({ sessionId, groupType, members, teacherId, lessonDate, lessonTime, durationMinutes, schoolName }) {
+  // 1. Marquer la séance annulée
+  let upd = supabase.from('group_sessions').update({ status: 'annulee' }).eq('id', sessionId)
+  const { error: e1 } = await upd
+  if (e1 && e1.code !== '42703') throw new Error(e1.message)
+
+  // Tenter d'ajouter cancel_reason (tolère si colonne absente)
+  try {
+    await supabase.from('group_sessions').update({ cancel_reason: 'annule_prof' }).eq('id', sessionId)
+  } catch { /* colonne absente — migration non encore exécutée */ }
+
+  // 2. Pour les groupes école seulement : créer des cours annule_prof par élève membre
+  const isEnsemble = (groupType ?? '').toLowerCase().includes('ensemble')
+  if (!isEnsemble && members?.length) {
+    const inserts = members
+      .filter(m => m.student_id)
+      .map(m => ({
+        teacher_id:       teacherId,
+        student_id:       m.student_id,
+        lesson_date:      lessonDate,
+        lesson_time:      lessonTime,
+        duration_minutes: durationMinutes ?? 60,
+        status:           'annule_prof',
+        context_type:     'ecole',
+        cancel_reason:    null,
+        school_name:      schoolName ?? null,
+      }))
+    if (inserts.length > 0) {
+      const { error: e2 } = await supabase.from(TABLES.lessons).insert(inserts)
+      if (e2) throw new Error(e2.message)
+    }
+  }
+}
+
 export async function deleteLesson(lessonId) {
   const { error } = await supabase.from(TABLES.lessons).delete().eq('id', lessonId)
   if (error) throw new Error(error.message)

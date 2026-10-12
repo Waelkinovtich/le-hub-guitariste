@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Search, Plus, X, Archive, ArchiveX } from 'lucide-react'
+import { Search, Plus, X, Archive, ArchiveX, Download } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { usePeriod, filterStudentsByPeriod } from '../../context/PeriodContext'
 import AddStudentModal from '../../components/AddStudentModal'
@@ -12,6 +12,7 @@ import { fetchTeacherStudents, fetchSchoolNames, fetchAllContextsByStudent, arch
 import { fetchUpcomingLessons, buildNextLessonByStudent, formatNextLessonLabel } from '../../services/lessons'
 import { initials } from '../../utils/format'
 import { getSchoolColor } from '../../utils/schoolColors'
+import { downloadVCardGroup } from '../../utils/vcard'
 
 const LEVELS = ['Debutant', 'Intermediaire', 'Avance']
 const AGE_GROUPS = [
@@ -189,6 +190,20 @@ export default function StudentsPage() {
             <Archive className="w-4 h-4" />
             {showArchived ? 'Actifs' : 'Archivés'}
           </button>
+          {filtered.length > 0 && (
+            <button
+              type="button"
+              title={`Exporter ${filtered.length} contact${filtered.length > 1 ? 's' : ''} (.vcf)`}
+              onClick={() => {
+                const filename = filterSchool ? filterSchool.replace(/\s+/g, '_') : 'eleves'
+                downloadVCardGroup(filtered, filename)
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
+            >
+              <Download className="w-4 h-4" />
+              Contacts
+            </button>
+          )}
           {!showArchived && (
             <button type="button" onClick={() => setShowAddForm(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity">
               <Plus className="w-4 h-4" />
