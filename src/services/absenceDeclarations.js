@@ -4,9 +4,10 @@
  * Forward  : planifié + déclaration active → excuse/absent
  *            + absence_reason = 'declaration_eleve'
  * Backward : absent/excuse avec absence_reason='declaration_eleve'
- *            mais sans déclaration active → planifié (efface la raison)
+ *            mais sans déclaration active → planifié + absence_reason='finalement_present'
+ *            (l'élève a annulé sa déclaration = confirmé sa présence)
  *
- * Ne touche JAMAIS un cours dont absence_reason ≠ 'declaration_eleve'
+ * Ne touche JAMAIS un cours dont absence_reason ∉ {'declaration_eleve','finalement_present'}
  * (= status posé manuellement par le professeur).
  *
  * @param {object} p
@@ -57,8 +58,9 @@ export async function syncAbsenceDeclarations({
     const key = `${lesson.studentId}|${lesson.lessonDate}|${toHHMM(lesson.lessonTime)}`
     const decl = declMap.get(key)
 
-    if (decl && lesson.status === 'planifie') {
+    if (decl && lesson.status === 'planifie' && lesson.absenceReason !== 'finalement_present') {
       // Forward : cours planifié → absent / excusé par déclaration
+      // Sauf si l'élève a déjà annulé sa déclaration (finalement_present) : ne pas ré-appliquer.
       const newStatus = decl.excused ? 'excuse' : 'absent'
       onOverride?.(lesson.id, newStatus)
       try {
@@ -68,10 +70,10 @@ export async function syncAbsenceDeclarations({
         onClearOverride?.(lesson.id)
       }
     } else if (!decl && lesson.absenceReason === 'declaration_eleve') {
-      // Backward : déclaration annulée, remettre à planifié
+      // Backward : déclaration annulée → planifié + marquer 'finalement_present'
       onOverride?.(lesson.id, 'planifie')
       try {
-        await updateStatus(lesson.id, 'planifie', null, null)
+        await updateStatus(lesson.id, 'planifie', 'finalement_present', null)
         reset++
       } catch {
         onClearOverride?.(lesson.id)

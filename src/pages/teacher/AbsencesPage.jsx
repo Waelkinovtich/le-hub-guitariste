@@ -147,13 +147,19 @@ export default function AbsencesPage() {
   const [declErr,      setDeclErr]      = useState(null)
 
   // Filtres
-  const [filterStudent, setFilterStudent] = useState('')
-  const [filterExcused, setFilterExcused] = useState('tous')
-  const [activeTab, setActiveTab]         = useState('liste') // 'liste' | 'resume'
+  const [filterStudent,   setFilterStudent]   = useState('')
+  const [filterExcused,   setFilterExcused]   = useState('tous')
+  const [filterDateMode,  setFilterDateMode]  = useState('all')  // 'all' | 'month' | 'range'
+  const [filterMonth,     setFilterMonth]     = useState('')      // YYYY-MM
+  const [filterDateDebut, setFilterDateDebut] = useState('')      // YYYY-MM-DD
+  const [filterDateFin,   setFilterDateFin]   = useState('')      // YYYY-MM-DD
+  const [activeTab, setActiveTab]             = useState('liste') // 'liste' | 'resume'
 
-  // Marque la visite pour le badge "nouvelles absences" du Dashboard
+  // Marque la visite pour les badges "nouvelles absences / annulations" du Dashboard
   useEffect(() => {
-    try { localStorage.setItem('dashboard_absences_last_seen', new Date().toISOString()) } catch {}
+    const now = new Date().toISOString()
+    try { localStorage.setItem('dashboard_absences_last_seen',     now) } catch {}
+    try { localStorage.setItem('dashboard_cancellations_last_seen', now) } catch {}
   }, [])
 
   // ── Chargement / création du lien d'absence ──────────────────────────────
@@ -235,6 +241,13 @@ export default function AbsencesPage() {
     if (filterExcused === 'excusees'     && (!d.excused || d.cancelled_at)) return false
     if (filterExcused === 'non_excusees' && (d.excused  || d.cancelled_at)) return false
     if (filterExcused === 'annulees'     && !d.cancelled_at) return false
+    if (filterDateMode === 'month' && filterMonth) {
+      if (!(d.lesson_date ?? '').startsWith(filterMonth)) return false
+    }
+    if (filterDateMode === 'range') {
+      if (filterDateDebut && (d.lesson_date ?? '') < filterDateDebut) return false
+      if (filterDateFin   && (d.lesson_date ?? '') > filterDateFin)   return false
+    }
     return true
   })
 
@@ -243,6 +256,28 @@ export default function AbsencesPage() {
     const lessonsFiltres = filterLessonsByPeriod(allLessons, period)
     return calculerTauxAbsence(lessonsFiltres)
   }, [allLessons, period])
+
+  // ── Évolution mensuelle du taux de présence ──────────────────────────────
+  const monthlyStats = useMemo(() => {
+    const STATUTS_EMARGEMENT = new Set(['present', 'absent', 'excuse'])
+    const map = {}
+    for (const l of allLessons) {
+      if (!STATUTS_EMARGEMENT.has(l.status)) continue
+      const key = (l.lessonDate ?? l.lesson_date ?? '').slice(0, 7) // YYYY-MM
+      if (!key) continue
+      if (!map[key]) map[key] = { total: 0, presents: 0 }
+      map[key].total++
+      if (l.status === 'present') map[key].presents++
+    }
+    return Object.entries(map)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-12)
+      .map(([key, v]) => ({
+        label: new Date(key + '-15').toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }),
+        taux: v.total > 0 ? Math.round((v.presents / v.total) * 100) : null,
+        total: v.total,
+      }))
+  }, [allLessons])
 
   // ── Mise à jour locale après toggle excused ──────────────────────────────
   // Évite un rechargement complet : synchronise uniquement la ligne modifiée.
@@ -291,19 +326,28 @@ export default function AbsencesPage() {
         ) : (
           <div className="flex flex-wrap gap-6">
             <div>
-              <p className="text-xs text-muted-foreground mb-0.5">Taux d'absence</p>
+              <p className="text-xs text-muted-foreground mb-0.5">Taux de présence</p>
               <p className={`text-3xl font-bold ${
-                tauxGeneral.taux >= 30 ? 'text-orange-400'
-                : tauxGeneral.taux >= 15 ? 'text-yellow-400'
-                : 'text-emerald-400'
+                tauxGeneral.tauxPresence >= 85 ? 'text-emerald-400'
+                : tauxGeneral.tauxPresence >= 70 ? 'text-yellow-400'
+                : 'text-orange-400'
               }`}>
-                {tauxGeneral.taux} %
+                {tauxGeneral.tauxPresence} %
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {tauxGeneral.nbPresents} présent{tauxGeneral.nbPresents > 1 ? 's' : ''} / {tauxGeneral.nbCours} émargé{tauxGeneral.nbCours > 1 ? 's' : ''}
               </p>
             </div>
-            <div>
+            <button
+              type="button"
+              onClick={() => { setActiveTab('liste'); setFilterExcused('non_excusees') }}
+              className="text-left hover:opacity-80 transition-opacity"
+              title="Voir les absences non excusées"
+            >
               <p className="text-xs text-muted-foreground mb-0.5">Absences</p>
-              <p className="text-3xl font-bold text-foreground">{tauxGeneral.nbAbsences}</p>
-            </div>
+              <p className="text-3xl font-bold text-foreground underline decoration-dotted decoration-muted-foreground/40">{tauxGeneral.nbAbsences}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{tauxGeneral.taux} % taux d'absence</p>
+            </button>
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Cours émargés</p>
               <p className="text-3xl font-bold text-foreground">{tauxGeneral.nbCours}</p>
@@ -311,6 +355,33 @@ export default function AbsencesPage() {
           </div>
         )}
       </div>
+
+      {/* ── Évolution mensuelle ─────────────────────────────────────────── */}
+      {monthlyStats.length >= 2 && (
+        <div className="rounded-xl border border-border-subtle bg-surface-raised p-4 mb-6">
+          <h2 className="text-sm font-semibold mb-3">Évolution mensuelle — taux de présence</h2>
+          <div className="flex items-end gap-1 h-24" aria-label="Graphique mensuel">
+            {monthlyStats.map((m) => (
+              <div key={m.label} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+                <span className="text-[9px] text-muted-foreground font-medium leading-none">
+                  {m.taux !== null ? `${m.taux}%` : '—'}
+                </span>
+                <div
+                  className="w-full rounded-t"
+                  style={{
+                    height: m.taux !== null ? `${Math.max(4, m.taux * 0.72)}px` : '4px',
+                    background: m.taux === null ? 'var(--color-border)'
+                      : m.taux >= 85 ? 'var(--color-emerald-400, #34d399)'
+                      : m.taux >= 70 ? 'var(--color-yellow-400, #facc15)'
+                      : 'var(--color-orange-400, #fb923c)',
+                  }}
+                />
+                <span className="text-[9px] text-muted-foreground truncate w-full text-center">{m.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Onglets ─────────────────────────────────────────────────────── */}
       <div className="flex gap-1 mb-4 border-b border-border-subtle">
@@ -353,6 +424,41 @@ export default function AbsencesPage() {
             <option value="non_excusees">Non excusées uniquement</option>
             <option value="annulees">Annulées uniquement</option>
           </select>
+          <select
+            value={filterDateMode}
+            onChange={(e) => setFilterDateMode(e.target.value)}
+            className="px-3 py-1.5 rounded-lg border border-border-subtle bg-surface-raised text-sm focus:outline-none focus:border-guitar-600 transition-colors"
+          >
+            <option value="all">Toutes les dates</option>
+            <option value="month">Mois précis</option>
+            <option value="range">Période libre</option>
+          </select>
+          {filterDateMode === 'month' && (
+            <input
+              type="month"
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(e.target.value)}
+              className="px-3 py-1.5 rounded-lg border border-border-subtle bg-surface-raised text-sm focus:outline-none focus:border-guitar-600 transition-colors"
+            />
+          )}
+          {filterDateMode === 'range' && (
+            <>
+              <input
+                type="date"
+                value={filterDateDebut}
+                onChange={(e) => setFilterDateDebut(e.target.value)}
+                placeholder="Du"
+                className="px-3 py-1.5 rounded-lg border border-border-subtle bg-surface-raised text-sm focus:outline-none focus:border-guitar-600 transition-colors"
+              />
+              <input
+                type="date"
+                value={filterDateFin}
+                onChange={(e) => setFilterDateFin(e.target.value)}
+                placeholder="Au"
+                className="px-3 py-1.5 rounded-lg border border-border-subtle bg-surface-raised text-sm focus:outline-none focus:border-guitar-600 transition-colors"
+              />
+            </>
+          )}
         </div>
       )}
 

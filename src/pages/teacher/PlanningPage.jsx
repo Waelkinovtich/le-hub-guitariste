@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, useEffect, useRef } from 'react'
-import { Plus, Pencil, Trash2, ClipboardCheck, ChevronLeft, ChevronRight, Download, HelpCircle, Eye, EyeOff, Navigation, CalendarPlus } from 'lucide-react'
+import { Plus, Pencil, Trash2, ClipboardCheck, ChevronLeft, ChevronRight, Download, HelpCircle, Eye, EyeOff, Navigation, CalendarPlus, Scissors } from 'lucide-react'
 import { downloadIcs } from '../../utils/icsExport'
 import { currentSchoolYear } from '../../services/schools'
 import { LoadingBlock, ErrorBlock, EmptyBlock } from '../../components/DataState'
@@ -13,7 +13,7 @@ import { supabase } from '../../lib/supabase'
 import { useUndoRedo } from '../../contexts/UndoRedoContext'
 import { fetchTeacherSchools } from '../../services/schools'
 import { startOfWeek, toISODate } from '../../utils/format'
-import { getPériodes, getCurrentPériode } from '../../utils/vacances'
+import { getPériodes, getCurrentPériode, isVacances } from '../../utils/vacances'
 import AddLessonModal from '../../components/AddLessonModal'
 import LessonStatusModal from '../../components/LessonStatusModal'
 import GroupAttendanceModal from '../../components/GroupAttendanceModal'
@@ -33,7 +33,8 @@ const VIEWS = [{ value: 'semaine', label: 'Semaine' }, { value: 'mois', label: '
 // ─── T10 : Récapitulatif de période ──────────────────────────────────────────
 
 const STATUTS_REALISES = ['present', 'rattrape']
-const STATUTS_PLANIFIES = ['planifie', 'present', 'absent', 'excuse', 'rattrape', 'annule_prof']
+// annule_prof exclu : un cours annulé (même réel) n'est pas un cours planifié côté récap heures école
+const STATUTS_PLANIFIES = ['planifie', 'present', 'absent', 'excuse', 'rattrape']
 
 function RecapView({ lessons, périodes }) {
   const [périodeIdx, setPériodeIdx] = useState(0)
@@ -147,6 +148,8 @@ export default function PlanningPage() {
   const [editLesson, setEditLesson] = useState(null)
   const [statusLesson, setStatusLesson] = useState(null)
   const [deleteLessonItem, setDeleteLessonItem] = useState(null)
+  // I+J : menu de détail ouvert par tap sur un cours (remplace l'ouverture directe de l'édition)
+  const [tapLesson, setTapLesson] = useState(null)
   const [showIcsPanel, setShowIcsPanel] = useState(false)
   const [newLessonDraft, setNewLessonDraft]     = useState(null)
   // Cours à dupliquer : pré-remplit élève/durée/sujet, date/heure laissés vides
@@ -159,6 +162,13 @@ export default function PlanningPage() {
   const [groupLesson, setGroupLesson] = useState(null)
   // Résumés de présence par séance de groupe : sessionId → { present, total }
   const [groupAttendanceSummary, setGroupAttendanceSummary] = useState({})
+
+  // T2.3 — Retirer les cours d'école pendant les vacances
+  const [holidayRemovalPreview, setHolidayRemovalPreview] = useState(null)
+  const [holidayRemovalLoading, setHolidayRemovalLoading] = useState(false)
+  const [holidayRemovalDone, setHolidayRemovalDone] = useState(false)
+  const [holidayRemovedIds, setHolidayRemovedIds] = useState([])           // pour undo lessons
+  const [holidayRemovedGroupIds, setHolidayRemovedGroupIds] = useState([]) // pour undo group_sessions
 
   // Créneaux réservés (hebdomadaires, indépendants de la plage de dates)
   const [reservedSlots, setReservedSlots]   = useState([])
@@ -209,6 +219,12 @@ export default function PlanningPage() {
     e.setDate(e.getDate() + 6)
     return e
   }, [weekStart])
+
+  // Période de vacances couvrant le début de semaine affichée (null si semaine scolaire)
+  const weekVacancePériode = useMemo(() => {
+    if (view !== 'semaine') return null
+    return isVacances(toISODate(weekStart), zone)
+  }, [weekStart, zone, view])
 
   const monthDate = useMemo(() => {
     const d = new Date()
@@ -326,6 +342,7 @@ export default function PlanningPage() {
     let all = (lessons ?? []).map((l) =>
       lessonStatusOverrides[l.id] ? { ...l, status: lessonStatusOverrides[l.id] } : l
     )
+    all = all.filter((l) => l.cancelReason !== 'vacances')
     if (hideEnvisages) all = all.filter((l) => l.planningStatus !== 'envisage')
     if (selectedDay) return all.filter((l) => l.lessonDate === selectedDay)
     if (view === 'semaine') {
@@ -334,6 +351,11 @@ export default function PlanningPage() {
     }
     return all
   }, [lessons, lessonStatusOverrides, selectedDay, view, weekStart, weekEnd, hideEnvisages])
+
+  const lessonsNoVacances = useMemo(
+    () => (lessons ?? []).filter((l) => l.cancelReason !== 'vacances'),
+    [lessons]
+  )
 
   // Génère l'URL de navigation GPS selon la préférence du prof et la disponibilité des
   // coordonnées. Un seul champ destination est renseigné : l'app de navigation démarre
@@ -428,6 +450,117 @@ export default function PlanningPage() {
     }
   }
 
+  const fetchHolidayRemovalPreview = useCallback(async () => {
+    if (!weekVacancePériode) return
+    setHolidayRemovalLoading(true)
+    try {
+      // Cours élèves individuels à l'école
+      const { data: lessonsData, error } = await supabase
+        .from('lessons')
+        .select('id, lesson_date, lesson_time, recurrence_group, context_type, rattrapage_de_lesson_id')
+        .eq('teacher_id', user.id)
+        .eq('status', 'planifie')
+        .eq('context_type', 'ecole')
+        .not('recurrence_group', 'is', null)
+        .is('rattrapage_de_lesson_id', null)
+        .gte('lesson_date', weekVacancePériode.debut)
+        .lte('lesson_date', weekVacancePériode.fin)
+        .order('lesson_date')
+      if (error) throw new Error(error.message)
+      const lessons = lessonsData ?? []
+
+      // Séances de groupe d'école à l'état 'prevue' — celles qui seront effectivement modifiées
+      let groupSessions = []
+      try {
+        const { data: groups } = await supabase
+          .from('music_groups')
+          .select('id')
+          .eq('teacher_id', user.id)
+          .not('school_name', 'is', null)
+        const groupIds = (groups ?? []).map((g) => g.id)
+        if (groupIds.length > 0) {
+          const { data: gData } = await supabase
+            .from('group_sessions')
+            .select('id')
+            .in('group_id', groupIds)
+            .eq('status', 'prevue')
+            .gte('session_date', weekVacancePériode.debut)
+            .lte('session_date', weekVacancePériode.fin)
+          groupSessions = gData ?? []
+        }
+      } catch { /* tolérant */ }
+
+      const series = new Set(lessons.map((l) => l.recurrence_group).filter(Boolean))
+      setHolidayRemovalPreview({ lessons, seriesCount: series.size, groupSessions })
+    } catch (e) {
+      alert('Erreur lors de la récupération des cours : ' + e.message)
+    } finally {
+      setHolidayRemovalLoading(false)
+    }
+  }, [weekVacancePériode, user.id])
+
+  const confirmHolidayRemoval = useCallback(async () => {
+    if (!holidayRemovalPreview?.lessons.length && !holidayRemovalPreview?.groupSessions?.length) return
+    setHolidayRemovalLoading(true)
+    try {
+      const ids = holidayRemovalPreview.lessons.map((l) => l.id)
+      const groupIds = (holidayRemovalPreview.groupSessions ?? []).map((s) => s.id)
+      if (ids.length > 0) {
+        const { error } = await supabase
+          .from('lessons')
+          .update({ status: 'annule_prof', cancel_reason: 'vacances', suspend_during_holidays: true })
+          .in('id', ids)
+        if (error) throw new Error(error.message)
+      }
+      if (groupIds.length > 0) {
+        const { error } = await supabase
+          .from('group_sessions')
+          .update({ status: 'annulee', cancel_reason: 'vacances' })
+          .in('id', groupIds)
+        if (error) throw new Error(error.message)
+      }
+      setHolidayRemovedIds(ids)
+      setHolidayRemovedGroupIds(groupIds)
+      setHolidayRemovalDone(true)
+      setHolidayRemovalPreview(null)
+      setTimeout(() => { setHolidayRemovalDone(false); setHolidayRemovedIds([]); setHolidayRemovedGroupIds([]) }, 30_000)
+      reload()
+    } catch (e) {
+      alert('Erreur lors de la mise à jour : ' + e.message)
+    } finally {
+      setHolidayRemovalLoading(false)
+    }
+  }, [holidayRemovalPreview, reload])
+
+  const undoHolidayRemoval = useCallback(async () => {
+    if (!holidayRemovedIds.length && !holidayRemovedGroupIds.length) return
+    setHolidayRemovalLoading(true)
+    try {
+      if (holidayRemovedIds.length > 0) {
+        const { error } = await supabase
+          .from('lessons')
+          .update({ status: 'planifie', cancel_reason: null, suspend_during_holidays: false })
+          .in('id', holidayRemovedIds)
+        if (error) throw new Error(error.message)
+      }
+      if (holidayRemovedGroupIds.length > 0) {
+        const { error } = await supabase
+          .from('group_sessions')
+          .update({ status: 'prevue', cancel_reason: null })
+          .in('id', holidayRemovedGroupIds)
+        if (error) throw new Error(error.message)
+      }
+      setHolidayRemovalDone(false)
+      setHolidayRemovedIds([])
+      setHolidayRemovedGroupIds([])
+      reload()
+    } catch (e) {
+      alert('Erreur lors du rétablissement : ' + e.message)
+    } finally {
+      setHolidayRemovalLoading(false)
+    }
+  }, [holidayRemovedIds, holidayRemovedGroupIds, reload])
+
   const showNav = view === 'semaine' || view === 'mois'
 
   return (
@@ -463,6 +596,17 @@ export default function PlanningPage() {
             <button type="button" onClick={() => { setShowCreateEvent(true); setNewEvent((e) => ({ ...e, eventDate: toISODate(weekStart) })) }} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">
               <CalendarPlus className="w-4 h-4" />
               Événement
+            </button>
+          )}
+          {view === 'semaine' && weekVacancePériode && (
+            <button
+              type="button"
+              onClick={fetchHolidayRemovalPreview}
+              disabled={holidayRemovalLoading}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-400/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-sm font-medium hover:bg-amber-500/20 transition-colors disabled:opacity-50"
+            >
+              {holidayRemovalLoading ? <span className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" /> : <Scissors className="w-4 h-4" />}
+              Retirer les cours d&apos;école
             </button>
           )}
           <button type="button" onClick={() => setShowIcsPanel((v) => !v)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">
@@ -509,6 +653,71 @@ export default function PlanningPage() {
           <p className="text-xs text-muted-foreground">
             Sur iPhone ou iPad : ouvrez le fichier depuis Mail ou Fichiers — Calendrier proposera de l'importer directement.
           </p>
+        </div>
+      )}
+
+      {holidayRemovalDone && (
+        <div className="flex items-center justify-between gap-4 px-4 py-2.5 mb-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-sm text-emerald-600 dark:text-emerald-400 font-medium">
+          <span>✓ {holidayRemovedIds.length + holidayRemovedGroupIds.length} élément{(holidayRemovedIds.length + holidayRemovedGroupIds.length) > 1 ? 's' : ''} annulé{(holidayRemovedIds.length + holidayRemovedGroupIds.length) > 1 ? 's' : ''} pour les vacances ({holidayRemovedIds.length} cours, {holidayRemovedGroupIds.length} séance{holidayRemovedGroupIds.length > 1 ? 's' : ''} de groupe).</span>
+          {(holidayRemovedIds.length > 0 || holidayRemovedGroupIds.length > 0) && (
+            <button type="button" onClick={undoHolidayRemoval} disabled={holidayRemovalLoading}
+              className="text-xs underline underline-offset-2 hover:no-underline disabled:opacity-40">
+              Défaire
+            </button>
+          )}
+        </div>
+      )}
+
+      {holidayRemovalPreview && weekVacancePériode && (
+        <div className="glass-panel rounded-2xl p-4 mb-4 border border-amber-400/30 bg-amber-500/5">
+          <p className="text-sm font-semibold text-amber-700 dark:text-amber-300 mb-2">
+            {weekVacancePériode.emoji} Vacances {weekVacancePériode.label} — Aperçu
+          </p>
+          {holidayRemovalPreview.lessons.length === 0 && (holidayRemovalPreview.groupSessions ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground">Aucun cours d&apos;école en série à traiter sur cette période.</p>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground mb-3">
+                {holidayRemovalPreview.lessons.length > 0 && (
+                  <><strong>{holidayRemovalPreview.lessons.length}</strong> cours planifié{holidayRemovalPreview.lessons.length > 1 ? 's' : ''} en{' '}
+                  <strong>{holidayRemovalPreview.seriesCount}</strong> série{holidayRemovalPreview.seriesCount > 1 ? 's' : ''}</>
+                )}
+                {holidayRemovalPreview.lessons.length > 0 && (holidayRemovalPreview.groupSessions ?? []).length > 0 && ' + '}
+                {(holidayRemovalPreview.groupSessions ?? []).length > 0 && (
+                  <><strong>{(holidayRemovalPreview.groupSessions ?? []).length}</strong> séance{(holidayRemovalPreview.groupSessions ?? []).length > 1 ? 's' : ''} de groupe école</>
+                )}
+                {' '}seront <strong>annulés</strong> (cancel_reason=vacances). Action réversible via «&nbsp;Défaire&nbsp;».
+              </p>
+              <ul className="text-xs text-muted-foreground space-y-0.5 mb-3 max-h-40 overflow-y-auto">
+                {holidayRemovalPreview.lessons.map((l) => (
+                  <li key={l.id} className="flex gap-2">
+                    <span className="tabular-nums">{new Date(l.lesson_date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                    <span>{l.lesson_time?.slice(0, 5)}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <div className="flex gap-2">
+            {(holidayRemovalPreview.lessons.length > 0 || (holidayRemovalPreview.groupSessions ?? []).length > 0) && (
+              <button
+                type="button"
+                onClick={confirmHolidayRemoval}
+                disabled={holidayRemovalLoading}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium disabled:opacity-50"
+              >
+                {holidayRemovalLoading ? <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" /> : null}
+                Confirmer
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setHolidayRemovalPreview(null)}
+              className="px-4 py-2 rounded-xl border border-border-subtle text-sm hover:bg-surface-overlay"
+            >
+              Annuler
+            </button>
+          </div>
         </div>
       )}
 
@@ -559,10 +768,8 @@ export default function PlanningPage() {
           eventsByDay={eventsByDay}
           onNewLesson={(draft) => setNewLessonDraft(draft)}
           onSelectLesson={(lesson) => {
-            // Pour les petites tuiles (< 3 slots) le bouton GPS n'est pas sur la tuile :
-            // on enrichit le lesson avec _gpsUrl pour qu'AddLessonModal l'affiche.
             const gpsUrl = lesson.schoolName ? buildGpsUrl(lesson.schoolName) : null
-            setEditLesson(gpsUrl ? { ...lesson, _gpsUrl: gpsUrl } : lesson)
+            setTapLesson(gpsUrl ? { ...lesson, _gpsUrl: gpsUrl } : lesson)
           }}
           onDuplicate={(lesson) => setDuplicateDraft({
             studentId:       lesson.studentId,
@@ -648,7 +855,7 @@ export default function PlanningPage() {
       {view === 'année' && !selectedDay && (
         loading ? null : (
           <YearView
-            lessons={lessons ?? []}
+            lessons={lessonsNoVacances}
             onSelectDay={(iso) => { setSelectedDay(iso); }}
           />
         )
@@ -656,7 +863,7 @@ export default function PlanningPage() {
 
       {view === 'mois' && !selectedDay ? (
         loading ? <LoadingBlock label="Chargement" /> : error ? <ErrorBlock message={error} onRetry={reload} /> : (
-          <MonthView monthDate={monthDate} lessons={lessons ?? []} zone={zone} onSelectDay={(iso) => setSelectedDay(iso)} onSelectLesson={(l) => setStatusLesson(l)} />
+          <MonthView monthDate={monthDate} lessons={lessonsNoVacances} zone={zone} onSelectDay={(iso) => setSelectedDay(iso)} onSelectLesson={(l) => setStatusLesson(l)} />
         )
       ) : view !== 'semaine' ? (
         <>
@@ -760,7 +967,7 @@ export default function PlanningPage() {
 
       {/* T10 — Vue récapitulatif de période */}
       {view === 'récap' && (
-        <RecapView lessons={lessons ?? []} périodes={périodes} />
+        <RecapView lessons={lessonsNoVacances} périodes={périodes} />
       )}
 
       {/* Modal création d'événement école (T3) */}
@@ -894,6 +1101,59 @@ export default function PlanningPage() {
       {newLessonDraft  && <AddLessonModal teacherId={user.id} schoolZone={zone} lesson={newLessonDraft}  onClose={() => setNewLessonDraft(null)}  onCreated={() => { reload(); setNewLessonDraft(null) }} />}
       {duplicateDraft  && <AddLessonModal teacherId={user.id} schoolZone={zone} lesson={duplicateDraft}  onClose={() => setDuplicateDraft(null)}  onCreated={() => { reload(); setDuplicateDraft(null) }} />}
       {editLesson      && <AddLessonModal teacherId={user.id} schoolZone={zone} lesson={editLesson}       onClose={() => setEditLesson(null)}      onCreated={() => { reload(); setEditLesson(null) }} />}
+
+      {/* I+J — Menu de détail / actions touch (ouvert par tap sur un cours dans la grille) */}
+      {tapLesson && (() => {
+        const l = tapLesson
+        const effectiveStatus = lessonStatusOverrides[l.id] ?? l.status
+        const si = getStatusInfo(effectiveStatus)
+        const isPlanifie = effectiveStatus === 'planifie'
+        return (
+          <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
+            <button type="button" className="absolute inset-0 bg-void/70 backdrop-blur-sm" onClick={() => setTapLesson(null)} />
+            <div className="relative w-full sm:max-w-sm glass-panel rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl border border-border space-y-4">
+              {/* En-tête */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-semibold text-base leading-tight">{l.studentName ?? 'Cours'}</p>
+                  <p className="text-sm text-muted-foreground mt-0.5">{l.dateLabel} · {l.timeLabel} · {l.durationMinutes} min</p>
+                  {l.schoolName && <p className="text-xs text-muted-foreground mt-0.5">{l.schoolName}</p>}
+                  {l.topic && <p className="text-xs text-muted-foreground truncate">{l.topic}</p>}
+                </div>
+                <span className="shrink-0 text-xs font-semibold px-2 py-1 rounded-lg" style={{ background: si.color + '25', color: si.color }}>
+                  {si.label}
+                </span>
+              </div>
+              {/* Actions — zones tactiles ≥ 44 px */}
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button"
+                  style={{ touchAction: 'manipulation', minHeight: 44 }}
+                  onClick={() => { setTapLesson(null); setStatusLesson(l) }}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors py-2.5"
+                >
+                  <ClipboardCheck className="w-4 h-4" /> Émargement
+                </button>
+                <button type="button"
+                  style={{ touchAction: 'manipulation', minHeight: 44 }}
+                  onClick={() => { setTapLesson(null); setEditLesson(l) }}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors py-2.5"
+                >
+                  <Pencil className="w-4 h-4" /> Modifier
+                </button>
+                {isPlanifie && (
+                  <button type="button"
+                    style={{ touchAction: 'manipulation', minHeight: 44 }}
+                    onClick={() => { setTapLesson(null); setDeleteLessonItem(l) }}
+                    className="col-span-2 flex items-center justify-center gap-2 rounded-xl border border-red-500/30 text-sm font-medium text-red-400 hover:bg-red-500/10 transition-colors py-2.5"
+                  >
+                    <Trash2 className="w-4 h-4" /> Supprimer ce cours
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
       {statusLesson && (
         <LessonStatusModal
           lesson={statusLesson}

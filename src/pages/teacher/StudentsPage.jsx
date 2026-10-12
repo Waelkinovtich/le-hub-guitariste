@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Search, Plus, X, Archive, ArchiveX } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { usePeriod, filterStudentsByPeriod } from '../../context/PeriodContext'
@@ -20,21 +20,65 @@ const AGE_GROUPS = [
   { value: 'adulte', label: 'Adulte (18+)', min: 18, max: 99 },
 ]
 
+const SS_KEY = 'students_page_state'
+
+function loadSavedState(locationState) {
+  try {
+    const raw = sessionStorage.getItem(SS_KEY)
+    if (raw) {
+      const saved = JSON.parse(raw)
+      return {
+        search:      locationState?.filterSchool ? '' : (saved.search ?? ''),
+        filterLevel: locationState?.filterSchool ? '' : (saved.filterLevel ?? ''),
+        filterType:  locationState?.filterSchool ? '' : (saved.filterType ?? ''),
+        filterSchool: locationState?.filterSchool ?? saved.filterSchool ?? '',
+        filterAge:   locationState?.filterSchool ? '' : (saved.filterAge ?? ''),
+        scrollY:     saved.scrollY ?? 0,
+      }
+    }
+  } catch { /* sessionStorage indisponible */ }
+  return {
+    search: '', filterLevel: '', filterType: '',
+    filterSchool: locationState?.filterSchool ?? '',
+    filterAge: '', scrollY: 0,
+  }
+}
+
 export default function StudentsPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const savedState = useMemo(() => loadSavedState(location.state), []) // eslint-disable-line react-hooks/exhaustive-deps
   const [showAddForm, setShowAddForm] = useState(false)
-  const [search, setSearch] = useState('')
-  const [filterLevel, setFilterLevel] = useState('')
-  const [filterType, setFilterType] = useState('')
-  const [filterSchool, setFilterSchool] = useState(location.state?.filterSchool ?? '')
-  const [filterAge, setFilterAge] = useState('')
+  const [search, setSearch] = useState(savedState.search)
+  const [filterLevel, setFilterLevel] = useState(savedState.filterLevel)
+  const [filterType, setFilterType] = useState(savedState.filterType)
+  const [filterSchool, setFilterSchool] = useState(savedState.filterSchool)
+  const [filterAge, setFilterAge] = useState(savedState.filterAge)
+  const listRef = useRef(null)
   // showArchived : affiche les élèves archivés au lieu des actifs
   const [showArchived, setShowArchived] = useState(false)
   // pendingArchive : élève en attente de confirmation d'archivage
   const [pendingArchive, setPendingArchive] = useState(null) // { id, name }
   const [archiving, setArchiving] = useState(false)
+
+  // Persiste les filtres dans sessionStorage pour restauration au retour
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SS_KEY, JSON.stringify({
+        search, filterLevel, filterType, filterSchool, filterAge,
+        scrollY: window.scrollY,
+      }))
+    } catch { /* sessionStorage indisponible */ }
+  }, [search, filterLevel, filterType, filterSchool, filterAge])
+
+  // Restaure la position de scroll au retour de la fiche élève
+  useEffect(() => {
+    if (savedState.scrollY > 0) {
+      const t = setTimeout(() => window.scrollTo({ top: savedState.scrollY, behavior: 'instant' }), 50)
+      return () => clearTimeout(t)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // showArchived DOIT figurer dans les dépendances : useCallback mémorise la closure,
   // sans elle la valeur capturée reste false même après le toggle.

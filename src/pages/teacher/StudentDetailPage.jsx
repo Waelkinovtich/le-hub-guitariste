@@ -718,7 +718,7 @@ export default function StudentDetailPage() {
 
   return (
     <div className="p-6 sm:p-8 max-w-3xl space-y-4">
-      <button onClick={() => navigate('/professeur/eleves')} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
+      <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
         <ArrowLeft className="w-4 h-4" />
         Retour aux élèves
       </button>

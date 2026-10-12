@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AlertCircle, CheckCircle2, X, RefreshCw } from 'lucide-react'
+import { AlertCircle, CheckCircle2, X, RefreshCw, Copy, Check } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
 // ─── Utilitaires ─────────────────────────────────────────────────────────────
@@ -42,13 +42,48 @@ function formatDatetime(isoStr) {
  * Toggle : UPDATE absence_declarations.excused + excused_manual via la policy
  * RLS `absence_declarations_prof_own` (authenticated, pas besoin de RPC).
  */
+function computeDelayH(declaredAt, lessonDate, lessonTime) {
+  if (!declaredAt || !lessonDate) return null
+  const lessonDt   = new Date(lessonDate + 'T' + (lessonTime ?? '00:00:00'))
+  const declaredDt = new Date(declaredAt)
+  const h = Math.round((lessonDt - declaredDt) / 3_600_000)
+  return isNaN(h) ? null : h
+}
+
+function formatDelayH(h) {
+  if (h === null) return null
+  if (h < 0) return 'après le cours'
+  if (h < 1) return '< 1 h avant'
+  if (h < 24) return `${h} h avant`
+  return `${Math.round(h / 24)} j avant`
+}
+
 export default function AbsenceDeclarationRow({ decl, onExcusedChange, showStudentName = true }) {
   const [toggling,     setToggling]     = useState(false)
   const [toggleError,  setToggleError]  = useState(null)
+  const [copied,       setCopied]       = useState(false)
 
   const annulee   = !!decl.cancelled_at
   // excused_manual IS NOT NULL → statut modifié manuellement par le professeur
   const estManuel = decl.excused_manual !== null && decl.excused_manual !== undefined
+
+  const delayH  = computeDelayH(decl.declared_at, decl.lesson_date, decl.lesson_time)
+  const delayTxt = formatDelayH(delayH)
+
+  function handleCopy() {
+    const lines = [
+      showStudentName && decl.student_name ? `Élève : ${decl.student_name}` : null,
+      `Cours : ${formatDate(decl.lesson_date)}${decl.lesson_time ? ' ' + formatTime(decl.lesson_time) : ''}${decl.lesson_school ? ' · ' + decl.lesson_school : ''}`,
+      `Déclarée le : ${formatDatetime(decl.declared_at)}`,
+      delayTxt ? `Délai : ${delayTxt}` : null,
+      `Statut : ${annulee ? 'Annulée' : decl.excused ? 'Excusée' : 'Non excusée'}`,
+      annulee && decl.cancelled_at ? `Annulée le : ${formatDatetime(decl.cancelled_at)}` : null,
+    ].filter(Boolean).join('\n')
+    navigator.clipboard.writeText(lines).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }).catch(() => {})
+  }
 
   async function handleToggle() {
     setToggling(true)
@@ -85,9 +120,19 @@ export default function AbsenceDeclarationRow({ decl, onExcusedChange, showStude
         )}
       </td>
 
-      {/* Date/heure exacte de la déclaration par l'élève */}
+      {/* Date/heure exacte de la déclaration + délai avant le cours */}
       <td className="py-2.5 pr-4 text-xs text-muted-foreground whitespace-nowrap">
         {formatDatetime(decl.declared_at)}
+        {delayTxt && (
+          <span className={`block text-[10px] mt-0.5 ${delayH !== null && delayH < 48 ? 'text-orange-400' : 'text-emerald-400'}`}>
+            {delayTxt}
+          </span>
+        )}
+        {annulee && decl.cancelled_at && (
+          <span className="block text-[10px] text-muted-foreground mt-0.5">
+            Annulée le {formatDatetime(decl.cancelled_at)}
+          </span>
+        )}
       </td>
 
       {/* Badge statut + indicateur auto/manuel */}
@@ -113,30 +158,41 @@ export default function AbsenceDeclarationRow({ decl, onExcusedChange, showStude
         )}
       </td>
 
-      {/* Bouton toggle — désactivé si déclaration annulée */}
+      {/* Bouton toggle + Copier le détail */}
       <td className="py-2.5 pr-4">
-        {!annulee && (
-          <div>
-            <button
-              type="button"
-              disabled={toggling}
-              onClick={handleToggle}
-              title={decl.excused ? 'Marquer comme non excusée' : 'Marquer comme excusée'}
-              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-border-subtle rounded-lg px-2 py-1 transition-colors disabled:opacity-40"
-            >
-              {toggling ? (
-                <RefreshCw className="w-3 h-3 animate-spin" />
-              ) : decl.excused ? (
-                <><X className="w-3 h-3" /> Non excusée</>
-              ) : (
-                <><CheckCircle2 className="w-3 h-3 text-emerald-400" /> Excusée</>
+        <div className="flex flex-col gap-1">
+          {!annulee && (
+            <div>
+              <button
+                type="button"
+                disabled={toggling}
+                onClick={handleToggle}
+                title={decl.excused ? 'Marquer comme non excusée' : 'Marquer comme excusée'}
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-border-subtle rounded-lg px-2 py-1 transition-colors disabled:opacity-40"
+              >
+                {toggling ? (
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                ) : decl.excused ? (
+                  <><X className="w-3 h-3" /> Non excusée</>
+                ) : (
+                  <><CheckCircle2 className="w-3 h-3 text-emerald-400" /> Excusée</>
+                )}
+              </button>
+              {toggleError && (
+                <p className="text-[10px] text-red-400 mt-0.5">{toggleError}</p>
               )}
-            </button>
-            {toggleError && (
-              <p className="text-[10px] text-red-400 mt-0.5">{toggleError}</p>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handleCopy}
+            title="Copier le détail"
+            className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+            {copied ? 'Copié !' : 'Copier le détail'}
+          </button>
+        </div>
       </td>
     </tr>
   )

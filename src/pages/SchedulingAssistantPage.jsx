@@ -1656,6 +1656,7 @@ export default function SchedulingAssistantPage() {
     const weekIsos = new Set(weekDays.map((d) => d.iso))
     const coursReels = existingLessons
       .filter((l) => weekIsos.has(l.lessonDate))
+      .filter((l) => l.cancelReason !== 'vacances')
       // Tous les cours réels (individuels et groupes) sont déplaçables depuis la grille.
       // handleMoveProposal route correctement selon le type (groupe, individuel réel, proposition).
     // Exclure les propositions masquées par l'utilisateur via le bouton Supprimer
@@ -3337,6 +3338,7 @@ export default function SchedulingAssistantPage() {
                 cascadeEnabled={cascadeEnabled}
                 onCascadeRequest={handleCascadeRequest}
                 onEditReservedSlot={handleEditReservedSlot}
+                schoolZone={user.schoolZone ?? 'B'}
               />
 
               {/* ── Panneau "Acter ce planning" ──────────────────────────────── */}

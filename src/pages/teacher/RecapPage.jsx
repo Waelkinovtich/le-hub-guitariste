@@ -16,7 +16,8 @@ import autoTable from 'jspdf-autotable'
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
 const STATUS_REALISE = ['present', 'excuse', 'rattrape']
-const STATUS_PLANIFIE = ['planifie', ...STATUS_REALISE, 'absent', 'annule_prof']
+// annule_prof exclu : un cours annulé n'est pas "planifié" (les vacances cancel_reason='vacances' non plus)
+const STATUS_PLANIFIE = ['planifie', ...STATUS_REALISE, 'absent']
 
 const STATUS_LABELS = {
   planifie:    'Planifié',

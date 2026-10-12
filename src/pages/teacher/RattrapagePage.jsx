@@ -318,7 +318,7 @@ export default function RattrapagePage() {
     // peuvent signaler un cours CESU, notamment pour les élèves à double casquette.
     // cancelReason 'rattrapage_annule' = cours de rattrapage supprimé — ne compte pas comme "à rattraper"
     // cancelReason 'rattrapage_abandonne' = cours abandonné explicitement — sorti du compteur
-    const annulés   = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu' && l.contextType !== 'cesu' && l.cancelReason !== 'rattrapage_annule' && l.cancelReason !== 'rattrapage_abandonne')
+    const annulés   = all.filter((l) => l.status === 'annule_prof' && l.lessonType !== 'cesu' && l.contextType !== 'cesu' && l.cancelReason !== 'rattrapage_annule' && l.cancelReason !== 'rattrapage_abandonne' && l.cancelReason !== 'vacances')
     const rattrapés = all.filter((l) => l.status === 'rattrape'    && l.lessonType !== 'cesu' && l.contextType !== 'cesu')
 
     let totalAnnulé  = 0
@@ -514,7 +514,7 @@ export default function RattrapagePage() {
             <section>
               <h2 className="text-lg font-semibold mb-3">Détail des cours annulés</h2>
               <div className="space-y-2">
-                {(lessons ?? []).filter((l) => l.cancelReason !== 'rattrapage_annule' && l.cancelReason !== 'rattrapage_abandonne').map((l) => {
+                {(lessons ?? []).filter((l) => l.cancelReason !== 'rattrapage_annule' && l.cancelReason !== 'rattrapage_abandonne' && l.cancelReason !== 'vacances').map((l) => {
                   const raison     = getRaisonLabel(l.cancelReason)
                   const isPanelOpen = openPanelId === l.id
                   // Un cours avec rattrapage_de_lesson_id est déjà rattrapé

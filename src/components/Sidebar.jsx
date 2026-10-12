@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
+import { countRattrapageLessons } from '../services/lessons'
 import { usePeriod } from '../context/PeriodContext'
 
 // ─── Définition des items de navigation réordonnables ────────────────────────
@@ -185,7 +186,7 @@ function SondagesDropdown({ badges = {} }) {
           <FileText className="w-4 h-4 shrink-0" />Messages &amp; Sondages
         </div>
         <div className="flex items-center gap-1.5">
-          {!open && (badges.sondages > 0 || badges.ensemble > 0) && <NavBadge count={(badges.sondages || 0) + (badges.ensemble || 0)} />}
+          {!open && (badges.sondages > 0 || badges.ensemble > 0 || badges.absences > 0) && <NavBadge count={(badges.sondages || 0) + (badges.ensemble || 0) + (badges.absences || 0)} />}
           {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
         </div>
       </button>
@@ -213,7 +214,10 @@ function SondagesDropdown({ badges = {} }) {
           <p className="px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
             Absences
           </p>
-          <SubSectionLinks links={absencesLinks} />
+          <SubSectionLinks
+            links={absencesLinks}
+            badgeFn={(link) => link.to === '/admin/absences' ? <NavBadge count={badges.absences} /> : null}
+          />
 
           {/* ── Divers ───────────────────────────────────────────────────── */}
           <p className="px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
@@ -314,61 +318,142 @@ function PlanningDropdown() {
 
 // ─── Compteurs de badges pour les éléments de navigation ─────────────────────
 
+const LS_EMA = (id) => `badge_ema_seen_${id}`
+const LS_ABS = (id) => `badge_abs_seen_${id}`
+
+function readLastSeen(key) {
+  try { return localStorage.getItem(key) ?? null } catch { return null }
+}
+function writeLastSeen(key, sectionKey, userId) {
+  try { localStorage.setItem(key, new Date().toISOString()) } catch { /* localStorage indisponible */ }
+  // Sync cross-device : upsert dans user_last_seen (fire-and-forget, tolérant aux erreurs)
+  if (sectionKey && userId) {
+    supabase.from('user_last_seen')
+      .upsert({ user_id: userId, section_key: sectionKey, seen_at: new Date().toISOString() },
+               { onConflict: 'user_id,section_key' })
+      .then(() => {}) // intentionnellement ignoré
+  }
+}
+
+// Lit les valeurs last_seen depuis Supabase ; retourne null pour chaque section si échec.
+async function fetchLastSeenFromDb(userId, sections) {
+  try {
+    const { data } = await supabase
+      .from('user_last_seen')
+      .select('section_key,seen_at')
+      .eq('user_id', userId)
+      .in('section_key', sections)
+    const map = {}
+    for (const row of (data ?? [])) map[row.section_key] = row.seen_at
+    return map
+  } catch {
+    return {}
+  }
+}
+
+// Retourne la plus récente entre la valeur Supabase et la valeur localStorage.
+function mergeLastSeen(lsValue, dbValue) {
+  if (!lsValue && !dbValue) return null
+  if (!lsValue) return dbValue
+  if (!dbValue) return lsValue
+  return lsValue > dbValue ? lsValue : dbValue
+}
+
 // Requêtes COUNT uniquement (head:true → aucune ligne transférée).
 // RLS garantit que chaque professeur ne voit que ses propres données.
 function useBadges(userId) {
-  const [badges, setBadges] = useState({ sondages: 0, rattrapage: 0, ensemble: 0 })
+  const [badges, setBadges] = useState({ sondages: 0, rattrapage: 0, ensemble: 0, emargement: 0, absences: 0, hasToday: false })
+  const location = useLocation()
 
+  const fetch = useCallback(async () => {
+    if (!userId) return
+    try {
+      // Étape 1 : IDs des réponses en attente (statut 'attente' ou NULL)
+      const { data: pendingResps } = await supabase
+        .from('survey_responses')
+        .select('id')
+        .or('status.eq.attente,status.is.null')
+
+      const responseIds = (pendingResps ?? []).map((r) => r.id).filter(Boolean)
+
+      // Étape 2 : inscriptions liées par response_id
+      const studentsQ = responseIds.length > 0
+        ? supabase.from('survey_registrations').select('id', { count: 'exact', head: true }).in('response_id', responseIds)
+        : Promise.resolve({ count: 0 })
+
+      // Rattrapage (même filtres CESU / cancel_reason que RattrapagePage, via fonction partagée)
+      const rattrapageQ = countRattrapageLessons(userId)
+
+      // Ensemble
+      const ensembleQ = supabase
+        .from('ensemble_responses')
+        .select('id', { count: 'exact', head: true })
+        .eq('teacher_id', userId)
+        .eq('status', 'attente')
+
+      // Nouvelles déclarations depuis la dernière visite Émargement / Absences
+      // Supabase (cross-device) avec fallback localStorage
+      const dbSeenMap = await fetchLastSeenFromDb(userId, ['emargement', 'absences'])
+      const emaLastSeen = mergeLastSeen(readLastSeen(LS_EMA(userId)), dbSeenMap['emargement'] ?? null)
+      const absLastSeen = mergeLastSeen(readLastSeen(LS_ABS(userId)), dbSeenMap['absences'] ?? null)
+
+      const emargementQ = emaLastSeen
+        ? supabase.from('absence_declarations').select('id', { count: 'exact', head: true })
+            .eq('teacher_id', userId).is('cancelled_at', null).gt('declared_at', emaLastSeen)
+        : supabase.from('absence_declarations').select('id', { count: 'exact', head: true })
+            .eq('teacher_id', userId).is('cancelled_at', null)
+
+      const absencesQ = absLastSeen
+        ? supabase.from('absence_declarations').select('id', { count: 'exact', head: true })
+            .eq('teacher_id', userId).is('cancelled_at', null).gt('declared_at', absLastSeen)
+        : supabase.from('absence_declarations').select('id', { count: 'exact', head: true })
+            .eq('teacher_id', userId).is('cancelled_at', null)
+
+      // Déclarations actives aujourd'hui (pour highlight "Aujourd'hui")
+      const today = new Date().toISOString().slice(0, 10)
+      const todayQ = supabase.from('absence_declarations')
+        .select('id', { count: 'exact', head: true })
+        .eq('teacher_id', userId).is('cancelled_at', null).eq('lesson_date', today)
+
+      const [studentsResp, rattrapageCount, ensembleResp, emaResp, absResp, todayResp] =
+        await Promise.all([studentsQ, rattrapageQ, ensembleQ, emargementQ, absencesQ, todayQ])
+
+      setBadges({
+        sondages:    studentsResp.count  ?? 0,
+        rattrapage:  rattrapageCount,
+        ensemble:    ensembleResp.count  ?? 0,
+        emargement:  emaResp.count       ?? 0,
+        absences:    absResp.count       ?? 0,
+        hasToday:    (todayResp.count    ?? 0) > 0,
+      })
+    } catch { /* erreur réseau ignorée */ }
+  }, [userId])
+
+  // Fetch initial + polling 45 s quand l'onglet est visible
+  useEffect(() => {
+    ;(async () => { await fetch() })()
+    const interval = setInterval(() => { if (!document.hidden) ;(async () => { await fetch() })() }, 45_000)
+    const onVisible = () => { if (!document.hidden) ;(async () => { await fetch() })() }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [fetch])
+
+  // Marquer "vu" quand le professeur visite Émargement ou Absences
   useEffect(() => {
     if (!userId) return
-    let cancelled = false
-
-    ;(async () => {
-      try {
-        // Étape 1 : IDs des réponses en attente (statut 'attente' ou NULL)
-        const { data: pendingResps } = await supabase
-          .from('survey_responses')
-          .select('id')
-          .or('status.eq.attente,status.is.null')
-        if (cancelled) return
-
-        const responseIds = (pendingResps ?? []).map((r) => r.id).filter(Boolean)
-
-        // Étape 2 : inscriptions liées par response_id (seule clé fiable).
-        // L'ancienne approche utilisait token_id → les tokens génériques partagés
-        // par toutes les familles retournaient TOUTES les inscriptions en un seul
-        // groupe, produisant un badge erroné (44 au lieu de ~15).
-        const studentsQ = responseIds.length > 0
-          ? supabase.from('survey_registrations').select('id', { count: 'exact', head: true }).in('response_id', responseIds)
-          : Promise.resolve({ count: 0 })
-
-        // Rattrapage : cours annulés par le prof non encore replanifiés
-        const rattrapageQ = supabase
-          .from('lessons')
-          .select('id', { count: 'exact', head: true })
-          .eq('teacher_id', userId)
-          .eq('status', 'annule_prof')
-
-        // Réponses ensemble en attente (non encore intégrées dans un groupe)
-        const ensembleQ = supabase
-          .from('ensemble_responses')
-          .select('id', { count: 'exact', head: true })
-          .eq('teacher_id', userId)
-          .eq('status', 'attente')
-
-        const [studentsResp, rattResp, ensembleResp] = await Promise.all([studentsQ, rattrapageQ, ensembleQ])
-        if (cancelled) return
-
-        setBadges({
-          sondages:   studentsResp.count  ?? 0,
-          rattrapage: rattResp.count      ?? 0,
-          ensemble:   ensembleResp.count  ?? 0,
-        })
-      } catch { /* erreur réseau ignorée */ }
-    })()
-
-    return () => { cancelled = true }
-  }, [userId])
+    if (location.pathname === '/professeur/emargement') {
+      writeLastSeen(LS_EMA(userId), 'emargement', userId)
+      setBadges((prev) => ({ ...prev, emargement: 0 })) // eslint-disable-line react-hooks/set-state-in-effect
+    } else if (location.pathname.startsWith('/admin/absences')) {
+      writeLastSeen(LS_ABS(userId), 'absences', userId)
+      setBadges((prev) => ({ ...prev, absences: 0 })) // eslint-disable-line react-hooks/set-state-in-effect
+    }
+  }, [location.pathname, userId])
 
   return badges
 }
@@ -564,7 +649,7 @@ function TeacherNav({ userId }) {
                 <GripVertical className="w-3 h-3 text-muted" />
               </div>
 
-              {item.type === 'link' && item.id === 'rattrapage' ? (
+              {item.type === 'link' && (item.id === 'rattrapage' || item.id === 'emargement') ? (
                 <NavLink
                   to={item.to} end={item.end}
                   className={({ isActive }) =>
@@ -575,8 +660,12 @@ function TeacherNav({ userId }) {
                   }
                 >
                   <item.icon className="w-4 h-4 shrink-0" />
-                  {item.label}
-                  <NavBadge count={badges.rattrapage} />
+                  <span className="flex-1">{item.label}</span>
+                  {item.id === 'emargement' && badges.hasToday && badges.emargement === 0 && (
+                    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-guitar-600/20 text-guitar-400">Aujourd&apos;hui</span>
+                  )}
+                  {item.id === 'rattrapage' && <NavBadge count={badges.rattrapage} />}
+                  {item.id === 'emargement' && <NavBadge count={badges.emargement} />}
                 </NavLink>
               ) : item.type === 'link' ? (
                 <NavItem to={item.to} icon={item.icon} label={item.label} end={item.end} />

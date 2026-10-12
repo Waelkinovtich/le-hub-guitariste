@@ -7,6 +7,7 @@ import DeleteLessonModal from './DeleteLessonModal'
 import { supabase } from '../lib/supabase'
 import AttendanceQuickActions from './AttendanceQuickActions'
 import { useUndoRedo } from '../contexts/UndoRedoContext'
+import { isVacances } from '../utils/vacances'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -172,12 +173,61 @@ function hasReservedOverlap(reservedByDay, targetDay, targetStart, slotCount) {
  *     "Série à partir de maintenant" → lessons par recurrence_group + gte(lesson_date) + student_contexts.
  *   - Cours non récurrent / propositions / cours de groupe : sauvegarde directe sans confirmation.
  */
+// ─── Dialogue portée du déplacement (récurrence) ─────────────────────────────
+// Affiché lorsqu'un cours récurrent confirmé est déplacé par glisser-déposer.
+// Trois choix : ce cours seulement / ce cours et toutes les suivantes / annuler.
+function MoveScopeModal({ lesson, origDate, origTime, newDate, newTime, onChoose }) {
+  const dayChanged  = origDate !== newDate
+  const timeChanged = origTime !== newTime
+  const to   = newDate  + (timeChanged ? ` ${newTime}`  : '')
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onPointerDown={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-sm rounded-2xl bg-surface border border-border p-5 space-y-4 shadow-2xl">
+        <div>
+          <p className="font-semibold text-base text-foreground">Ce cours fait partie d&apos;une série</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {lesson.studentName ? `${lesson.studentName} · ` : ''}
+            {dayChanged ? `Déplacement vers le ${to}` : `Nouvel horaire : ${newTime}`}
+          </p>
+        </div>
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => onChoose('single')}
+            className="w-full px-4 py-3 rounded-xl bg-guitar-600 text-white text-sm font-medium text-left hover:bg-guitar-600/90 transition-colors"
+          >
+            Ce cours seulement
+          </button>
+          <button
+            type="button"
+            onClick={() => onChoose('future')}
+            className="w-full px-4 py-3 rounded-xl border border-border-subtle bg-surface-raised text-sm font-medium text-left hover:bg-surface-overlay transition-colors"
+          >
+            Ce cours et tous les suivants
+            <span className="block text-xs text-muted-foreground font-normal mt-0.5">
+              Seuls les cours encore à l&apos;horaire d&apos;origine seront modifiés
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onChoose('cancel')}
+            className="w-full px-4 py-2.5 rounded-xl text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Annuler le déplacement
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DurationEditPanel({ lesson, onClose, onSaved }) {
-  const [selected, setSelected] = useState(lesson.durationMinutes ?? 30)
-  const [saving,   setSaving]   = useState(false)
-  const [error,    setError]    = useState('')
+  const [selected,    setSelected]    = useState(lesson.durationMinutes ?? 30)
+  const [saving,      setSaving]      = useState(false)
+  const [error,       setError]       = useState('')
   // 'idle' = sélection durée | 'confirm' = choix portée série (affiché après clic Enregistrer)
-  const [phase,    setPhase]    = useState('idle')
+  const [phase,       setPhase]       = useState('idle')
+  const [seriesCount, setSeriesCount] = useState(null) // nb cours futurs dans la série
 
   // Normalise les deux conventions de nommage (SchedulingAssistant vs PlanningPage)
   const studentId       = lesson._studentId || lesson.studentId || null
@@ -241,9 +291,23 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
   }
 
   // Clic "Enregistrer" : si cours récurrent → affiche le choix de portée ; sinon sauvegarde directement
-  const handleEnregistrer = () => {
+  const handleEnregistrer = async () => {
     if (selected === lesson.durationMinutes) { onClose(); return }
-    if (isRecurring) { setPhase('confirm'); return }
+    if (isRecurring) {
+      setPhase('confirm')
+      // Compte les cours futurs dans la série pour afficher le résumé de portée
+      const lessonDate = lesson.lessonDate ?? lesson.lesson_date
+      if (recurrenceGroup && lessonDate) {
+        try {
+          const { count } = await supabase.from('lessons')
+            .select('id', { count: 'exact', head: true })
+            .eq('recurrence_group', recurrenceGroup)
+            .gte('lesson_date', lessonDate)
+          setSeriesCount(count ?? null)
+        } catch { /* non critique */ }
+      }
+      return
+    }
     handleSave('single')
   }
 
@@ -307,9 +371,15 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
             <p className="text-sm text-muted-foreground mb-1">
               {lesson.studentName} — <span className="font-medium text-foreground">{selected} min</span>
             </p>
-            <p className="text-sm text-muted-foreground mb-5">
+            <p className="text-sm text-muted-foreground mb-1">
               Ce cours fait partie d'une série récurrente. Quelle portée ?
             </p>
+            {seriesCount !== null && (
+              <p className="text-xs text-muted-foreground mb-4">
+                <span className="font-medium text-foreground">{seriesCount}</span> cours à partir de ce jour dans la série
+              </p>
+            )}
+            {seriesCount === null && <div className="mb-4" />}
             <div className="space-y-2 mb-4">
               <button type="button" onClick={() => handleSave('single')} disabled={saving}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-border-subtle hover:bg-surface-overlay transition-colors text-left disabled:opacity-40">
@@ -324,7 +394,11 @@ function DurationEditPanel({ lesson, onClose, onSaved }) {
                 <Clock className="w-4 h-4 text-orange-400 shrink-0" />
                 <div>
                   <p className="text-sm font-medium">Ce cours et tous les suivants</p>
-                  <p className="text-xs text-muted-foreground">À partir du {dateLabel} — les cours passés ne sont pas modifiés</p>
+                  <p className="text-xs text-muted-foreground">
+                    {seriesCount !== null
+                      ? `${seriesCount} cours modifiés à partir du ${dateLabel}`
+                      : `À partir du ${dateLabel} — les cours passés ne sont pas modifiés`}
+                  </p>
                 </div>
               </button>
             </div>
@@ -703,6 +777,10 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
   const [editingReservedSlot, setEditingReservedSlot] = useState(null)
   // T2 — Panneau édition permanente (s'ouvre depuis ReservedSlotOccurrencePanel)
   const [editingReservedSlotPermanent, setEditingReservedSlotPermanent] = useState(null)
+  // Déplacement récurrent en attente de choix de portée
+  const [pendingMove, setPendingMove] = useState(null)
+  // Message de succès (vert, auto-effacé)
+  const [moveInfo, setMoveInfo] = useState('')
 
   const lessonsByDay    = useMemo(() => groupByDay(localLessons), [localLessons])
   const reservedByDay   = useMemo(() => indexReservedByDay(reservedSlots, weekDays, reservedSlotExceptions), [reservedSlots, weekDays, reservedSlotExceptions])
@@ -758,6 +836,122 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
     setMoveError(msg)
     setTimeout(() => setMoveError(''), 4000)
   }, [])
+
+  const showMoveInfo = useCallback((msg) => {
+    setMoveInfo(msg)
+    setTimeout(() => setMoveInfo(''), 4000)
+  }, [])
+
+  // ── Résolution de portée après drag sur cours récurrent ───────────────────
+  const applyMoveScope = useCallback(async (scope) => {
+    if (!pendingMove) return
+    const { lesson, origDate, origTime, newDate, newTime } = pendingMove
+    const grp = lesson.recurrenceGroup || lesson.recurrence_group
+
+    if (scope === 'cancel') {
+      setLocalLessons((prev) => prev.map((l) =>
+        l.id === lesson.id ? { ...l, lessonDate: origDate, lessonTime: origTime, timeLabel: origTime } : l
+      ))
+      setPendingMove(null)
+      return
+    }
+
+    const pad = (n) => String(n).padStart(2, '0')
+    const addDays = (iso, d) => {
+      const dt = new Date(iso + 'T00:00:00')
+      dt.setDate(dt.getDate() + d)
+      return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate())
+    }
+    const dayOffset = Math.round((new Date(newDate + 'T00:00:00') - new Date(origDate + 'T00:00:00')) / 86400000)
+
+    try {
+      if (scope === 'single') {
+        await updateLesson(lesson.id, {
+          studentId: lesson.studentId, lessonDate: newDate, lessonTime: newTime,
+          durationMinutes: lesson.durationMinutes, topic: lesson.topic ?? '', notes: lesson.notes ?? null,
+        })
+        pushAction?.({
+          label: `Déplacé — ${lesson.studentName ?? 'cours'}`,
+          undo: async () => {
+            setLocalLessons((prev) => prev.map((l) =>
+              l.id === lesson.id ? { ...l, lessonDate: origDate, lessonTime: origTime, timeLabel: origTime } : l
+            ))
+            await updateLesson(lesson.id, {
+              studentId: lesson.studentId, lessonDate: origDate, lessonTime: origTime,
+              durationMinutes: lesson.durationMinutes, topic: lesson.topic ?? '', notes: lesson.notes ?? null,
+            })
+          },
+          redo: async () => {
+            setLocalLessons((prev) => prev.map((l) =>
+              l.id === lesson.id ? { ...l, lessonDate: newDate, lessonTime: newTime, timeLabel: newTime } : l
+            ))
+            await updateLesson(lesson.id, {
+              studentId: lesson.studentId, lessonDate: newDate, lessonTime: newTime,
+              durationMinutes: lesson.durationMinutes, topic: lesson.topic ?? '', notes: lesson.notes ?? null,
+            })
+          },
+        })
+        showMoveInfo('Ce cours a été déplacé.')
+      } else {
+        // 'future' : récupère toutes les futures planifié de la série avec le même horaire original
+        const { data: seriesRows, error: fetchErr } = await supabase
+          .from('lessons')
+          .select('id, lesson_date, lesson_time')
+          .eq('recurrence_group', grp)
+          .gte('lesson_date', origDate)
+          .eq('status', 'planifie')
+          .eq('lesson_time', origTime)
+        if (fetchErr) throw new Error(fetchErr.message)
+
+        // Tous les planifié de la série (pour calculer les "conservés manuellement")
+        const { data: allFuture } = await supabase
+          .from('lessons').select('id', { count: 'exact', head: false })
+          .eq('recurrence_group', grp).gte('lesson_date', origDate).eq('status', 'planifie')
+        const conserved = Math.max(0, (allFuture?.length ?? 0) - (seriesRows?.length ?? 0))
+
+        const rows = seriesRows ?? []
+        const snapshots = rows.map((r) => ({ id: r.id, origDate: r.lesson_date, origTime: r.lesson_time }))
+        const updates   = rows.map((r) => ({
+          id: r.id,
+          newDate: dayOffset !== 0 ? addDays(r.lesson_date, dayOffset) : r.lesson_date,
+          newTime,
+        }))
+
+        await Promise.all(updates.map((u) =>
+          supabase.from('lessons').update({ lesson_date: u.newDate, lesson_time: u.newTime }).eq('id', u.id)
+        ))
+
+        const updMap = new Map(updates.map((u) => [u.id, u]))
+        setLocalLessons((prev) => prev.map((l) => {
+          const upd = updMap.get(l.id)
+          return upd ? { ...l, lessonDate: upd.newDate, lessonTime: upd.newTime, timeLabel: upd.newTime } : l
+        }))
+
+        pushAction?.({
+          label: `Déplacé — ${lesson.studentName ?? 'cours'} (${rows.length} séances)`,
+          undo: async () => {
+            await Promise.all(snapshots.map((s) =>
+              supabase.from('lessons').update({ lesson_date: s.origDate, lesson_time: s.origTime }).eq('id', s.id)
+            ))
+            setLocalLessons((prev) => prev.map((l) => {
+              const snap = snapshots.find((s) => s.id === l.id)
+              return snap ? { ...l, lessonDate: snap.origDate, lessonTime: snap.origTime, timeLabel: snap.origTime } : l
+            }))
+          },
+        })
+
+        const msg = `${rows.length} cours déplacé${rows.length > 1 ? 's' : ''}`
+          + (conserved > 0 ? ` · ${conserved} cours conservé${conserved > 1 ? 's' : ''} (horaire différent)` : '')
+        showMoveInfo(msg)
+      }
+    } catch (err) {
+      setLocalLessons((prev) => prev.map((l) =>
+        l.id === lesson.id ? { ...l, lessonDate: origDate, lessonTime: origTime, timeLabel: origTime } : l
+      ))
+      showMoveError(err.message ?? 'Impossible de déplacer le cours — annulation.')
+    }
+    setPendingMove(null)
+  }, [pendingMove, pushAction, showMoveError, showMoveInfo])
 
   // ── Mode A : nouveau créneau ──────────────────────────────────────────────
 
@@ -898,6 +1092,13 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
         ? { ...l, lessonDate: m.currentDay, lessonTime: newTime, timeLabel: newTime }
         : l
     ))
+
+    // Cours récurrent confirmé : demander la portée avant de persister
+    const grp = lesson.recurrenceGroup || lesson.recurrence_group
+    if (grp && lesson.planningStatus === 'confirme') {
+      setPendingMove({ lesson, origDate: lesson.lessonDate, origTime: lesson.lessonTime, newDate: m.currentDay, newTime })
+      return
+    }
 
     // ── Persistance serveur en arrière-plan ─────────────────────────────────
     try {
@@ -1055,31 +1256,63 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
         </div>
       )}
 
+      {/* Message de succès déplacement */}
+      {moveInfo && (
+        <div className="px-4 py-2.5 bg-emerald-500/10 border-b border-emerald-500/20 text-sm text-emerald-400 font-medium">
+          {moveInfo}
+        </div>
+      )}
+
+      {/* Dialogue portée du déplacement (cours récurrents) */}
+      {pendingMove && (
+        <MoveScopeModal
+          lesson={pendingMove.lesson}
+          origDate={pendingMove.origDate}
+          origTime={pendingMove.origTime}
+          newDate={pendingMove.newDate}
+          newTime={pendingMove.newTime}
+          onChoose={applyMoveScope}
+        />
+      )}
+
       {/* En-têtes des jours */}
       <div
         className="grid border-b border-border-subtle bg-surface/80 sticky top-0 z-20"
         style={{ gridTemplateColumns: `3rem repeat(${activeDays.length}, 1fr)` }}
       >
         <div className="py-2" />
-        {activeDays.map((day) => (
-          <div
-            key={day.iso}
-            className={`py-2 text-center border-l border-border-subtle ${day.isToday ? 'text-guitar-400' : 'text-muted-foreground'}`}
-          >
-            <p className="text-[10px] font-medium uppercase tracking-wider">{day.label}</p>
-            <p className={`text-lg font-semibold leading-tight ${day.isToday ? 'text-guitar-400' : ''}`}>{day.dayNum}</p>
-            {/* Badges événements école (T3) */}
-            {(eventsByDay[day.iso] ?? []).map((ev) => (
-              <span
-                key={ev.id}
-                title={ev.title + (ev.school_name ? ` — ${ev.school_name}` : '')}
-                className="mt-1 mx-auto block max-w-[90%] truncate text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 leading-tight"
-              >
-                {ev.title}
-              </span>
-            ))}
-          </div>
-        ))}
+        {activeDays.map((day) => {
+          const vacPériode = schoolZone ? isVacances(day.iso, schoolZone) : null
+          return (
+            <div
+              key={day.iso}
+              className={`py-2 text-center border-l border-border-subtle ${day.isToday ? 'text-guitar-400' : 'text-muted-foreground'}`}
+            >
+              <p className="text-[10px] font-medium uppercase tracking-wider">{day.label}</p>
+              <p className={`text-lg font-semibold leading-tight ${day.isToday ? 'text-guitar-400' : ''}`}>{day.dayNum}</p>
+              {/* Indicateur vacances scolaires */}
+              {vacPériode && (
+                <span
+                  className="mt-1 mx-auto block max-w-[90%] truncate text-[9px] font-medium px-1.5 py-0.5 rounded-full leading-tight"
+                  style={{ background: vacPériode.color + '22', color: vacPériode.color, border: `1px solid ${vacPériode.color}44` }}
+                  title={vacPériode.label}
+                >
+                  {vacPériode.emoji} Vacances
+                </span>
+              )}
+              {/* Badges événements école */}
+              {(eventsByDay[day.iso] ?? []).map((ev) => (
+                <span
+                  key={ev.id}
+                  title={ev.title + (ev.school_name ? ` — ${ev.school_name}` : '')}
+                  className="mt-1 mx-auto block max-w-[90%] truncate text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 leading-tight"
+                >
+                  {ev.title}
+                </span>
+              ))}
+            </div>
+          )
+        })}
       </div>
 
       {/* Zone scrollable.
@@ -1121,10 +1354,20 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
 
           {/* Colonnes des jours */}
           {activeDays.map((day) => {
-            const dayLessons = lessonsByDay[day.iso] ?? []
+            const dayLessons  = lessonsByDay[day.iso] ?? []
+            const vacDayInfo  = schoolZone ? isVacances(day.iso, schoolZone) : null
 
             return (
               <div key={day.iso} className="relative border-l border-border-subtle">
+                {/* Fond vacances scolaires — subtil, derrière tout le reste */}
+                {vacDayInfo && (
+                  <div
+                    style={{
+                      position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none',
+                      background: vacDayInfo.color + '0d',
+                    }}
+                  />
+                )}
                 {/* Créneaux réservés — affichés avant les lignes de fond pour être derrière les cours,
                     mais avec pointer-events qui stoppent la propagation pour bloquer la création */}
                 {(reservedByDay[day.iso] ?? []).map((rs) => {
@@ -1408,6 +1651,33 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                           éviter toute superposition avec la zone de clic de sélection.
                           (Cause du bug : UserRound en bottom-0 left-0 interceptait le clic
                           et naviguait vers la fiche élève au lieu de déclencher onToggleConflictSelect.) */}
+
+                      {/* Indicateur absence déclarée par l'élève (declaration_eleve) */}
+                      {lesson.absenceReason === 'declaration_eleve' && !estSelectablePourGroupe && (
+                        <div
+                          aria-hidden
+                          title="Absence déclarée par l'élève"
+                          style={{
+                            position: 'absolute', top: 2, right: 2, zIndex: 20,
+                            width: 6, height: 6, borderRadius: '50%',
+                            background: '#f97316',
+                            pointerEvents: 'none',
+                          }}
+                        />
+                      )}
+                      {/* Indicateur "finalement présent" : l'élève a annulé sa déclaration */}
+                      {lesson.absenceReason === 'finalement_present' && !estSelectablePourGroupe && (
+                        <div
+                          aria-hidden
+                          title="Finalement présent — absence annulée par l'élève"
+                          style={{
+                            position: 'absolute', top: 2, right: 2, zIndex: 20,
+                            width: 6, height: 6, borderRadius: '50%',
+                            background: '#22c55e',
+                            pointerEvents: 'none',
+                          }}
+                        />
+                      )}
 
                       {/* Badge de sélection — visible uniquement sur les tuiles éligibles au regroupement.
                           Remplace tous les boutons d'action pour que le clic soit sans ambiguïté. */}

@@ -18,9 +18,11 @@ const STATUTS_ABSENCE = new Set(['absent', 'excuse'])
  *                                  `lessonDate` ou `lesson_date` pour le filtre de date).
  * @param {string|null} dateDebut - Borne inférieure ISO "YYYY-MM-DD" (incluse). null = sans borne.
  * @param {string|null} dateFin   - Borne supérieure ISO "YYYY-MM-DD" (incluse). null = sans borne.
- * @returns {{ taux: number|null, nbCours: number, nbAbsences: number }}
- *   `taux` est null quand aucun cours n'est encore émargé
- *   (distingue "0 % d'absence" de "aucune donnée").
+ * @returns {{ taux: number|null, nbCours: number, nbAbsences: number,
+ *             nbPresents: number, tauxPresence: number|null }}
+ *   `taux`          = absent+excuse / emargées  (taux d'absence)
+ *   `tauxPresence`  = present / emargées        (taux de présence)
+ *   Les deux sont null quand aucun cours n'est encore émargé.
  */
 export function calculerTauxAbsence(lessons, dateDebut = null, dateFin = null) {
   // Filtrage par plage de dates si au moins une borne est fournie
@@ -38,9 +40,11 @@ export function calculerTauxAbsence(lessons, dateDebut = null, dateFin = null) {
   const emarks     = dansPeriode.filter((l) => STATUTS_EMARGEMENT.has(l.status))
   const nbCours    = emarks.length
   const nbAbsences = emarks.filter((l) => STATUTS_ABSENCE.has(l.status)).length
+  const nbPresents  = nbCours - nbAbsences
 
   // null quand nbCours = 0 : évite d'afficher "0 %" en l'absence de données
-  const taux = nbCours > 0 ? Math.round((nbAbsences / nbCours) * 100) : null
+  const taux         = nbCours > 0 ? Math.round((nbAbsences / nbCours) * 100) : null
+  const tauxPresence = nbCours > 0 ? Math.round((nbPresents  / nbCours) * 100) : null
 
-  return { taux, nbCours, nbAbsences }
+  return { taux, nbCours, nbAbsences, nbPresents, tauxPresence }
 }

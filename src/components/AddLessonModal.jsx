@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { X, Loader2, UserPlus, ChevronLeft, Navigation } from 'lucide-react'
-import { createLesson, updateLesson, createRecurringLessons } from '../services/lessons'
+import { createLesson, updateLesson, createRecurringLessons, updateFutureLessonsInSeries } from '../services/lessons'
 import { fetchTeacherStudents, createStudent, fetchStudentContexts } from '../services/students'
 import { fetchTeacherSchools } from '../services/schools'
 
@@ -14,6 +14,8 @@ function normalizeSearch(str) {
 
 export default function AddLessonModal({ teacherId, lesson, onClose, onCreated, schoolZone = null }) {
   const isEdit = Boolean(lesson?.id)
+  const isSeries = isEdit && Boolean(lesson?.recurrenceGroup)
+  const [editScope, setEditScope] = useState('single') // 'single' | 'future'
   const [students, setStudents] = useState([])
   const [schools, setSchools] = useState([])
   const [form, setForm] = useState({
@@ -133,6 +135,9 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated, 
       if (recurring && !isEdit) {
         const count = await createRecurringLessons(teacherId, form, untilDate, intervalWeeks, { suspendDuringHolidays: suspendHolidays, zone: schoolZone })
         alert(count + ' cours créés !')
+        onCreated()
+      } else if (isEdit && isSeries && editScope === 'future') {
+        await updateFutureLessonsInSeries(lesson.id, lesson.recurrenceGroup, lesson.lessonDate, form)
         onCreated()
       } else {
         const result = isEdit ? await updateLesson(lesson.id, form) : await createLesson(teacherId, form)
@@ -372,6 +377,28 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated, 
               <label className="block text-sm text-muted-foreground mb-1.5">Notes (optionnel)</label>
               <textarea value={form.notes} onChange={update('notes')} rows={2} className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600 resize-none" />
             </div>
+
+            {isEdit && isSeries && (
+              <div className="border-t border-border-subtle pt-4">
+                <p className="text-sm text-muted-foreground mb-2">Ce cours fait partie d&apos;une série. Modifier…</p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditScope('single')}
+                    className={`flex-1 py-2 rounded-xl border text-sm font-medium transition-colors ${editScope === 'single' ? 'border-guitar-600/60 bg-guitar-600/10 text-guitar-400' : 'border-border-subtle hover:bg-surface-overlay'}`}
+                  >
+                    Ce cours seulement
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditScope('future')}
+                    className={`flex-1 py-2 rounded-xl border text-sm font-medium transition-colors ${editScope === 'future' ? 'border-guitar-600/60 bg-guitar-600/10 text-guitar-400' : 'border-border-subtle hover:bg-surface-overlay'}`}
+                  >
+                    Toutes les suivantes
+                  </button>
+                </div>
+              </div>
+            )}
 
             {!isEdit && (
               <div className="border-t border-border-subtle pt-4">

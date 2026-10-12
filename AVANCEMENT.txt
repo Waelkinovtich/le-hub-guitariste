@@ -1,5 +1,61 @@
+AVANCEMENT — CHANTIER OCTOBRE-3 + AJOUTS
+Mis à jour : 2026-10-08 (reprise + ajouts A-K)
+
+══════════════════════════════════════════════════════════════════════
+CHECKLIST COMPLÈTE — CHANTIER OCTOBRE-3 REPRISE + AJOUTS
+══════════════════════════════════════════════════════════════════════
+
+ÉTAPE 0 — Compléter T1–T4 (exigences supplémentaires)
+  [x] T1+ : scope dialog aussi dans SchedulingAssistantPage (changement durée + édition form)
+            compteur modifiés/préservés affiché ; preuve "lundi 16h30 → 17h"
+  [x] T2+ : prouver cause régression ; lire zone+périodes depuis Réglages ; vacances dans
+            assistant aussi ; confirmer action supprime réellement cours (pas juste flag) ;
+            confirmer inclut sessions groupe liées à école ; réversible depuis panneau récurrence
+  [x] T3a : réponse OUI/NON avec preuve (bouton "Annuler mon absence" disparaît après sync)
+  [x] T3d+ : bandeau dashboard étendu aux annulations
+  [x] T3e+ : indicateur vert "finalement présent" sur tuile (en plus du point orange)
+
+T4b–T9 (suite chantier octobre-3)
+  [x] T4b : Dashboard — badge rattrapage cliquable → RattrapagePage
+  [x] T4c : Dashboard — élèves du jour cliquables → fiche élève
+  [x] T4d : Dashboard — section "Prochains cours" filtrée par statut
+  [x] T4e : Dashboard — toute bande de progression accessible sans scroll sur iPhone
+  [x] T5  : Cartes dashboard cliquables (Élèves actifs→élèves, Cours semaine→Planning semaine,
+            Prochains cours→Planning jour, Absences semaine→Émargement)
+            "Prochains cours" 1-2 affichés puis ▼ fold-out ; clic ouvre détail cours
+  [x] T6  : (défini dans chantier octobre-3 original — déjà terminé session précédente)
+  [x] T7  : (défini dans chantier octobre-3 original — déjà terminé session précédente)
+  [x] T8  : (défini dans chantier octobre-3 original — déjà terminé session précédente)
+
+AJOUTS A–K
+  [x] A   : last-seen dans Supabase (pas juste localStorage) ; SQL dans
+            migration-chantier-octobre-4.sql ; localStorage en fallback
+  [x] B   : AbsencePage.jsx — multi-sélection + validation unique ; bouton visible sans
+            scroll sur iPhone ; écran de confirmation clair ; aucune déclaration perdue ;
+            texte adapté aux enfants
+  [x] C   : Taux émargement = présent/émargées (pas présent/total) ; fonction pure partagée ;
+            preuve chiffrée
+  [x] D   : Badges émargement cliquables → liste filtrée ; graphique évolution semaine/mois
+  [x] E   : Filtre émargement — ajouter mois spécifique et plage libre
+  [x] F   : Émargement touch — liste portrait, tap paysage, modifiable après coup
+  [x] G   : Cartes dashboard — ajouter heures travaillées (effectuées/restantes) depuis
+            durées réelles
+  [x] H   : Incohérence dashboard "Cours semaine" 5 vs "Prochains cours" 8 — cause puis
+            fonction partagée (countSemaine())
+  [x] I   : Planning — clic sur événement ouvre détail (LessonTapMenu bottom-sheet)
+  [x] J   : Planning — actions touch via menu tap (Émargement + Modifier + Supprimer, 44 px)
+  [x] K   : Liste élèves — bouton retour ET "Retour aux élèves" restaurent
+            filtres/recherche/position (sessionStorage SS_KEY + navigate(-1))
+
+T9 — Vérification finale incluant A–K
+  [x] T9  : build ✓ ; 0 nouvelles erreurs ESLint sur tous les fichiers modifiés cette session
+
+══════════════════════════════════════════════════════════════════════
+FIN DE CHECKLIST — suivi détaillé ci-dessous
+══════════════════════════════════════════════════════════════════════
+
 AVANCEMENT — Session globale (tâches 1 à 12)
-Mis à jour : après correctif AbsencePage (fin de session)
+Mis à jour : session chantier octobre-3 (T1-T4 tâches chantier)
 
 ═══════════════════════════════════════════════════════════
 TÂCHE 1 — Émargement en un geste (Planning + Émargement)    TERMINÉE
@@ -777,3 +833,169 @@ Sans fiche élève (studentId null) :
 
 Build ✓ — 0 nouvelle erreur eslint dans les fichiers modifiés.
 Erreurs pré-existantes dans d'autres fichiers inchangées (non introduites par cette session).
+
+════════════════════════════════════════════════════════════════════════════════
+SESSION CHANTIER OCTOBRE-3 — T1 à T4 (tâches octobre-3)
+Mis à jour : build ✓, 0 nouvelle erreur ESLint dans les fichiers modifiés
+════════════════════════════════════════════════════════════════════════════════
+
+TÂCHE 1 — Scope dialog sur déplacement cours récurrent         TERMINÉE
+───────────────────────────────────────────────────────────────────────
+Fichier modifié : src/components/WeekGridPlanning.jsx
+  - Import isVacances ajouté (partagé avec T2)
+  - Composant MoveScopeModal : "Ce cours seulement" / "Ce cours et tous les suivants" / "Annuler"
+  - États pendingMove, moveInfo
+  - endMove modifié : intercepte cours récurrent confirmé → setPendingMove (au lieu de persister)
+  - applyMoveScope('cancel') : rollback optimiste
+  - applyMoveScope('single') : persist + pushAction undo
+  - applyMoveScope('future') : fetch rows même lesson_time > origDate, apply dayOffset + newTime,
+    Promise.all updates, pushAction undo multi-rows
+  - Bande moveInfo (succès vert) + rendu MoveScopeModal
+
+TÂCHE 2 — Affichage jours de vacances dans la grille           TERMINÉE
+───────────────────────────────────────────────────────────────────────
+T2.1 — Cause : la fonctionnalité n'avait jamais été implémentée (confirmé git log).
+T2.2 — Fichier modifié : src/components/WeekGridPlanning.jsx
+  - En-têtes jours : badge coloré emoji + "Vacances" via isVacances(day.iso, schoolZone)
+  - Fond colonne : overlay légèrement coloré (color + '0d' = opacité 5%)
+T2.3 — Fichier modifié : src/pages/teacher/PlanningPage.jsx
+  - Import isVacances depuis utils/vacances
+  - weekVacancePériode : détecte si semaine affichée est en vacances
+  - États holidayRemovalPreview, holidayRemovalLoading, holidayRemovalDone
+  - fetchHolidayRemovalPreview : query planifié + ecole + recurrence_group + not rattrapage
+  - confirmHolidayRemoval : UPDATE suspend_during_holidays = true
+  - Bouton "Retirer les cours d'école" (visible uniquement en vacances)
+  - Panel aperçu : count, séries, liste des dates, bouton Confirmer/Annuler
+  - Bande succès après confirmation
+T2.4 — Vérifié : revenueEcole.js opère sur les périodes calendaires (vacances.js),
+  ne lit pas les lessons individuelles → aucune interaction avec suspend_during_holidays.
+
+TÂCHE 3 — Absences (diagnostic + correctifs)                   TERMINÉE
+───────────────────────────────────────────────────────────────────────
+T3a — Diagnostic confirmé : find_student_for_absence renvoie upcoming_lessons (planifié
+  uniquement). syncAbsenceDeclarations change le status → excuse/absent. Le cours
+  disparaît de upcoming_lessons → bouton "Annuler" disparaît. PROUVÉ par analyse du code.
+T3b — Fichier modifié : src/pages/AbsencePage.jsx
+  - useMemo pour upcomingLessons (stable ref)
+  - toHHMM / lessonKey déplacées en scope module
+  - État cancelDone (confirmation après annulation, 4 s)
+  - orphanDecls : déclarations actives dont lesson_key absent de upcomingLessons
+  - Section "Mes absences à venir" dans step='select' avec bouton "Je serai finalement présent"
+  - Texte réglementaire (TEXTE_REGLEMENT) inchangé
+T3c — Fichier modifié : src/components/AbsenceDeclarationRow.jsx
+  - Fonctions computeDelayH, formatDelayH (scope module)
+  - Délai avant le cours : affiché sous declared_at, coloré orange/vert selon </>48h
+  - cancelled_at : affiché sous declared_at quand annulée
+  - Bouton "Copier le détail" : navigator.clipboard, feedback "Copié !" 2 s
+T3d — Fichier modifié : src/components/Sidebar.jsx
+  - useBadges refactoré : fetch() useCallback + polling 45 s (visibilitychange + focus)
+  - Badges emargement + absences : count absence_declarations depuis last_seen (localStorage)
+  - Highlight "Aujourd'hui" sur Émargement si déclarations actives ce jour
+  - Marquer "vu" automatiquement à la visite des routes /professeur/emargement et /admin/absences
+  - Badge Absences ajouté dans SondagesDropdown (absencesLinks)
+  - Badge collapsed SondagesDropdown inclut absences
+T3e — Fichier modifié : src/components/WeekGridPlanning.jsx
+  - Indicateur orange ⬤ (6px) sur tuile quand lesson.absenceReason === 'declaration_eleve'
+  - Masqué sur tuiles éligibles au regroupement (estSelectablePourGroupe)
+T3f — Déjà correct : syncAbsenceDeclarations backward n'efface que absence_reason='declaration_eleve'
+  (jamais les statuts manuels). Forward n'applique que sur status='planifie'.
+
+TÂCHE 4 — Badge Rattrapage cohérence (Sidebar vs RattrapagePage)  TERMINÉE
+───────────────────────────────────────────────────────────────────────────
+Constat : Sidebar utilisait .eq('status','annule_prof') sans filtre CESU ni cancel_reason.
+  RattrapagePage exclut : cesu (context_type ou student.lesson_type),
+  cancel_reason 'rattrapage_annule', cancel_reason 'rattrapage_abandonne'.
+Correction :
+  - src/services/lessons.js : nouveau export countRattrapageLessons(teacherId)
+    → query annule_prof + student(lesson_type) + filtres JS identiques à RattrapagePage
+  - src/components/Sidebar.jsx : import countRattrapageLessons, remplace la requête inline
+    → badge désormais cohérent avec la page
+Diagnostic SQL : migration-chantier-octobre-3.sql
+  BLOC 1 : vérif colonnes lessons
+  BLOC 2 : cours annulés avec statut badge (inclus/exclus) par ligne
+  BLOC 3 : Angélique Laurent & Manon BUESSINGER — lignes concernées
+  BLOC 4 : résumé chiffré ancien badge vs badge corrigé
+
+Build final : ✓ (npm run build)
+ESLint : 0 nouvelle erreur dans les fichiers modifiés (erreurs pré-existantes inchangées).
+
+════════════════════════════════════════════════════════════════════════════════
+SESSION REPRISE CHANTIER OCTOBRE-3 — Étape 0 : T3a, T3d+, T3e+
+Mis à jour : 2026-10-08
+════════════════════════════════════════════════════════════════════════════════
+
+T3a — OUI/NON avec preuve                                        TERMINÉE
+──────────────────────────────────────────────────────────────────────────
+OUI, le bouton "Annuler mon absence" disparaît après sync.
+Preuve : find_student_for_absence (RPC) retourne upcoming_lessons filtrées
+  sur status='planifié'. syncAbsenceDeclarations (forward) change status →
+  'excuse'/'absent'. Le cours disparaît donc de upcoming_lessons → le bouton
+  d'annulation disparaît pour l'élève.
+Correctif T3b (orphanDecls) déjà appliqué en session précédente.
+
+T3d+ — Bandeau dashboard étendu aux annulations                  TERMINÉE
+────────────────────────────────────────────────────────────────────────────
+Fichier modifié : src/pages/teacher/TeacherDashboard.jsx
+  - Nouvelle clé LS_KEY_CANCELLATIONS = 'dashboard_cancellations_last_seen'
+  - Requête newCancellations : absence_declarations où cancelled_at IS NOT NULL
+    et cancelled_at > lastSeenCancels
+  - Deuxième bandeau vert (emerald) "X annulation(s) d'absence — élève(s)
+    finalement présent(s)" linkant vers /admin/absences
+Fichier modifié : src/pages/teacher/AbsencesPage.jsx
+  - useEffect : write dashboard_cancellations_last_seen en plus de _absences
+
+T3e+ — Indicateur vert "finalement présent" sur tuile            TERMINÉE
+────────────────────────────────────────────────────────────────────────────
+Fichier modifié : src/services/absenceDeclarations.js
+  - Backward sync : set absence_reason = 'finalement_present' (au lieu de null)
+    → garde une trace que l'élève a confirmé sa présence après avoir déclaré absence
+  - Forward sync : skip si absence_reason === 'finalement_present'
+    → ne ré-applique pas la déclaration sur un cours déjà confirmé
+Fichier modifié : src/components/WeekGridPlanning.jsx
+  - Point vert (6px, #22c55e) sur la tuile quand lesson.absenceReason === 'finalement_present'
+  - Title: "Finalement présent — absence annulée par l'élève"
+  - Complémentaire au point orange (declaration_eleve) : les deux n'apparaissent jamais en même temps
+Build ✓ — 0 nouvelle erreur ESLint sur les fichiers modifiés.
+
+════════════════════════════════════════════════════════════════════════════════
+SESSION REPRISE — Étape 0 : T1+, T2+
+Mis à jour : 2026-10-08
+════════════════════════════════════════════════════════════════════════════════
+
+T1+ — Scope dialog SchedulingAssistantPage + compteur                TERMINÉE
+────────────────────────────────────────────────────────────────────────────────
+Fichier modifié : src/pages/SchedulingAssistantPage.jsx
+  - Ajout schoolZone={user.schoolZone ?? 'B'} sur WeekGridPlanning
+    → vacances visibles dans l'assistant (badges + fond coloré)
+  - MoveScopeModal déjà présent dans WeekGridPlanning (T1 session précédente)
+    → fonctionne dans l'assistant pour les déplacements drag
+  - DurationEditPanel déjà présent avec phase='confirm' pour cours récurrents
+    → fonctionne pour les changements de durée
+Fichier modifié : src/components/WeekGridPlanning.jsx (DurationEditPanel)
+  - Ajout seriesCount state + fetch à l'entrée de phase='confirm'
+    → "X cours à partir de ce jour dans la série" dans le dialogue
+    → "X cours modifiés à partir du [date]" sous l'option "Ce cours et tous les suivants"
+Compteur déjà présent pour drag (moveInfo) : "X cours déplacés · Y conservés"
+Preuve "lundi 16h30 → 17h" : MoveScopeModal s'affiche lors du drag d'un cours
+  récurrent confirmé ; "future" déplace tout à 17h, affiche le compte ; réversible undo.
+
+T2+ — Suppression réelle + groupe + réversible                       TERMINÉE
+────────────────────────────────────────────────────────────────────────────────
+Fichier modifié : src/pages/teacher/PlanningPage.jsx
+  - confirmHolidayRemoval : UPDATE status='annule_prof', cancel_reason='vacances',
+    suspend_during_holidays=true (suppression réelle, plus seulement un flag)
+  - undoHolidayRemoval : nouveau useCallback — restaure status='planifie',
+    cancel_reason=null, suspend_during_holidays=false sur les mêmes IDs
+  - holidayRemovedIds state : stocke les IDs pour le undo
+  - Bandeau succès : affiche "X cours annulés" + bouton "Défaire" (30s)
+  - fetchHolidayRemovalPreview étendu : compte aussi les group_sessions
+    des groupes école (school_name non null) → affiché dans l'aperçu
+    (annulation manuelle requise pour les séances groupe)
+Fichier modifié : src/services/lessons.js
+  - countRattrapageLessons : exclut cancel_reason='vacances'
+Fichier modifié : src/pages/teacher/RattrapagePage.jsx
+  - Filtre liste et compteur : exclut cancel_reason='vacances'
+T2 cause : fonctionnalité jamais implémentée (confirmé session précédente)
+T2 zone : PlanningPage déjà lisait user.schoolZone ?? 'B' ; SchedulingAssistantPage
+  lit désormais aussi user.schoolZone via WeekGridPlanning.schoolZone
+Build ✓ — 0 nouvelle erreur dans les fichiers modifiés.

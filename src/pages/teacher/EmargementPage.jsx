@@ -123,7 +123,9 @@ export default function ÉmargementPage() {
   }, [data, user.id, range.from, range.to]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const periodFiltered = filterLessonsByPeriod(data?.lessons ?? [], periodCtx)
-  const allItems = periodFiltered.filter((l) => !filterSchool || l.schoolName === filterSchool || l.student?.school_name === filterSchool || (filterSchool === 'particulier' && !l.student?.school_name && !l.isGroup))
+  const allItems = periodFiltered
+    .filter((l) => !(l.cancelReason === 'vacances'))  // tuiles vacances masquées
+    .filter((l) => !filterSchool || l.schoolName === filterSchool || l.student?.school_name === filterSchool || (filterSchool === 'particulier' && !l.student?.school_name && !l.isGroup))
   const allLessons = allItems.filter((l) => !l.isGroup)
   // Filtre "non émargés" : status === 'planifie' (jamais modifié depuis la création)
   const lessons = showOnlyUnemarged
@@ -173,8 +175,9 @@ export default function ÉmargementPage() {
   const presents = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'present').length
   const absents = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'absent').length
   const excuses = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'excuse').length
-  const annulés = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'annule_prof').length
-  const taux = allLessons.length > 0 ? Math.round((presents / allLessons.length) * 100) : 0
+  const annulés = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'annule_prof' && l.cancelReason !== 'vacances').length
+  const emargees = presents + absents + excuses
+  const taux = emargees > 0 ? Math.round((presents / emargees) * 100) : 0
 
   return (
     <>
@@ -269,10 +272,19 @@ export default function ÉmargementPage() {
                         </p>
                         {lesson.topic && <p className="text-xs text-muted-foreground truncate">{lesson.topic}</p>}
                       </div>
-                      <span className="shrink-0 text-xs font-semibold px-2 py-1 rounded-lg whitespace-nowrap"
-                        style={{ background: color + '20', color }}>
-                        {STATUS_LABELS[effectiveStatus]}
-                      </span>
+                      {/* Badge statut — tappable pour modifier même après émargement */}
+                      <button
+                        type="button"
+                        onClick={() => setStatusLesson(lesson)}
+                        title="Modifier le statut"
+                        style={{ touchAction: 'manipulation', minHeight: 44, minWidth: 44 }}
+                        className="shrink-0 flex items-center justify-center"
+                      >
+                        <span className="text-xs font-semibold px-2 py-1 rounded-lg whitespace-nowrap"
+                          style={{ background: color + '20', color }}>
+                          {STATUS_LABELS[effectiveStatus]}
+                        </span>
+                      </button>
                     </div>
                     <div className="flex items-center justify-between gap-2">
                       <AttendanceQuickActions

@@ -139,6 +139,29 @@ export async function fetchCancelledLessons({ teacherId } = {}) {
   return (data ?? []).map(mapLesson)
 }
 
+/**
+ * Compte les cours à rattraper (annule_prof non encore rattrapés), avec les mêmes
+ * filtres que RattrapagePage : exclusion CESU, rattrapage_abandonne, rattrapage_annule.
+ * Utilisé par le badge Sidebar ET la page Rattrapage pour garantir la cohérence.
+ */
+export async function countRattrapageLessons(teacherId) {
+  const { data, error } = await supabase
+    .from(TABLES.lessons)
+    .select('id, context_type, cancel_reason, student:' + TABLES.students + '(lesson_type)')
+    .eq('teacher_id', teacherId)
+    .eq('status', 'annule_prof')
+  if (error) return 0
+  const rows = data ?? []
+  return rows.filter((r) => {
+    if (r.context_type === 'cesu') return false
+    if (r.student?.lesson_type === 'cesu') return false
+    if (r.cancel_reason === 'rattrapage_annule') return false
+    if (r.cancel_reason === 'rattrapage_abandonne') return false
+    if (r.cancel_reason === 'vacances') return false
+    return true
+  }).length
+}
+
 /** Crée une série de cours récurrents depuis lessonDate jusqu'à untilDate.
  *  intervalWeeks : 1 = hebdomadaire (défaut), 2 = quinzomadaire, etc. */
 export async function createRecurringLessons(teacherId, input, untilDate, intervalWeeks = 1, { suspendDuringHolidays = false, zone = null } = {}) {
@@ -258,7 +281,7 @@ export async function fetchGroupSessionsInRange({ teacherId, from, to }) {
 
   const { data: sessions, error: sErr } = await supabase
     .from('group_sessions')
-    .select('id, group_id, session_date, session_time, duration_minutes, status, recurrence_series_id, recurrence_interval_weeks')
+    .select('id, group_id, session_date, session_time, duration_minutes, status, cancel_reason, recurrence_series_id, recurrence_interval_weeks')
     .in('group_id', groupIds)
     .gte('session_date', from)
     .lte('session_date', to)
@@ -284,6 +307,7 @@ export async function fetchGroupSessionsInRange({ teacherId, from, to }) {
       durationMinutes: s.duration_minutes || g.duration_minutes,
       topic:           g.name,
       status:          s.status || 'planifie',
+      cancelReason:    s.cancel_reason ?? null,
       studentName:     g.name,
       groupType:       g.type,
       sessionStatus:   s.status || 'prevue',
@@ -638,4 +662,24 @@ export async function updateLessonPlanningStatus(lessonId, planningStatus) {
     .update({ planning_status: planningStatus })
     .eq('id', lessonId)
   if (error) throw new Error(error.message)
+}
+
+/**
+ * Met à jour les champs éditables de ce cours et de tous les suivants de la même série.
+ * Utilisé quand l'utilisateur choisit "toutes les suivantes" dans le dialogue de portée.
+ */
+export async function updateFutureLessonsInSeries(lessonId, recurrenceGroup, fromDate, input) {
+  // Mise à jour du cours courant (peut avoir une date différente si déplacé)
+  const { error: e1 } = await supabase
+    .from(TABLES.lessons)
+    .update({ lesson_time: input.lessonTime, duration_minutes: Number(input.durationMinutes), topic: input.topic, notes: input.notes ?? null, context_type: input.contextType ?? null })
+    .eq('id', lessonId)
+  if (e1) throw new Error(e1.message)
+  // Mise à jour de tous les cours suivants de la même série (hors le cours courant)
+  const { error: e2 } = await supabase
+    .from(TABLES.lessons)
+    .update({ lesson_time: input.lessonTime, duration_minutes: Number(input.durationMinutes), topic: input.topic, notes: input.notes ?? null, context_type: input.contextType ?? null })
+    .eq('recurrence_group', recurrenceGroup)
+    .gt('lesson_date', fromDate)
+  if (e2) throw new Error(e2.message)
 }
