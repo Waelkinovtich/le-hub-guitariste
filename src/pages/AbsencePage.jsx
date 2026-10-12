@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { Guitar, Loader2, AlertCircle, CheckCircle2, Clock, X, ChevronDown, ChevronUp, ArrowLeft, Square, CheckSquare } from 'lucide-react'
 import { supabasePublic as supabase } from '../lib/supabase'
@@ -26,6 +26,10 @@ function formatTime(timeStr) {
   const [h, m] = timeStr.split(':')
   return m === '00' ? `${h}h` : `${h}h${m}`
 }
+
+// Normalise "09:30:00" et "09:30" en "09:30" pour comparer sans dépendre de lesson_id
+function toHHMM(t) { return (t ?? '').slice(0, 5) }
+function lessonKey(date, time) { return `${date}|${toHHMM(time)}` }
 
 function libErreur(code) {
   const map = {
@@ -93,6 +97,7 @@ export default function AbsencePage() {
   // Copie locale des déclarations (mise à jour optimiste)
   const [declarations, setDeclarations] = useState(null)
   const [cancellingId, setCancellingId] = useState(null)
+  const [cancelDone,   setCancelDone]   = useState(false)
 
   // ── Étape 1 : Recherche par nom ──────────────────────────────────────────
   async function handleSearch(e) {
@@ -137,7 +142,7 @@ export default function AbsencePage() {
   }
 
   // ── Données dérivées (avant les handlers qui les utilisent) ─────────────
-  const upcomingLessons = studentData?.upcoming_lessons ?? []
+  const upcomingLessons = useMemo(() => studentData?.upcoming_lessons ?? [], [studentData])
 
   // ── Étape 3 : Déclaration de plusieurs absences ───────────────────────────
   async function handleDeclare() {
@@ -198,6 +203,8 @@ export default function AbsencePage() {
       setDeclarations((prev) => (prev ?? []).map((d) =>
         d.id === declarationId ? { ...d, cancelled_at: new Date().toISOString() } : d
       ))
+      setCancelDone(true)
+      setTimeout(() => setCancelDone(false), 4000)
     } catch (err) {
       const code = err?.message?.match(/([a-z_]+)$/)?.[1]
       setActionErr(libErreur(code ?? ''))
@@ -210,9 +217,6 @@ export default function AbsencePage() {
   const allDeclarations = declarations ?? []
   const now = new Date()
   const isFuture = (lesson) => new Date(lesson.lesson_date + 'T' + (lesson.lesson_time ?? '00:00:00')) > now
-  // Normalise "09:30:00" et "09:30" en "09:30" pour comparer sans dépendre de lesson_id
-  const toHHMM = (t) => (t ?? '').slice(0, 5)
-  const lessonKey = (date, time) => `${date}|${toHHMM(time)}`
 
   // Clés date|HH:MM des déclarations actives futures (lesson_id absent en production)
   const declaredKeys = new Set(
@@ -228,6 +232,16 @@ export default function AbsencePage() {
         && !d.cancelled_at
         && isFuture(d)
     )
+
+  // Déclarations actives dont le cours n'apparaît plus dans upcoming_lessons
+  // (statut changé après déclaration : excusé, absent…) — affichées indépendamment
+  const upcomingKeys = useMemo(
+    () => new Set(upcomingLessons.map((l) => lessonKey(l.lesson_date, l.lesson_time))),
+    [upcomingLessons]
+  )
+  const orphanDecls = allDeclarations.filter(
+    (d) => !d.cancelled_at && isFuture(d) && !upcomingKeys.has(lessonKey(d.lesson_date, d.lesson_time))
+  )
 
   // ── Rendu ─────────────────────────────────────────────────────────────────
   return (
@@ -321,8 +335,8 @@ export default function AbsencePage() {
             </div>
 
             <div>
-              <h2 className="text-base font-semibold mb-1">Mes prochains cours</h2>
-              <p className="text-xs text-muted-foreground mb-3">Sélectionnez un ou plusieurs cours</p>
+              <h2 className="text-base font-semibold mb-1">Quel(s) cours vas-tu manquer&nbsp;?</h2>
+              <p className="text-xs text-muted-foreground mb-3">Appuie sur chaque cours où tu seras absent(e)</p>
               {upcomingLessons.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Aucun cours à venir dans la période affichée.</p>
               ) : (
@@ -391,6 +405,47 @@ export default function AbsencePage() {
               )}
             </div>
 
+            {cancelDone && (
+              <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2.5 mt-4">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <p>Annulation enregistrée. Votre professeur en a été informé.</p>
+              </div>
+            )}
+
+            {orphanDecls.length > 0 && (
+              <div className="mt-6">
+                <h2 className="text-base font-semibold mb-1 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-muted-foreground" />
+                  Mes absences à venir
+                </h2>
+                <p className="text-xs text-muted-foreground mb-3">Déclarations enregistrées — vous pouvez encore annuler</p>
+                <div className="space-y-3">
+                  {orphanDecls.map((decl) => (
+                    <div key={decl.id} className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 flex items-start justify-between gap-4">
+                      <div>
+                        <p className="font-medium text-foreground capitalize">{formatDate(decl.lesson_date)}</p>
+                        <p className="text-sm text-muted-foreground mt-0.5">
+                          {formatTime(decl.lesson_time)}{decl.lesson_school ? ` · ${decl.lesson_school}` : ''}
+                        </p>
+                        <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" /> Absence enregistrée
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={cancellingId === decl.id}
+                        onClick={() => handleCancel(decl.id)}
+                        className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium border border-border-subtle text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {cancellingId === decl.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                        Je serai finalement présent
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {actionErr && (
               <div className="flex items-start gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5 mt-4">
                 <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -411,7 +466,9 @@ export default function AbsencePage() {
                     {declaring ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                     {declaring
                       ? 'Enregistrement…'
-                      : `Confirmer mes absences (${selectedIds.size})`}
+                      : selectedIds.size === 1
+                        ? 'Je serai absent(e) à ce cours'
+                        : `Je serai absent(e) à ces ${selectedIds.size} cours`}
                   </button>
                 </div>
               </div>
@@ -425,7 +482,7 @@ export default function AbsencePage() {
             <div>
               <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
                 <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                Déclaration terminée
+                C'est noté — ton professeur est prévenu !
               </h2>
               <div className="rounded-xl border border-border-subtle bg-surface-raised divide-y divide-border-subtle">
                 {doneResults.map(({ lesson, excused, error }) => (
@@ -444,7 +501,7 @@ export default function AbsencePage() {
                         <p className="text-xs text-red-400 mt-0.5">{error}</p>
                       ) : (
                         <p className={`text-xs mt-0.5 ${excused ? 'text-emerald-400' : 'text-orange-400'}`}>
-                          {excused ? 'Excusée (+ de 48 h à l\'avance)' : 'Non excusée (délai inférieur à 48 h)'}
+                          {excused ? 'Absence excusée — prévenu à temps (+ 48 h)' : 'Absence non excusée — moins de 48 h de préavis'}
                         </p>
                       )}
                     </div>
@@ -494,7 +551,7 @@ export default function AbsencePage() {
               onClick={() => { setStep('select'); setDoneResults(null); setActionErr(null) }}
               className="w-full py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors"
             >
-              Déclarer une autre absence
+              Déclarer une autre absence →
             </button>
           </div>
         )}
