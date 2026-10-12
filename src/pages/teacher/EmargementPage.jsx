@@ -182,9 +182,12 @@ export default function ÉmargementPage() {
       onClearOverride: (id) =>
         setLessonStatusOverrides((prev) => { const n = { ...prev }; delete n[id]; return n }),
     })
-  }, [data, user.id, range.from, range.to]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, user.id, rangeKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const periodFiltered = filterLessonsByPeriod(data?.lessons ?? [], periodCtx)
+  // mois_precis / plage_libre : la plage explicite prime sur le filtre global de la sidebar.
+  const periodFiltered = (period === 'mois_precis' || period === 'plage_libre')
+    ? (data?.lessons ?? [])
+    : filterLessonsByPeriod(data?.lessons ?? [], periodCtx)
   const allItems = periodFiltered
     .filter((l) => !(l.cancelReason === 'vacances'))  // tuiles vacances masquées
     .filter((l) => !filterSchool || l.schoolName === filterSchool || l.student?.school_name === filterSchool || (filterSchool === 'particulier' && !l.student?.school_name && !l.isGroup))
@@ -295,7 +298,7 @@ export default function ÉmargementPage() {
         </div>
       </header>
 
-      {periodCtx.mode !== 'toutes' && (
+      {periodCtx.mode !== 'toutes' && period !== 'mois_precis' && period !== 'plage_libre' && (
         <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-xl bg-guitar-600/10 border border-guitar-600/20 text-xs text-guitar-400">
           <CalendarDays className="w-3.5 h-3.5 shrink-0" />
           Filtre temporel global actif — seuls les cours correspondant à la période sélectionnée dans la barre latérale sont affichés.
@@ -303,7 +306,7 @@ export default function ÉmargementPage() {
       )}
 
       <div className="flex flex-wrap gap-3 mb-6">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 w-full">
           {PERIODS.map((p) => (
             <button key={p.value} type="button" onClick={() => setPeriod(p.value)}
               className={'px-3 py-2 rounded-xl border text-sm font-medium transition-colors ' + (period === p.value ? 'guitar-gradient text-white border-transparent' : 'border-border-subtle hover:bg-surface-overlay')}>

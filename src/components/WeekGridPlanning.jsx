@@ -1300,12 +1300,16 @@ export default function WeekGridPlanning({ weekDays, lessons, reservedSlots = []
                   {vacPériode.emoji} Vacances
                 </span>
               )}
-              {/* Badges événements école */}
-              {(eventsByDay[day.iso] ?? []).map((ev) => (
+              {/* Badges événements école — cliquables si onEditEvent fourni */}
+              {(eventsByDay[day.iso] ?? []).filter((ev) => !ev.start_time || !ev.duration_minutes).map((ev) => (
                 <span
                   key={ev.id}
                   title={ev.title + (ev.school_name ? ` — ${ev.school_name}` : '')}
-                  className="mt-1 mx-auto block max-w-[90%] truncate text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 leading-tight"
+                  role={onEditEvent ? 'button' : undefined}
+                  tabIndex={onEditEvent ? 0 : undefined}
+                  onClick={onEditEvent ? (e) => { e.stopPropagation(); onEditEvent(ev) } : undefined}
+                  onKeyDown={onEditEvent ? (e) => e.key === 'Enter' && (e.stopPropagation(), onEditEvent(ev)) : undefined}
+                  className={"mt-1 mx-auto block max-w-[90%] truncate text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 leading-tight" + (onEditEvent ? " cursor-pointer hover:bg-amber-500/30" : "")}
                 >
                   {ev.title}
                 </span>
