@@ -13,6 +13,7 @@ import { resolveContextType } from '../utils/resolveContextType'
 import { fetchReservedSlots, updateReservedSlot } from '../services/reservedSlots'
 import { useRefreshContext } from '../contexts/RefreshContext'
 import { exportPlanningPDF } from '../utils/exportPDF'
+import { isSuspendedByHolidays } from '../utils/suspendedByHolidays'
 import { trierSlots } from '../utils/creneauxSort'
 
 // ─── Persistance de session (sessionStorage) ──────────────────────────────────
@@ -1656,7 +1657,7 @@ export default function SchedulingAssistantPage() {
     const weekIsos = new Set(weekDays.map((d) => d.iso))
     const coursReels = existingLessons
       .filter((l) => weekIsos.has(l.lessonDate))
-      .filter((l) => l.cancelReason !== 'vacances')
+      .filter((l) => !isSuspendedByHolidays(l, user.schoolZone ?? 'B'))
       // Tous les cours réels (individuels et groupes) sont déplaçables depuis la grille.
       // handleMoveProposal route correctement selon le type (groupe, individuel réel, proposition).
     // Exclure les propositions masquées par l'utilisateur via le bouton Supprimer
