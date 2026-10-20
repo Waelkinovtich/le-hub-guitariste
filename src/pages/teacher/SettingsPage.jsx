@@ -7,7 +7,7 @@ import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Brie
 import { useTheme, THEMES } from '../../hooks/useTheme'
 import { fetchMileageRates, upsertMileageRate, deleteMileageRate, seedDefaultRates } from '../../services/mileageRates'
 import { applyHolidaysToAllSchoolSeries } from '../../services/lessons'
-import { getVacancesInfo, refreshCalendrierScolaire } from '../../utils/vacances'
+import { getVacancesInfo, refreshCalendrierScolaire, getCachedDiff } from '../../utils/vacances'
 import { DEFAULT_SCORE_WEIGHTS } from '../../services/schools'
 import HelpTooltip from '../../components/HelpTooltip'
 
@@ -692,6 +692,18 @@ export default function SettingsPage() {
                     </div>
                   ))}
               </div>
+              {/* Écarts API vs table embarquée */}
+              {vacInfo.diffs && vacInfo.diffs.length > 0 && (
+                <div className="mt-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 space-y-1">
+                  <p className="text-xs font-medium text-yellow-400">Écart détecté entre le ministère et les dates intégrées :</p>
+                  {vacInfo.diffs.map((d) => (
+                    <p key={d.annee + d.nom} className="text-xs text-muted-foreground">
+                      {d.annee} — {d.nom} : ministère {d.apiDebut} → {d.apiFin} / intégré {d.tableDebut} → {d.tableFin}
+                    </p>
+                  ))}
+                  <p className="text-xs text-muted-foreground mt-1">Les dates intégrées sont utilisées. Signalez cet écart si les dates officielles ont changé.</p>
+                </div>
+              )}
             </div>
 
             <button

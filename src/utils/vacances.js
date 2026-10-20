@@ -91,13 +91,22 @@ function _getVacancesFromPeriodes(zone) {
 }
 
 // ─── Cache localStorage (API ministère) ───────────────────────────────────────
+// Deux clés par zone :
+//   hub_vacances_future_${zone}  → vacances des années NON couvertes par la table embarquée
+//   hub_vacances_diff_${zone}    → écarts API/table pour les années connues (lecture seule)
 
-const CACHE_KEY = (zone) => `hub_vacances_${zone}`
+const CACHE_KEY_FUTURE = (zone) => `hub_vacances_future_${zone}`
+const CACHE_KEY_DIFF   = (zone) => `hub_vacances_diff_${zone}`
+// Clé legacy — maintenu pour migration silencieuse (lecture seule)
+const CACHE_KEY_LEGACY = (zone) => `hub_vacances_${zone}`
 const CACHE_TTL = 24 * 60 * 60 * 1000 // 1 jour
 
-function _getCachedVacances(zone) {
+// Dernière date couverte par la table embarquée (Été 2027-2028)
+const TABLE_LAST_DATE = '2028-09-01'
+
+function _getCachedFutureVacances(zone) {
   try {
-    const raw = localStorage.getItem(CACHE_KEY(zone))
+    const raw = localStorage.getItem(CACHE_KEY_FUTURE(zone))
     if (!raw) return null
     const { timestamp, vacances } = JSON.parse(raw)
     if (!Array.isArray(vacances) || Date.now() - timestamp > CACHE_TTL) return null
@@ -107,10 +116,25 @@ function _getCachedVacances(zone) {
   }
 }
 
-function _setCachedVacances(zone, vacances) {
+function _setCachedFutureVacances(zone, vacances) {
   try {
-    localStorage.setItem(CACHE_KEY(zone), JSON.stringify({ timestamp: Date.now(), vacances }))
+    localStorage.setItem(CACHE_KEY_FUTURE(zone), JSON.stringify({ timestamp: Date.now(), vacances }))
   } catch { /* quota dépassé — silencieux */ }
+}
+
+function _setCachedDiff(zone, diffs) {
+  try {
+    localStorage.setItem(CACHE_KEY_DIFF(zone), JSON.stringify({ timestamp: Date.now(), diffs }))
+  } catch { /* silencieux */ }
+}
+
+export function getCachedDiff(zone) {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY_DIFF(zone))
+    if (!raw) return null
+    const { diffs } = JSON.parse(raw)
+    return Array.isArray(diffs) && diffs.length > 0 ? diffs : null
+  } catch { return null }
 }
 
 // Convertit un timestamp UTC de l'API en date locale Paris (ISO YYYY-MM-DD).
@@ -142,23 +166,36 @@ function _apiDescToNom(desc) {
 }
 
 // ─── Fetch API ministère ───────────────────────────────────────────────────────
-// Récupère les vacances Zone A, B ou C depuis data.education.gouv.fr.
-// Met le résultat en cache localStorage (TTL 24 h). Retourne les vacances.
-// Lance une exception en cas d'échec réseau ou HTTP.
+// Règles de sécurité :
+//  1. La table embarquée prime pour toutes les années qu'elle contient (≤ 2028-09-01).
+//  2. L'API n'alimente que les années futures absentes de la table.
+//  3. Toute réponse invalide (< 4 vacances par an, dates non croissantes, zone absente,
+//     échec réseau) est ignorée silencieusement — repli sur la table embarquée.
+//  4. Si l'API diffère de la table pour une année connue, l'écart est stocké
+//     séparément (hub_vacances_diff_${zone}) et affiché dans les Réglages.
 
 export async function refreshCalendrierScolaire(zone) {
-  const encoded = encodeURIComponent(`zones="${zone === 'A' || zone === 'B' || zone === 'C' ? 'Zone ' + zone : zone}"`)
-  const url = `https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records?limit=200&select=description,start_date,end_date,zones,annee_scolaire&where=${encoded}&order_by=annee_scolaire,start_date`
-  const resp = await fetch(url, { signal: AbortSignal.timeout(10000) })
-  if (!resp.ok) throw new Error(`Erreur HTTP ${resp.status}`)
-  const json = await resp.json()
-  // Dédupliquer par (annee_scolaire, description, start_date)
+  const zoneLabel = (zone === 'A' || zone === 'B' || zone === 'C') ? 'Zone ' + zone : zone
+  const encoded = encodeURIComponent(`zones="${zoneLabel}"`)
+  const url = `https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records?limit=100&select=description,start_date,end_date,zones,annee_scolaire&where=${encoded}&order_by=annee_scolaire,start_date`
+
+  let json
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(10000) })
+    if (!resp.ok) return getVacances(zone)   // repli silencieux
+    json = await resp.json()
+  } catch {
+    return getVacances(zone)   // réseau indisponible → repli silencieux
+  }
+
+  if (!Array.isArray(json?.results) || json.results.length === 0) return getVacances(zone)
+
+  // Dédupliquer et parser toutes les entrées valides
   const seen = new Set()
-  const meta0 = VACANCES_META
-  const vacances = []
-  for (const r of json.results ?? []) {
-    if (!r.start_date || !r.end_date || !r.description) continue
-    const key = (r.annee_scolaire ?? '') + '|' + r.description + '|' + r.start_date
+  const byYear = {}   // annee_scolaire → [vacance]
+  for (const r of json.results) {
+    if (!r.start_date || !r.end_date || !r.description || !r.annee_scolaire) continue
+    const key = r.annee_scolaire + '|' + r.description + '|' + r.start_date
     if (seen.has(key)) continue
     seen.add(key)
     const debut = _apiUTCToParisISO(r.start_date)
@@ -166,24 +203,64 @@ export async function refreshCalendrierScolaire(zone) {
     const fin = _subtractOneDay(retour)
     if (fin < debut) continue
     const nom = _apiDescToNom(r.description)
-    const meta = meta0[nom] ?? meta0['Été']
-    vacances.push({ nom, label: meta.label, emoji: meta.emoji, color: meta.color, debut, fin })
+    const meta = VACANCES_META[nom] ?? VACANCES_META['Été']
+    if (!byYear[r.annee_scolaire]) byYear[r.annee_scolaire] = []
+    byYear[r.annee_scolaire].push({ nom, label: meta.label, emoji: meta.emoji, color: meta.color, debut, fin })
   }
-  _setCachedVacances(zone, vacances)
-  return vacances
+
+  // Validation : chaque année doit avoir ≥ 4 vacances et des dates croissantes
+  const tableVacances = _getVacancesFromPeriodes(zone)
+  const futureVacances = []
+  const diffs = []
+
+  for (const [annee, vacs] of Object.entries(byYear)) {
+    if (vacs.length < 4) continue   // trop peu de données → ignorer
+    // Vérifier dates croissantes
+    let valid = true
+    for (let i = 1; i < vacs.length; i++) {
+      if (vacs[i].debut <= vacs[i - 1].debut) { valid = false; break }
+    }
+    if (!valid) continue
+
+    // Déterminer si l'année est couverte par la table embarquée
+    const firstDebut = vacs[0].debut
+    const isKnownYear = firstDebut < TABLE_LAST_DATE
+
+    if (isKnownYear) {
+      // Comparer avec la table embarquée
+      for (const vac of vacs) {
+        const tableMatch = tableVacances.find((t) => t.nom === vac.nom &&
+          Math.abs(new Date(t.debut) - new Date(vac.debut)) < 3 * 86400000)
+        if (tableMatch && (tableMatch.debut !== vac.debut || tableMatch.fin !== vac.fin)) {
+          diffs.push({ annee, nom: vac.nom, apiDebut: vac.debut, apiFin: vac.fin, tableDebut: tableMatch.debut, tableFin: tableMatch.fin })
+        }
+      }
+      // Table embarquée prime → ne pas écraser
+    } else {
+      futureVacances.push(...vacs)
+    }
+  }
+
+  if (diffs.length > 0) _setCachedDiff(zone, diffs)
+  if (futureVacances.length >= 4) _setCachedFutureVacances(zone, futureVacances)
+
+  return getVacances(zone)
 }
 
 // ─── API publique ──────────────────────────────────────────────────────────────
 
 export function getVacances(zone) {
-  const cached = _getCachedVacances(zone)
-  if (cached) {
-    return cached.map((v) => {
+  // La table embarquée est toujours autoritaire pour les années connues.
+  const embedded = _getVacancesFromPeriodes(zone)
+  // Compléter avec les données API pour les années futures (au-delà de TABLE_LAST_DATE)
+  const future = _getCachedFutureVacances(zone) ?? []
+  const futureFiltered = future
+    .filter((v) => v.debut >= TABLE_LAST_DATE)
+    .map((v) => {
       const meta = VACANCES_META[v.nom] ?? VACANCES_META['Été']
       return { ...v, label: v.label ?? meta.label, emoji: v.emoji ?? meta.emoji, color: v.color ?? meta.color }
     })
-  }
-  return _getVacancesFromPeriodes(zone)
+  return [...embedded, ...futureFiltered]
 }
 
 export function isVacances(dateStr, zone) {
@@ -196,18 +273,27 @@ export function isJourFerie(dateStr) {
 
 // Retourne les vacances + la source des données, pour l'affichage dans les Réglages.
 export function getVacancesInfo(zone) {
+  let hasFutureCache = false
+  let updatedAt = null
   try {
-    const raw = localStorage.getItem(CACHE_KEY(zone))
+    const raw = localStorage.getItem(CACHE_KEY_FUTURE(zone))
     if (raw) {
       const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed.vacances) && parsed.timestamp) {
-        return {
-          vacances: getVacances(zone),
-          source: 'ministère',
-          updatedAt: new Date(parsed.timestamp),
-        }
+      if (Array.isArray(parsed.vacances) && parsed.timestamp && Date.now() - parsed.timestamp < CACHE_TTL) {
+        hasFutureCache = true
+        updatedAt = new Date(parsed.timestamp)
       }
     }
+    // Migration legacy : nettoyer l'ancienne clé si elle existe
+    if (localStorage.getItem(CACHE_KEY_LEGACY(zone))) {
+      localStorage.removeItem(CACHE_KEY_LEGACY(zone))
+    }
   } catch { /* ignore */ }
-  return { vacances: getVacances(zone), source: 'table embarquée', updatedAt: null }
+  const diffs = getCachedDiff(zone)
+  return {
+    vacances: getVacances(zone),
+    source: hasFutureCache ? 'table embarquée + ministère (années futures)' : 'table embarquée',
+    updatedAt,
+    diffs,   // null ou [{annee, nom, apiDebut, apiFin, tableDebut, tableFin}]
+  }
 }
