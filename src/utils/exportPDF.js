@@ -437,6 +437,95 @@ export function exportTravelPDF({ entries, category, periodLabel, teacherName, t
   doc.save('deplacements-' + safeCat + '-' + safeDate + '.pdf')
 }
 
+// ─── Liste des élèves ────────────────────────────────────────────────────────
+
+/**
+ * Génère et télécharge la liste des élèves filtrés.
+ * students[] : { firstName, lastName, instrument, level, schoolName, nextLesson }
+ * columns    : { nom, prenom, instrument, niveau, creneau } (booleans)
+ * schoolLabel : libellé du filtre école actif, ou null
+ */
+export function exportStudentsPDF({ students, columns, schoolLabel, teacherName, teacherAddress, teacherPhone, teacherEmail }) {
+  const doc  = new jsPDF()
+  const now  = new Date()
+  const dateLabel = now.toLocaleDateString('fr-FR')
+  const m    = now.getMonth() // 0-based
+  const y    = now.getFullYear()
+  const schoolYear = m >= 8 ? `${y}–${y + 1}` : `${y - 1}–${y}`
+
+  const docTitle = schoolLabel ? 'Élèves — ' + schoolLabel : 'Liste des élèves'
+  let yPos = drawProfessionalHeader(doc, { teacherName, teacherAddress, teacherPhone, teacherEmail, documentTitle: docTitle })
+  yPos += 10
+
+  doc.setFontSize(PDF_FONT_NORMAL)
+  doc.setTextColor(100, 100, 100)
+  doc.text('Année scolaire : ' + schoolYear, PDF_MARGIN_X, yPos); yPos += PDF_LINE_H
+  doc.text('Édité le : ' + dateLabel,        PDF_MARGIN_X, yPos); yPos += PDF_LINE_H
+  doc.text('Élèves : ' + students.length,    PDF_MARGIN_X, yPos); yPos += PDF_LINE_H + 3
+
+  const COLS = [
+    { key: 'nom',        head: 'Nom',             val: (s) => s.lastName  ?? '—' },
+    { key: 'prenom',     head: 'Prénom',           val: (s) => s.firstName ?? '—' },
+    { key: 'instrument', head: 'Instrument',       val: (s) => s.instrument ?? '—' },
+    { key: 'niveau',     head: 'Niveau',           val: (s) => s.level ?? '—' },
+    { key: 'creneau',    head: 'Créneau habituel', val: (s) => s.nextLesson ?? '—' },
+  ]
+  const activeCols = COLS.filter((c) => columns[c.key])
+  if (activeCols.length === 0) return // rien à exporter
+
+  // Groupement par école (clé = schoolName ou "Cours particuliers")
+  const groupMap = new Map()
+  for (const s of students) {
+    const key = s.schoolName || 'Cours particuliers'
+    if (!groupMap.has(key)) groupMap.set(key, [])
+    groupMap.get(key).push(s)
+  }
+  const groups = [...groupMap.entries()].sort(([a], [b]) => a.localeCompare(b, 'fr'))
+  const multiGroup = groups.length > 1
+
+  const sortStudents = (arr) =>
+    [...arr].sort((a, b) => {
+      const n = (a.lastName ?? '').localeCompare(b.lastName ?? '', 'fr')
+      return n !== 0 ? n : (a.firstName ?? '').localeCompare(b.firstName ?? '', 'fr')
+    })
+
+  const didDrawPage = (data) => {
+    doc.setFontSize(7)
+    doc.setTextColor(150, 150, 150)
+    doc.text('Page ' + data.pageNumber, doc.internal.pageSize.getWidth() / 2, doc.internal.pageSize.getHeight() - 8, { align: 'center' })
+  }
+
+  let isFirst = true
+  for (const [school, slist] of groups) {
+    const sorted = sortStudents(slist)
+    let startY = isFirst ? yPos : (doc.lastAutoTable?.finalY ?? yPos) + (multiGroup ? 12 : 8)
+    isFirst = false
+
+    if (multiGroup) {
+      doc.setFontSize(11)
+      doc.setTextColor(60, 60, 60)
+      doc.setFont(undefined, 'bold')
+      doc.text(school + '  (' + sorted.length + ' élève' + (sorted.length > 1 ? 's' : '') + ')', PDF_MARGIN_X, startY)
+      doc.setFont(undefined, 'normal')
+      startY += 5
+    }
+
+    autoTable(doc, {
+      startY,
+      head: [activeCols.map((c) => c.head)],
+      body: sorted.map((s) => activeCols.map((c) => c.val(s))),
+      headStyles: { fillColor: [192, 57, 43], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [245, 245, 245] },
+      styles: { fontSize: 9, cellPadding: 3, overflow: 'linebreak' },
+      margin: { left: PDF_MARGIN_X, right: PDF_MARGIN_X },
+      didDrawPage,
+    })
+  }
+
+  const safeSchool = toSafeFilename(schoolLabel || 'eleves')
+  doc.save('eleves-' + safeSchool + '-' + now.toISOString().slice(0, 10) + '.pdf')
+}
+
 // ─── Export Planning intelligent ─────────────────────────────────────────────
 
 /**

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Search, Plus, X, Archive, ArchiveX, Download } from 'lucide-react'
+import { Search, Plus, X, Archive, ArchiveX, Download, FileText } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { usePeriod, filterStudentsByPeriod } from '../../context/PeriodContext'
 import AddStudentModal from '../../components/AddStudentModal'
@@ -13,6 +13,25 @@ import { fetchUpcomingLessons, buildNextLessonByStudent, formatNextLessonLabel }
 import { initials } from '../../utils/format'
 import { getSchoolColor } from '../../utils/schoolColors'
 import { downloadVCardGroup } from '../../utils/vcard'
+import { exportStudentsPDF } from '../../utils/exportPDF'
+
+const PDF_COLS_KEY = 'students_pdf_cols'
+const PDF_COLS = [
+  { key: 'nom',        label: 'Nom' },
+  { key: 'prenom',     label: 'Prénom' },
+  { key: 'instrument', label: 'Instrument' },
+  { key: 'niveau',     label: 'Niveau' },
+  { key: 'creneau',    label: 'Créneau habituel' },
+]
+const PDF_COLS_DEFAULT = { nom: true, prenom: true, instrument: true, niveau: false, creneau: true }
+
+function loadPdfCols() {
+  try {
+    const raw = localStorage.getItem(PDF_COLS_KEY)
+    if (raw) return { ...PDF_COLS_DEFAULT, ...JSON.parse(raw) }
+  } catch { /* localStorage indisponible */ }
+  return { ...PDF_COLS_DEFAULT }
+}
 
 const LEVELS = ['Debutant', 'Intermediaire', 'Avance']
 const AGE_GROUPS = [
@@ -62,6 +81,8 @@ export default function StudentsPage() {
   // pendingArchive : élève en attente de confirmation d'archivage
   const [pendingArchive, setPendingArchive] = useState(null) // { id, name }
   const [archiving, setArchiving] = useState(false)
+  const [showPdfModal, setShowPdfModal] = useState(false)
+  const [pdfCols, setPdfCols] = useState(loadPdfCols)
 
   // Persiste les filtres dans sessionStorage pour restauration au retour
   useEffect(() => {
@@ -163,6 +184,19 @@ export default function StudentsPage() {
     reload()
   }
 
+  const handleExportPdf = () => {
+    exportStudentsPDF({
+      students: filtered,
+      columns: pdfCols,
+      schoolLabel: filterSchool || null,
+      teacherName: user?.user_metadata?.full_name ?? '',
+      teacherAddress: '',
+      teacherPhone: '',
+      teacherEmail: user?.email ?? '',
+    })
+    setShowPdfModal(false)
+  }
+
   if (loading) return <LoadingBlock label="Chargement des élèves" />
   if (error) return <ErrorBlock message={error} onRetry={reload} />
 
@@ -189,6 +223,16 @@ export default function StudentsPage() {
           >
             <Archive className="w-4 h-4" />
             {showArchived ? 'Actifs' : 'Archivés'}
+          </button>
+          <button
+            type="button"
+            title={filtered.length === 0 ? 'Aucun élève à exporter' : `Exporter ${filtered.length} élève${filtered.length > 1 ? 's' : ''} en PDF`}
+            onClick={() => setShowPdfModal(true)}
+            disabled={filtered.length === 0}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <FileText className="w-4 h-4" />
+            PDF
           </button>
           {filtered.length > 0 && (
             <button
@@ -343,6 +387,50 @@ export default function StudentsPage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {showPdfModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+          <div className="glass-panel rounded-2xl p-6 max-w-sm w-full shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm font-semibold">Exporter en PDF</p>
+              <button type="button" onClick={() => setShowPdfModal(false)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">Colonnes à inclure :</p>
+            <div className="space-y-3 mb-4">
+              {PDF_COLS.map((c) => (
+                <label key={c.key} className="flex items-center gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={!!pdfCols[c.key]}
+                    onChange={(e) => {
+                      const next = { ...pdfCols, [c.key]: e.target.checked }
+                      setPdfCols(next)
+                      try { localStorage.setItem(PDF_COLS_KEY, JSON.stringify(next)) } catch { /* ok */ }
+                    }}
+                    className="w-4 h-4 accent-guitar-600"
+                  />
+                  <span className="text-sm">{c.label}</span>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mb-5">
+              {filtered.length} élève{filtered.length > 1 ? 's' : ''}{filterSchool ? ` — ${filterSchool}` : ''}
+            </p>
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setShowPdfModal(false)}
+                className="flex-1 py-2.5 rounded-xl border border-border-subtle text-sm text-muted-foreground hover:border-border transition-colors">
+                Annuler
+              </button>
+              <button type="button" onClick={handleExportPdf} disabled={!Object.values(pdfCols).some(Boolean)}
+                className="flex-1 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40">
+                Exporter
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
