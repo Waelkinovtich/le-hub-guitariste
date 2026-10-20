@@ -8,7 +8,7 @@ import { isVacances } from '../utils/vacances'
 const enVacances = (iso, zone) => zone != null && isVacances(iso, zone) != null
 
 const LESSON_SELECT = `
-  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group, recurrence_interval_weeks, planning_status, context_type, rattrapage_de_lesson_id, students_notified,
+  id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group, recurrence_interval_weeks, planning_status, context_type, rattrapage_de_lesson_id, students_notified, suspend_during_holidays,
   student:${TABLES.students} (id, first_name, last_name, level, instrument, lesson_type, school_name)
 `
 
@@ -32,7 +32,8 @@ function mapLesson(row) {
     planningStatus:       row.planning_status ?? 'confirme',
     contextType:          row.context_type ?? null,
     rattrapageDeLessonId: row.rattrapage_de_lesson_id ?? null,
-    studentsNotified:     row.students_notified ?? false,
+    studentsNotified:       row.students_notified ?? false,
+    suspendDuringHolidays:  row.suspend_during_holidays ?? false,
     studentName,
     dateLabel: formatLessonDateLabel(row.lesson_date),
     timeLabel: formatTime(row.lesson_time),
@@ -324,7 +325,7 @@ export async function fetchGroupSessionsInRange({ teacherId, from, to }) {
 
   const { data: sessions, error: sErr } = await supabase
     .from('group_sessions')
-    .select('id, group_id, session_date, session_time, duration_minutes, status, cancel_reason, recurrence_series_id, recurrence_interval_weeks')
+    .select('id, group_id, session_date, session_time, duration_minutes, status, cancel_reason, recurrence_series_id, recurrence_interval_weeks, suspend_during_holidays')
     .in('group_id', groupIds)
     .gte('session_date', from)
     .lte('session_date', to)
@@ -350,8 +351,9 @@ export async function fetchGroupSessionsInRange({ teacherId, from, to }) {
       durationMinutes: s.duration_minutes || g.duration_minutes,
       topic:           g.name,
       status:          s.status || 'planifie',
-      cancelReason:    s.cancel_reason ?? null,
-      studentName:     g.name,
+      cancelReason:           s.cancel_reason ?? null,
+      suspendDuringHolidays:  s.suspend_during_holidays ?? false,
+      studentName:            g.name,
       groupType:       g.type,
       sessionStatus:   s.status || 'prevue',
       schoolName:      g.school_name ?? null,
@@ -388,7 +390,14 @@ export async function createRecurringGroupSessions({ groupId, firstDate, session
   const dates    = buildGroupSessionDates(firstDate, endDate, intervalWeeks, { suspendDuringHolidays, zone })
   if (dates.length === 0) throw new Error('Aucune date générée pour la série.')
 
-  const rows = dates.map((d) => ({
+  // Déduplication : ne jamais insérer sur une date déjà prise pour ce groupe
+  const { data: existing } = await supabase
+    .from('group_sessions').select('session_date').eq('group_id', groupId).in('session_date', dates)
+  const existingDates = new Set((existing ?? []).map(r => r.session_date))
+  const filteredDates = dates.filter(d => !existingDates.has(d))
+  if (filteredDates.length === 0) throw new Error('Aucune date disponible — toutes les occurrences existent déjà.')
+
+  const rows = filteredDates.map((d) => ({
     group_id:                  groupId,
     session_date:              d,
     session_time:              sessionTime,
@@ -602,11 +611,21 @@ export async function updateGroupSessionRange({ seriesId, groupId, newStartDate,
     if (delErr) throw new Error(delErr.message)
   }
 
-  // 5. Insérer les nouvelles, en sautant les dates déjà occupées
+  // 5. Déduplication globale : séances hors-série existantes pour ce groupe
   const occupied = new Set([...effectueeDates, ...manualDates])
+  const candidateDates = [...targetDates].filter(d => !occupied.has(d))
+  let extraOccupied = new Set()
+  if (candidateDates.length > 0) {
+    const { data: outsideSeries } = await supabase
+      .from('group_sessions').select('session_date')
+      .eq('group_id', groupId).neq('recurrence_series_id', seriesId)
+      .in('session_date', candidateDates)
+    extraOccupied = new Set((outsideSeries ?? []).map(r => r.session_date))
+  }
+
   const rows = []
   for (const d of targetDates) {
-    if (!occupied.has(d)) {
+    if (!occupied.has(d) && !extraOccupied.has(d)) {
       rows.push({
         group_id:                  groupId,
         session_date:              d,
@@ -623,7 +642,40 @@ export async function updateGroupSessionRange({ seriesId, groupId, newStartDate,
     if (insErr) throw new Error(insErr.message)
   }
 
-  return { inserted: rows.length, preserved: manuallyModified.length }
+  return { inserted: rows.length, preserved: manuallyModified.length + extraOccupied.size }
+}
+
+/**
+ * Crée une série à partir d'une séance orpheline (sans recurrence_series_id).
+ * Affecte le seriesId à la séance existante, puis génère les occurrences futures
+ * via updateGroupSessionRange (qui déduplication les dates déjà prises).
+ */
+export async function initGroupSessionSeries({ sessionId, groupId, firstDate, endDate, intervalWeeks, sessionTime, durationMinutes, suspendDuringHolidays = false, zone = null }) {
+  const seriesId = crypto.randomUUID()
+  const safeInterval = Math.max(1, Math.round(intervalWeeks))
+  // Rattacher la séance de départ à la nouvelle série
+  const { error: updErr } = await supabase
+    .from('group_sessions')
+    .update({ recurrence_series_id: seriesId, recurrence_interval_weeks: safeInterval })
+    .eq('id', sessionId)
+  if (updErr) throw new Error(updErr.message)
+  // Adopter dans la série toutes les séances orphelines du même groupe dans la plage cible
+  const targetDates = buildGroupSessionDates(firstDate, endDate, safeInterval, { suspendDuringHolidays, zone })
+  if (targetDates.length > 0) {
+    const { data: orphans } = await supabase
+      .from('group_sessions')
+      .select('id').eq('group_id', groupId).is('recurrence_series_id', null)
+      .in('session_date', targetDates)
+    if (orphans && orphans.length > 0) {
+      const orphanIds = orphans.map(o => o.id)
+      await supabase.from('group_sessions')
+        .update({ recurrence_series_id: seriesId, recurrence_interval_weeks: safeInterval })
+        .in('id', orphanIds)
+    }
+  }
+  // Générer les occurrences restantes (séances déjà existantes ignorées par déduplication)
+  const result = await updateGroupSessionRange({ seriesId, groupId, newStartDate: firstDate, newEndDate: endDate, intervalWeeks, sessionTime, durationMinutes, suspendDuringHolidays, zone })
+  return { seriesId, ...result }
 }
 
 // ─── Présence aux séances de groupe (group_session_attendance) ───────────────
@@ -683,6 +735,15 @@ export async function getOrCreateGroupSession({ groupId, sessionDate, sessionTim
     .single()
   if (error) throw new Error(error.message)
   return created.id
+}
+
+/**
+ * Rétablit un cours suspendu pendant les vacances pour cet élève seulement.
+ * Pose suspend_during_holidays=false sur la leçon identifiée par son id.
+ */
+export async function maintainLessonDuringHolidays(lessonId) {
+  const { error } = await supabase.from(TABLES.lessons).update({ suspend_during_holidays: false }).eq('id', lessonId)
+  if (error) throw new Error(error.message)
 }
 
 /**

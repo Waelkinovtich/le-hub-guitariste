@@ -12,6 +12,7 @@ import {
   fetchGroupSeriesDateRange,
   updateRecurrenceRange,
   updateGroupSessionRange,
+  initGroupSessionSeries,
 } from '../services/lessons'
 import { isVacances } from '../utils/vacances'
 
@@ -113,18 +114,23 @@ export default function RecurrencePanel({ lesson, onClose, onSaved, schoolZone =
     try {
       let count = 0
       if (isGroupe) {
-        if (!seriesId) throw new Error('Pas de série récurrente associée à cette séance de groupe.')
-        count = await updateGroupSessionRange({
-          seriesId,
-          groupId:              lesson._groupId,
-          newStartDate:         firstDate,
-          newEndDate:           lastDate,
+        const sessionParams = {
+          groupId:               lesson._groupId,
+          firstDate,
+          endDate:               lastDate,
           intervalWeeks,
-          sessionTime:          lesson.lessonTime,
-          durationMinutes:      lesson.durationMinutes,
+          sessionTime:           lesson.lessonTime,
+          durationMinutes:       lesson.durationMinutes,
           suspendDuringHolidays: suspendHolidays,
-          zone:                 schoolZone,
-        })
+          zone:                  schoolZone,
+        }
+        if (!seriesId) {
+          // Séance orpheline : créer une nouvelle série en la rattachant
+          const res = await initGroupSessionSeries({ sessionId: lesson._groupSessionId, ...sessionParams })
+          count = res.inserted
+        } else {
+          count = await updateGroupSessionRange({ seriesId, newStartDate: firstDate, newEndDate: lastDate, ...sessionParams })
+        }
       } else {
         if (!groupId) throw new Error('Ce cours ne fait pas partie d\'une série récurrente.')
         count = await updateRecurrenceRange({

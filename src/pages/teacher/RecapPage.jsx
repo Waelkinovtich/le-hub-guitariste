@@ -8,6 +8,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
+import { isSuspendedByHolidays } from '../../utils/suspendedByHolidays'
 import { fetchMileageRates } from '../../services/mileageRates'
 import { FileDown, Loader2, ChevronDown } from 'lucide-react'
 import jsPDF from 'jspdf'
@@ -16,7 +17,7 @@ import autoTable from 'jspdf-autotable'
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
 const STATUS_REALISE = ['present', 'excuse', 'rattrape']
-// annule_prof exclu : un cours annulé n'est pas "planifié" (les vacances cancel_reason='vacances' non plus)
+// annule_prof exclu. Les cours suspendus vacances (suspend_during_holidays=true en période de vacances) sont exclus.
 const STATUS_PLANIFIE = ['planifie', ...STATUS_REALISE, 'absent']
 
 const STATUS_LABELS = {
@@ -132,7 +133,7 @@ export default function RecapPage() {
     try {
       const [{ data: ls, error: le }, { data: tr, error: te }, fetchedRates] = await Promise.all([
         supabase.from('lessons')
-          .select('id, status, duration_minutes, lesson_date, student_id, context_type, school_name')
+          .select('id, status, duration_minutes, lesson_date, student_id, context_type, school_name, cancel_reason, recurrence_group, rattrapage_de_lesson_id, suspend_during_holidays')
           .eq('teacher_id', user.id)
           .gte('lesson_date', from)
           .lte('lesson_date', to),
@@ -159,9 +160,10 @@ export default function RecapPage() {
 
   // ── Stats cours ──────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
+    const zone = user.schoolZone ?? 'B'
     const relevant = view === 'realise'
-      ? lessons.filter((l) => STATUS_REALISE.includes(l.status))
-      : lessons.filter((l) => STATUS_PLANIFIE.includes(l.status))
+      ? lessons.filter((l) => STATUS_REALISE.includes(l.status) && !isSuspendedByHolidays(l, zone))
+      : lessons.filter((l) => STATUS_PLANIFIE.includes(l.status) && !isSuspendedByHolidays(l, zone))
 
     const byStatus = {}
     for (const s of (view === 'realise' ? STATUS_REALISE : STATUS_PLANIFIE)) {
@@ -195,9 +197,10 @@ export default function RecapPage() {
   const periodLabel = fmtPeriod(from, to)
 
   const handleExportCSV = () => {
+    const zone = user.schoolZone ?? 'B'
     const relevant = view === 'realise'
-      ? lessons.filter((l) => STATUS_REALISE.includes(l.status))
-      : lessons.filter((l) => STATUS_PLANIFIE.includes(l.status))
+      ? lessons.filter((l) => STATUS_REALISE.includes(l.status) && !isSuspendedByHolidays(l, zone))
+      : lessons.filter((l) => STATUS_PLANIFIE.includes(l.status) && !isSuspendedByHolidays(l, zone))
     const rows = relevant.map((l) => ({
       Date:     l.lesson_date,
       Statut:   STATUS_LABELS[l.status] ?? l.status,

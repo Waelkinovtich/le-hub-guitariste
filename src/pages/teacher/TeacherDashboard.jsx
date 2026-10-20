@@ -12,6 +12,7 @@ import { fetchTeacherStudents } from '../../services/students'
 import { fetchUpcomingLessons, fetchLessonsInRange, fetchRattrapageStats } from '../../services/lessons'
 import { endOfWeek, startOfWeek, toISODate } from '../../utils/format'
 import { calculerTauxAbsence } from '../../utils/absenceStats'
+import { isSuspendedByHolidays } from '../../utils/suspendedByHolidays'
 
 const statIcons = [Users, Calendar, BookOpen, TrendingUp]
 const fmtH = (m) => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? String(m % 60).padStart(2, '0') : ''}` : `${m}min`
@@ -20,10 +21,11 @@ const fmtH = (m) => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? String(m % 60).p
 //   weekLessons = tous statuts sur lun-dim courant (y compris annulé/émargé).
 //   upcomingPlanifie = planifié à partir d'aujourd'hui, sans borne sup (peut dépasser la semaine).
 // Solution : fonction partagée qui calcule les cours de la semaine par statut.
-function countSemaine(lessons) {
-  const planifie  = lessons.filter((l) => l.status === 'planifie').length
-  const emargees  = lessons.filter((l) => ['present','absent','excuse'].includes(l.status)).length
-  const total     = lessons.length
+function countSemaine(lessons, zone) {
+  const visible   = lessons.filter((l) => !isSuspendedByHolidays(l, zone))
+  const planifie  = visible.filter((l) => l.status === 'planifie').length
+  const emargees  = visible.filter((l) => ['present','absent','excuse'].includes(l.status)).length
+  const total     = visible.length
   return { total, planifie, emargees }
 }
 
@@ -96,14 +98,15 @@ export default function TeacherDashboard() {
           )
         : 0
     const abs = calculerTauxAbsence(data.weekLessons)
-    const semaine = countSemaine(data.weekLessons)
+    const zone = user.schoolZone ?? 'B'
+    const semaine = countSemaine(data.weekLessons, zone)
 
     const STATUTS_EMARGEMENT = new Set(['present', 'absent', 'excuse'])
     const minsWorked = data.weekLessons
-      .filter((l) => STATUTS_EMARGEMENT.has(l.status))
+      .filter((l) => STATUTS_EMARGEMENT.has(l.status) && !isSuspendedByHolidays(l, zone))
       .reduce((s, l) => s + (l.durationMinutes ?? 0), 0)
     const minsRemaining = data.weekLessons
-      .filter((l) => l.status === 'planifie')
+      .filter((l) => l.status === 'planifie' && !isSuspendedByHolidays(l, zone))
       .reduce((s, l) => s + (l.durationMinutes ?? 0), 0)
     return [
       {
@@ -140,8 +143,8 @@ export default function TeacherDashboard() {
   if (loading) return <LoadingBlock />
   if (error) return <ErrorBlock message={error} onRetry={reload} />
 
-  // T4d : filtrer les prochains cours sur status=planifie uniquement
-  const upcomingPlanifie = (data.upcoming ?? []).filter((l) => l.status === 'planifie')
+  // T4d : filtrer les prochains cours sur status=planifie uniquement, hors suspendus vacances
+  const upcomingPlanifie = (data.upcoming ?? []).filter((l) => l.status === 'planifie' && !isSuspendedByHolidays(l, user.schoolZone ?? 'B'))
   const upcomingVisible = showAllUpcoming ? upcomingPlanifie : upcomingPlanifie.slice(0, 2)
 
   // Calcul du taux d'absence de la semaine (cours émargés uniquement)

@@ -7,13 +7,14 @@ import { useAuth } from '../../context/AuthContext'
 import HelpTooltip from '../../components/HelpTooltip'
 import { useFetch } from '../../hooks/useFetch'
 import { useRegisterRefresh } from '../../contexts/RefreshContext'
-import { fetchLessonsInRange, updateLessonPlanningStatus, updateLessonStatus, getOrCreateGroupSession, updateLesson } from '../../services/lessons'
+import { fetchLessonsInRange, updateLessonPlanningStatus, updateLessonStatus, getOrCreateGroupSession, updateLesson, maintainLessonDuringHolidays } from '../../services/lessons'
 import { syncAbsenceDeclarations } from '../../services/absenceDeclarations'
 import { supabase } from '../../lib/supabase'
 import { useUndoRedo } from '../../contexts/UndoRedoContext'
 import { fetchTeacherSchools } from '../../services/schools'
 import { startOfWeek, toISODate } from '../../utils/format'
 import { getPériodes, getCurrentPériode, isVacances } from '../../utils/vacances'
+import { isSuspendedByHolidays } from '../../utils/suspendedByHolidays'
 import AddLessonModal from '../../components/AddLessonModal'
 import LessonStatusModal from '../../components/LessonStatusModal'
 import GroupAttendanceModal from '../../components/GroupAttendanceModal'
@@ -167,8 +168,11 @@ export default function PlanningPage() {
   const [holidayRemovalPreview, setHolidayRemovalPreview] = useState(null)
   const [holidayRemovalLoading, setHolidayRemovalLoading] = useState(false)
   const [holidayRemovalDone, setHolidayRemovalDone] = useState(false)
-  const [holidayRemovedIds, setHolidayRemovedIds] = useState([])           // pour undo lessons
-  const [holidayRemovedGroupIds, setHolidayRemovedGroupIds] = useState([]) // pour undo group_sessions
+  const [holidayRemovedIds, setHolidayRemovedIds] = useState([])
+  const [holidayRemovedGroupIds, setHolidayRemovedGroupIds] = useState([])
+  // Bande « cours suspendus »
+  const [showSuspendedList, setShowSuspendedList] = useState(false)
+  const [maintainingId, setMaintainingId] = useState(null)
 
   // Créneaux réservés (hebdomadaires, indépendants de la plage de dates)
   const [reservedSlots, setReservedSlots]   = useState([])
@@ -342,7 +346,7 @@ export default function PlanningPage() {
     let all = (lessons ?? []).map((l) =>
       lessonStatusOverrides[l.id] ? { ...l, status: lessonStatusOverrides[l.id] } : l
     )
-    all = all.filter((l) => l.cancelReason !== 'vacances')
+    all = all.filter((l) => !isSuspendedByHolidays(l, zone))
     if (hideEnvisages) all = all.filter((l) => l.planningStatus !== 'envisage')
     if (selectedDay) return all.filter((l) => l.lessonDate === selectedDay)
     if (view === 'semaine') {
@@ -353,9 +357,18 @@ export default function PlanningPage() {
   }, [lessons, lessonStatusOverrides, selectedDay, view, weekStart, weekEnd, hideEnvisages])
 
   const lessonsNoVacances = useMemo(
-    () => (lessons ?? []).filter((l) => l.cancelReason !== 'vacances'),
-    [lessons]
+    () => (lessons ?? []).filter((l) => !isSuspendedByHolidays(l, zone)),
+    [lessons, zone]
   )
+
+  // Cours suspendus dans la semaine affichée (pour la bande "Cours suspendus")
+  const suspendedThisWeek = useMemo(() => {
+    if (view !== 'semaine' || !weekVacancePériode) return []
+    const from = toISODate(weekStart), to = toISODate(weekEnd)
+    return (lessons ?? []).filter(
+      (l) => !l.isGroup && l.lessonDate >= from && l.lessonDate <= to && isSuspendedByHolidays(l, zone)
+    )
+  }, [lessons, view, weekVacancePériode, weekStart, weekEnd, zone])
 
   // Génère l'URL de navigation GPS selon la préférence du prof et la disponibilité des
   // coordonnées. Un seul champ destination est renseigné : l'app de navigation démarre
@@ -508,14 +521,14 @@ export default function PlanningPage() {
       if (ids.length > 0) {
         const { error } = await supabase
           .from('lessons')
-          .update({ status: 'annule_prof', cancel_reason: 'vacances', suspend_during_holidays: true })
+          .update({ suspend_during_holidays: true })
           .in('id', ids)
         if (error) throw new Error(error.message)
       }
       if (groupIds.length > 0) {
         const { error } = await supabase
           .from('group_sessions')
-          .update({ status: 'annulee', cancel_reason: 'vacances' })
+          .update({ suspend_during_holidays: true })
           .in('id', groupIds)
         if (error) throw new Error(error.message)
       }
@@ -539,14 +552,14 @@ export default function PlanningPage() {
       if (holidayRemovedIds.length > 0) {
         const { error } = await supabase
           .from('lessons')
-          .update({ status: 'planifie', cancel_reason: null, suspend_during_holidays: false })
+          .update({ suspend_during_holidays: false })
           .in('id', holidayRemovedIds)
         if (error) throw new Error(error.message)
       }
       if (holidayRemovedGroupIds.length > 0) {
         const { error } = await supabase
           .from('group_sessions')
-          .update({ status: 'prevue', cancel_reason: null })
+          .update({ suspend_during_holidays: false })
           .in('id', holidayRemovedGroupIds)
         if (error) throw new Error(error.message)
       }
@@ -639,7 +652,7 @@ export default function PlanningPage() {
             <button
               type="button"
               onClick={() => {
-                const filtered = (lessons ?? []).filter((l) => l.lessonDate >= icsRange.from && l.lessonDate <= icsRange.to)
+                const filtered = (lessons ?? []).filter((l) => l.lessonDate >= icsRange.from && l.lessonDate <= icsRange.to && !isSuspendedByHolidays(l, zone))
                 const yr = currentSchoolYear()
                 downloadIcs(filtered, `planning-guitare-${yr}.ics`)
               }}
@@ -664,6 +677,47 @@ export default function PlanningPage() {
               className="text-xs underline underline-offset-2 hover:no-underline disabled:opacity-40">
               Défaire
             </button>
+          )}
+        </div>
+      )}
+
+      {/* Bande cours suspendus pendant les vacances */}
+      {suspendedThisWeek.length > 0 && weekVacancePériode && (
+        <div className="glass-panel rounded-2xl mb-4 border border-amber-400/30 bg-amber-500/5 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowSuspendedList((v) => !v)}
+            className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+          >
+            <span className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+              {weekVacancePériode.emoji} {weekVacancePériode.label} — cours suspendus ({suspendedThisWeek.length})
+            </span>
+            <span className="text-amber-600 dark:text-amber-400 text-xs">{showSuspendedList ? '▲' : '▼'}</span>
+          </button>
+          {showSuspendedList && (
+            <div className="px-4 pb-3 space-y-2">
+              {suspendedThisWeek.map((l) => (
+                <div key={l.id} className="flex items-center justify-between gap-3 py-1.5 border-t border-amber-400/20 first:border-0">
+                  <span className="text-sm text-muted-foreground">
+                    <span className="font-medium text-foreground">{l.studentName}</span>
+                    {' — '}{l.dateLabel} {l.timeLabel} ({l.durationMinutes} min)
+                  </span>
+                  <button
+                    type="button"
+                    disabled={maintainingId === l.id}
+                    onClick={async () => {
+                      setMaintainingId(l.id)
+                      try { await maintainLessonDuringHolidays(l.id); reload() }
+                      catch (e) { alert('Erreur : ' + e.message) }
+                      finally { setMaintainingId(null) }
+                    }}
+                    className="flex-shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center px-3 py-2 rounded-xl border border-amber-400/40 text-xs text-amber-700 dark:text-amber-300 hover:bg-amber-500/15 transition-colors disabled:opacity-40"
+                  >
+                    {maintainingId === l.id ? '…' : 'Maintenir'}
+                  </button>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}

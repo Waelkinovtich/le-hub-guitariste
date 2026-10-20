@@ -14,6 +14,7 @@ import { LoadingBlock, ErrorBlock } from '../../components/DataState'
 import { exportÉmargementPDF } from '../../utils/exportPDF'
 import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
 import { LESSON_STATUSES } from '../../utils/lessonStatus'
+import { isSuspendedByHolidays } from '../../utils/suspendedByHolidays'
 import { minutesToLabel } from '../../utils/format'
 import LessonStatusModal from '../../components/LessonStatusModal'
 import AddLessonModal from '../../components/AddLessonModal'
@@ -189,7 +190,7 @@ export default function ÉmargementPage() {
     ? (data?.lessons ?? [])
     : filterLessonsByPeriod(data?.lessons ?? [], periodCtx)
   const allItems = periodFiltered
-    .filter((l) => !(l.cancelReason === 'vacances'))  // tuiles vacances masquées
+    .filter((l) => !isSuspendedByHolidays(l, user.schoolZone ?? 'B'))  // cours suspendus vacances masqués
     .filter((l) => !filterSchool || l.schoolName === filterSchool || l.student?.school_name === filterSchool || (filterSchool === 'particulier' && !l.student?.school_name && !l.isGroup))
   const allLessons = allItems.filter((l) => !l.isGroup)
   // Filtre "non émargés" : status === 'planifie' (jamais modifié depuis la création)
@@ -270,7 +271,7 @@ export default function ÉmargementPage() {
   const presents = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'present').length
   const absents = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'absent').length
   const excuses = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'excuse').length
-  const annulés = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'annule_prof' && l.cancelReason !== 'vacances').length
+  const annulés = allLessons.filter((l) => (lessonStatusOverrides[l.id] ?? l.status) === 'annule_prof' && !isSuspendedByHolidays(l, user.schoolZone ?? 'B')).length
   const emargees = presents + absents + excuses
   const taux = emargees > 0 ? Math.round((presents / emargees) * 100) : 0
 

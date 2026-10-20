@@ -7,6 +7,7 @@ import { MapPin, Check, Loader2, Car, Bike, Motorbike, Search, AlertCircle, Brie
 import { useTheme, THEMES } from '../../hooks/useTheme'
 import { fetchMileageRates, upsertMileageRate, deleteMileageRate, seedDefaultRates } from '../../services/mileageRates'
 import { applyHolidaysToAllSchoolSeries } from '../../services/lessons'
+import { getVacancesInfo, refreshCalendrierScolaire } from '../../utils/vacances'
 import { DEFAULT_SCORE_WEIGHTS } from '../../services/schools'
 import HelpTooltip from '../../components/HelpTooltip'
 
@@ -165,6 +166,9 @@ export default function SettingsPage() {
   const [savingZone, setSavingZone] = useState(false)
   const [savedZone, setSavedZone]   = useState(false)
   const [errorZone, setErrorZone]   = useState(null)
+  const [vacInfo, setVacInfo]         = useState(() => getVacancesInfo(user?.schoolZone ?? 'B'))
+  const [refreshingVac, setRefreshingVac] = useState(false)
+  const [vacError, setVacError]       = useState(null)
   const [applyingHolidays, setApplyingHolidays] = useState(false)
   const [appliedHolidays, setAppliedHolidays]   = useState(false)
   const [holidaysPreview, setHolidaysPreview]   = useState(null) // { seriesCount, lessonCount } | null
@@ -313,6 +317,19 @@ export default function SettingsPage() {
     if (err) { setErrorZone('Erreur : ' + err.message); return }
     setUser((prev) => ({ ...prev, schoolZone: zone }))
     setSavedZone(true); setTimeout(() => setSavedZone(false), 2000)
+    setVacInfo(getVacancesInfo(zone))
+  }
+
+  async function handleRefreshVac() {
+    setRefreshingVac(true); setVacError(null)
+    try {
+      await refreshCalendrierScolaire(zone)
+      setVacInfo(getVacancesInfo(zone))
+    } catch (e) {
+      setVacError(e.message ?? 'Erreur réseau')
+    } finally {
+      setRefreshingVac(false)
+    }
   }
 
   async function handleGeocode() {
@@ -635,6 +652,48 @@ export default function SettingsPage() {
               {(savingZone || savingProf) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
               {(savingZone || savingProf) ? 'Sauvegarde…' : (savedZone || savedProf) ? 'Enregistré !' : 'Enregistrer'}
             </button>
+
+            {/* ── Périodes de vacances ──────────────────────────────────── */}
+            <div className="border border-border-subtle rounded-xl p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium">Périodes de vacances — Zone {zone}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Source : {vacInfo.source}
+                    {vacInfo.updatedAt ? ` — mis à jour le ${vacInfo.updatedAt.toLocaleDateString('fr-FR')}` : ''}
+                  </p>
+                </div>
+                <button
+                  onClick={handleRefreshVac}
+                  disabled={refreshingVac}
+                  title="Actualiser depuis le calendrier scolaire officiel"
+                  className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-subtle text-xs text-muted-foreground hover:text-foreground hover:bg-surface-overlay transition-colors disabled:opacity-50"
+                >
+                  {refreshingVac ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  Actualiser
+                </button>
+              </div>
+              {vacError && <p className="text-xs text-guitar-400">{vacError}</p>}
+              <div className="space-y-1">
+                {vacInfo.vacances
+                  .filter((v) => v.debut >= new Date().getFullYear() - 1 + '-01-01')
+                  .slice(0, 8)
+                  .map((v) => (
+                    <div key={v.debut + v.nom} className="flex items-center justify-between text-xs py-0.5">
+                      <span className="flex items-center gap-1.5">
+                        <span>{v.emoji}</span>
+                        <span>{v.label ?? v.nom}</span>
+                      </span>
+                      <span className="text-muted-foreground tabular-nums">
+                        {new Date(v.debut + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
+                        {' – '}
+                        {new Date(v.fin + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+
             <button
               onClick={async () => {
                 setApplyingHolidays(true)

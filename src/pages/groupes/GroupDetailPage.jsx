@@ -7,6 +7,7 @@ import AddMemberModal from './AddMemberModal'
 import AddSessionModal from './AddSessionModal'
 import GroupAttendanceModal from './GroupAttendanceModal'
 import { usePeriod, filterLessonsByPeriod } from '../../context/PeriodContext'
+import { useAuth } from '../../context/AuthContext'
 
 const TYPES = {
   cours_collectif: { label: 'Cours collectif', icon: '🎸', color: 'bg-blue-500/15 text-blue-400' },
@@ -28,6 +29,7 @@ function fmt(min) {
 export default function GroupDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const { period: periodCtx } = usePeriod()
   const [group, setGroup] = useState(null)
   const [members, setMembers] = useState([])
@@ -154,7 +156,7 @@ export default function GroupDetailPage() {
       </div>
 
       {showMember && <AddMemberModal groupId={id} onClose={() => setShowMember(false)} onAdded={loadData} />}
-      {showSession && <AddSessionModal groupId={id} defaultDuration={group.duration_minutes} onClose={() => setShowSession(false)} onAdded={loadData} />}
+      {showSession && <AddSessionModal groupId={id} defaultDuration={group.duration_minutes} schoolName={group.school_name ?? null} schoolZone={user.schoolZone ?? null} onClose={() => setShowSession(false)} onAdded={loadData} />}
       {attendanceSession && <GroupAttendanceModal session={attendanceSession} members={members} onClose={() => setAttendanceSession(null)} />}
       {showEdit && <CreateGroupModal editGroup={group} onClose={() => setShowEdit(false)} onCreated={loadData} />}
     </div>

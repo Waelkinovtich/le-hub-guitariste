@@ -1,101 +1,6 @@
-// ─── Périodes scolaires par zone ──────────────────────────────────────────────
-//
-// Chaque entrée représente une PÉRIODE DE COURS (pas une vacation) : du premier
-// jour de classe après les vacances précédentes au dernier jour avant les suivantes.
-// getVacances() calcule les plages de vacances comme les intervalles ENTRE ces périodes.
-//
-// ⚠️  MISE À JOUR ANNUELLE REQUISE : les données 2027-2028 sont provisoires.
-//     Vérifier et compléter avant septembre 2027 sur :
-//     https://www.education.gouv.fr/les-dates-de-rentree-114606
-//     La prochaine année à ajouter sera 2028-2029 (ajouter avant sept. 2028).
-//
-// Source pour 2026-2027 : calendrier officiel Éducation Nationale publié.
-// Source pour 2027-2028 : estimation provisoire basée sur le cycle rotatif
-//                         A/B/C — À VÉRIFIER avant le déploiement de rentrée 2027.
+// ─── Périodes scolaires — données dans src/data/calendrierScolaire.js ─────────
+import { PERIODES_2025_2026, PERIODES_2026_2027, PERIODES_2027_2028 } from '../data/calendrierScolaire'
 
-// ─── 2025-2026 (données vérifiées) ───────────────────────────────────────────
-
-const PERIODES_2025_2026 = {
-  A: [
-    { nom: 'Rentrée - Toussaint',  debut: '2025-09-01', fin: '2025-10-18' },
-    { nom: 'Toussaint - Noël',     debut: '2025-11-03', fin: '2025-12-20' },
-    { nom: 'Noël - Hiver',         debut: '2026-01-05', fin: '2026-02-21' },
-    { nom: 'Hiver - Printemps',    debut: '2026-03-09', fin: '2026-04-18' },
-    { nom: 'Printemps - Été',      debut: '2026-05-04', fin: '2026-07-04' },
-  ],
-  B: [
-    { nom: 'Rentrée - Toussaint',  debut: '2025-09-01', fin: '2025-10-18' },
-    { nom: 'Toussaint - Noël',     debut: '2025-11-03', fin: '2025-12-20' },
-    { nom: 'Noël - Hiver',         debut: '2026-01-05', fin: '2026-02-07' },
-    { nom: 'Hiver - Printemps',    debut: '2026-02-23', fin: '2026-04-04' },
-    { nom: 'Printemps - Été',      debut: '2026-04-20', fin: '2026-07-04' },
-  ],
-  C: [
-    { nom: 'Rentrée - Toussaint',  debut: '2025-09-01', fin: '2025-10-18' },
-    { nom: 'Toussaint - Noël',     debut: '2025-11-03', fin: '2025-12-20' },
-    { nom: 'Noël - Hiver',         debut: '2026-01-05', fin: '2026-02-14' },
-    { nom: 'Hiver - Printemps',    debut: '2026-03-02', fin: '2026-04-11' },
-    { nom: 'Printemps - Été',      debut: '2026-04-27', fin: '2026-07-04' },
-  ],
-}
-
-// ─── 2026-2027 (données officielles publiées par l'Éducation Nationale) ───────
-
-const PERIODES_2026_2027 = {
-  A: [
-    { nom: 'Rentrée - Toussaint',  debut: '2026-09-01', fin: '2026-10-23' },
-    { nom: 'Toussaint - Noël',     debut: '2026-11-03', fin: '2026-12-18' },
-    { nom: 'Noël - Hiver',         debut: '2027-01-05', fin: '2027-02-12' },
-    { nom: 'Hiver - Printemps',    debut: '2027-03-02', fin: '2027-04-09' },
-    { nom: 'Printemps - Été',      debut: '2027-04-27', fin: '2027-07-04' },
-  ],
-  B: [
-    { nom: 'Rentrée - Toussaint',  debut: '2026-09-01', fin: '2026-10-23' },
-    { nom: 'Toussaint - Noël',     debut: '2026-11-03', fin: '2026-12-18' },
-    { nom: 'Noël - Hiver',         debut: '2027-01-05', fin: '2027-02-05' },
-    { nom: 'Hiver - Printemps',    debut: '2027-02-23', fin: '2027-04-23' },
-    { nom: 'Printemps - Été',      debut: '2027-05-11', fin: '2027-07-04' },
-  ],
-  C: [
-    { nom: 'Rentrée - Toussaint',  debut: '2026-09-01', fin: '2026-10-23' },
-    { nom: 'Toussaint - Noël',     debut: '2026-11-03', fin: '2026-12-18' },
-    { nom: 'Noël - Hiver',         debut: '2027-01-05', fin: '2027-02-19' },
-    { nom: 'Hiver - Printemps',    debut: '2027-03-09', fin: '2027-04-16' },
-    { nom: 'Printemps - Été',      debut: '2027-05-04', fin: '2027-07-04' },
-  ],
-}
-
-// ─── 2027-2028 (données PROVISOIRES — à vérifier avant septembre 2027) ────────
-// Estimation basée sur le cycle rotatif des zones. Source officielle attendue :
-// https://www.education.gouv.fr/les-dates-de-rentree-114606
-
-const PERIODES_2027_2028 = {
-  A: [
-    { nom: 'Rentrée - Toussaint',  debut: '2027-09-01', fin: '2027-10-22' },
-    { nom: 'Toussaint - Noël',     debut: '2027-11-02', fin: '2027-12-17' },
-    { nom: 'Noël - Hiver',         debut: '2028-01-04', fin: '2028-02-18' },
-    { nom: 'Hiver - Printemps',    debut: '2028-03-07', fin: '2028-04-07' },
-    { nom: 'Printemps - Été',      debut: '2028-04-25', fin: '2028-07-05' },
-  ],
-  B: [
-    { nom: 'Rentrée - Toussaint',  debut: '2027-09-01', fin: '2027-10-22' },
-    { nom: 'Toussaint - Noël',     debut: '2027-11-02', fin: '2027-12-17' },
-    { nom: 'Noël - Hiver',         debut: '2028-01-04', fin: '2028-02-11' },
-    { nom: 'Hiver - Printemps',    debut: '2028-03-01', fin: '2028-04-21' },
-    { nom: 'Printemps - Été',      debut: '2028-05-09', fin: '2028-07-05' },
-  ],
-  C: [
-    { nom: 'Rentrée - Toussaint',  debut: '2027-09-01', fin: '2027-10-22' },
-    { nom: 'Toussaint - Noël',     debut: '2027-11-02', fin: '2027-12-17' },
-    { nom: 'Noël - Hiver',         debut: '2028-01-04', fin: '2028-02-04' },
-    { nom: 'Hiver - Printemps',    debut: '2028-02-22', fin: '2028-04-14' },
-    { nom: 'Printemps - Été',      debut: '2028-05-02', fin: '2028-07-05' },
-  ],
-}
-
-// Les périodes des différentes années sont concaténées : getVacances() calcule
-// automatiquement l'été entre deux années comme l'intervalle entre la dernière
-// période d'une année et la première de la suivante.
 const PERIODES = {
   A: [...PERIODES_2025_2026.A, ...PERIODES_2026_2027.A, ...PERIODES_2027_2028.A],
   B: [...PERIODES_2025_2026.B, ...PERIODES_2026_2027.B, ...PERIODES_2027_2028.B],
@@ -118,8 +23,6 @@ export function getCurrentPériode(zone, dateStr) {
   return périodes.find((p) => today >= p.debut && today <= p.fin) ?? périodes[0]
 }
 
-// ─── Métadonnées visuelles des vacances ───────────────────────────────────────
-// Clés = noms utilisés dans getVacances() et le tableau `noms` ci-dessous.
 export const VACANCES_META = {
   'Toussaint': { emoji: '🎃', color: '#f97316', label: 'Vacances de la Toussaint' },
   'Noël':      { emoji: '🎄', color: '#16a34a', label: 'Vacances de Noël' },
@@ -128,8 +31,6 @@ export const VACANCES_META = {
   'Été':       { emoji: '☀️',  color: '#facc15', label: "Vacances d'été" },
 }
 
-// ─── Jours fériés ─────────────────────────────────────────────────────────────
-// Couvre les années scolaires jusqu'à 2027-2028.
 export const JOURS_FERIES = [
   // 2025-2026
   { date: '2025-11-01', label: 'Toussaint',         emoji: '🎃' },
@@ -148,11 +49,11 @@ export const JOURS_FERIES = [
   { date: '2026-11-11', label: 'Armistice',          emoji: '🕊' },
   { date: '2026-12-25', label: 'Noël',               emoji: '🎄' },
   { date: '2027-01-01', label: 'Jour de l an',       emoji: '🎆' },
-  { date: '2027-03-29', label: 'Lundi de Paques',    emoji: '🐣' }, // Pâques 2027 : 28 mars
+  { date: '2027-03-29', label: 'Lundi de Paques',    emoji: '🐣' },
   { date: '2027-05-01', label: 'Fete du Travail',    emoji: '🛠' },
-  { date: '2027-05-06', label: 'Ascension',          emoji: '✨' }, // 39j après Pâques
+  { date: '2027-05-06', label: 'Ascension',          emoji: '✨' },
   { date: '2027-05-08', label: 'Victoire 1945',      emoji: '🇫🇷' },
-  { date: '2027-05-17', label: 'Lundi de Pentecote', emoji: '🕊' }, // 50j après Pâques
+  { date: '2027-05-17', label: 'Lundi de Pentecote', emoji: '🕊' },
   { date: '2027-07-14', label: 'Fete Nationale',     emoji: '🇫🇷' },
   { date: '2027-08-15', label: 'Assomption',         emoji: '🌼' },
   // 2027-2028
@@ -160,19 +61,18 @@ export const JOURS_FERIES = [
   { date: '2027-11-11', label: 'Armistice',          emoji: '🕊' },
   { date: '2027-12-25', label: 'Noël',               emoji: '🎄' },
   { date: '2028-01-01', label: 'Jour de l an',       emoji: '🎆' },
-  { date: '2028-04-17', label: 'Lundi de Paques',    emoji: '🐣' }, // Pâques 2028 : 16 avril
+  { date: '2028-04-17', label: 'Lundi de Paques',    emoji: '🐣' },
   { date: '2028-05-01', label: 'Fete du Travail',    emoji: '🛠' },
   { date: '2028-05-08', label: 'Victoire 1945',      emoji: '🇫🇷' },
-  { date: '2028-05-25', label: 'Ascension',          emoji: '✨' }, // 39j après Pâques
-  { date: '2028-06-03', label: 'Lundi de Pentecote', emoji: '🕊' }, // 50j après Pâques
+  { date: '2028-05-25', label: 'Ascension',          emoji: '✨' },
+  { date: '2028-06-03', label: 'Lundi de Pentecote', emoji: '🕊' },
   { date: '2028-07-14', label: 'Fete Nationale',     emoji: '🇫🇷' },
   { date: '2028-08-15', label: 'Assomption',         emoji: '🌼' },
 ]
 
-// Calcule les périodes de vacances comme les intervalles entre périodes de cours.
-// L'été inter-annuel (entre la dernière période d'une année et la première de la
-// suivante) est nommé 'Été' — nom de position dans le cycle de 5 vacances.
-export function getVacances(zone) {
+// ─── Dérivation des vacances depuis les périodes de cours ─────────────────────
+
+function _getVacancesFromPeriodes(zone) {
   const périodes = getPériodes(zone)
   const vacances = []
   const noms = ['Toussaint', 'Noël', 'Hiver', 'Printemps', 'Été']
@@ -183,11 +83,107 @@ export function getVacances(zone) {
     fin.setDate(fin.getDate() - 1)
     const pad = (n) => String(n).padStart(2, '0')
     const toISO = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
-    const nom = noms[i % noms.length] // modulo : cycle sur les 5 noms d'une année à l'autre
+    const nom = noms[i % noms.length]
     const meta = VACANCES_META[nom] ?? VACANCES_META['Été']
     vacances.push({ nom, label: meta.label, emoji: meta.emoji, color: meta.color, debut: toISO(debut), fin: toISO(fin) })
   }
   return vacances
+}
+
+// ─── Cache localStorage (API ministère) ───────────────────────────────────────
+
+const CACHE_KEY = (zone) => `hub_vacances_${zone}`
+const CACHE_TTL = 24 * 60 * 60 * 1000 // 1 jour
+
+function _getCachedVacances(zone) {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY(zone))
+    if (!raw) return null
+    const { timestamp, vacances } = JSON.parse(raw)
+    if (!Array.isArray(vacances) || Date.now() - timestamp > CACHE_TTL) return null
+    return vacances
+  } catch {
+    return null
+  }
+}
+
+function _setCachedVacances(zone, vacances) {
+  try {
+    localStorage.setItem(CACHE_KEY(zone), JSON.stringify({ timestamp: Date.now(), vacances }))
+  } catch { /* quota dépassé — silencieux */ }
+}
+
+// Convertit un timestamp UTC de l'API en date locale Paris (ISO YYYY-MM-DD).
+// L'API encode "minuit Paris" en UTC → start_date = 1er jour de vacances,
+// end_date = jour de reprise (NON inclus dans les vacances).
+function _apiUTCToParisISO(utcStr) {
+  const d = new Date(utcStr)
+  const parts = new Intl.DateTimeFormat('fr-FR', {
+    timeZone: 'Europe/Paris',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d).split('/')
+  return parts[2] + '-' + parts[1] + '-' + parts[0]
+}
+
+function _subtractOneDay(isoStr) {
+  const d = new Date(isoStr + 'T12:00:00')
+  d.setDate(d.getDate() - 1)
+  const p = (n) => String(n).padStart(2, '0')
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+}
+
+function _apiDescToNom(desc) {
+  if (!desc) return 'Été'
+  if (desc.includes('Toussaint')) return 'Toussaint'
+  if (desc.includes('Noël') || desc.includes('Noel')) return 'Noël'
+  if (desc.includes('Hiver')) return 'Hiver'
+  if (desc.includes('Printemps')) return 'Printemps'
+  return 'Été'
+}
+
+// ─── Fetch API ministère ───────────────────────────────────────────────────────
+// Récupère les vacances Zone A, B ou C depuis data.education.gouv.fr.
+// Met le résultat en cache localStorage (TTL 24 h). Retourne les vacances.
+// Lance une exception en cas d'échec réseau ou HTTP.
+
+export async function refreshCalendrierScolaire(zone) {
+  const encoded = encodeURIComponent(`zones="${zone === 'A' || zone === 'B' || zone === 'C' ? 'Zone ' + zone : zone}"`)
+  const url = `https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records?limit=200&select=description,start_date,end_date,zones,annee_scolaire&where=${encoded}&order_by=annee_scolaire,start_date`
+  const resp = await fetch(url, { signal: AbortSignal.timeout(10000) })
+  if (!resp.ok) throw new Error(`Erreur HTTP ${resp.status}`)
+  const json = await resp.json()
+  // Dédupliquer par (annee_scolaire, description, start_date)
+  const seen = new Set()
+  const meta0 = VACANCES_META
+  const vacances = []
+  for (const r of json.results ?? []) {
+    if (!r.start_date || !r.end_date || !r.description) continue
+    const key = (r.annee_scolaire ?? '') + '|' + r.description + '|' + r.start_date
+    if (seen.has(key)) continue
+    seen.add(key)
+    const debut = _apiUTCToParisISO(r.start_date)
+    const retour = _apiUTCToParisISO(r.end_date)
+    const fin = _subtractOneDay(retour)
+    if (fin < debut) continue
+    const nom = _apiDescToNom(r.description)
+    const meta = meta0[nom] ?? meta0['Été']
+    vacances.push({ nom, label: meta.label, emoji: meta.emoji, color: meta.color, debut, fin })
+  }
+  _setCachedVacances(zone, vacances)
+  return vacances
+}
+
+// ─── API publique ──────────────────────────────────────────────────────────────
+
+export function getVacances(zone) {
+  const cached = _getCachedVacances(zone)
+  if (cached) {
+    return cached.map((v) => {
+      const meta = VACANCES_META[v.nom] ?? VACANCES_META['Été']
+      return { ...v, label: v.label ?? meta.label, emoji: v.emoji ?? meta.emoji, color: v.color ?? meta.color }
+    })
+  }
+  return _getVacancesFromPeriodes(zone)
 }
 
 export function isVacances(dateStr, zone) {
@@ -196,4 +192,22 @@ export function isVacances(dateStr, zone) {
 
 export function isJourFerie(dateStr) {
   return JOURS_FERIES.find((j) => j.date === dateStr) ?? null
+}
+
+// Retourne les vacances + la source des données, pour l'affichage dans les Réglages.
+export function getVacancesInfo(zone) {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY(zone))
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed.vacances) && parsed.timestamp) {
+        return {
+          vacances: getVacances(zone),
+          source: 'ministère',
+          updatedAt: new Date(parsed.timestamp),
+        }
+      }
+    }
+  } catch { /* ignore */ }
+  return { vacances: getVacances(zone), source: 'table embarquée', updatedAt: null }
 }

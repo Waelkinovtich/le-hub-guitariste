@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { X, Loader2, UserPlus, ChevronLeft, Navigation } from 'lucide-react'
-import { createLesson, updateLesson, createRecurringLessons, updateFutureLessonsInSeries } from '../services/lessons'
+import { createLesson, updateLesson, createRecurringLessons, updateFutureLessonsInSeries, createRecurringGroupSessions } from '../services/lessons'
 import { fetchTeacherStudents, createStudent, fetchStudentContexts } from '../services/students'
 import { fetchTeacherSchools } from '../services/schools'
+import { supabase } from '../lib/supabase'
 
 // Libellés affichés pour les contextes de cours
 const CTX_LABELS = { ecole: 'École de musique', cesu: 'Cours particulier (CESU)' }
@@ -15,9 +16,12 @@ function normalizeSearch(str) {
 export default function AddLessonModal({ teacherId, lesson, onClose, onCreated, schoolZone = null }) {
   const isEdit = Boolean(lesson?.id)
   const isSeries = isEdit && Boolean(lesson?.recurrenceGroup)
+  const [mode, setMode] = useState('individuel') // 'individuel' | 'groupe'
   const [editScope, setEditScope] = useState('single') // 'single' | 'future'
   const [students, setStudents] = useState([])
   const [schools, setSchools] = useState([])
+  const [groups, setGroups] = useState([])
+  const [groupId, setGroupId] = useState('')
   const [form, setForm] = useState({
     studentId:       lesson?.studentId ?? '',
     lessonDate:      lesson?.lessonDate ?? '',
@@ -73,6 +77,10 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated, 
   useEffect(() => {
     fetchTeacherStudents(teacherId).then(setStudents).catch(() => {})
     fetchTeacherSchools(teacherId).then(setSchools).catch(() => {})
+    supabase.from('music_groups').select('id, name, type, duration_minutes, school_name')
+      .eq('teacher_id', teacherId).order('name')
+      .then(({ data }) => setGroups(data ?? []))
+      .catch(() => {})
   }, [teacherId])
 
   // Quand l'élève change, charger ses contextes depuis student_contexts.
@@ -126,6 +134,43 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated, 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
+    if (mode === 'groupe') {
+      if (!groupId) { setError('Choisissez un groupe.'); return }
+      if (!form.lessonDate) { setError('Choisissez une date.'); return }
+      if (recurring && !untilDate) { setError('Choisissez une date de fin pour la récurrence.'); return }
+      setSubmitting(true)
+      try {
+        const selectedGroup = groups.find((g) => g.id === groupId)
+        if (recurring) {
+          const count = await createRecurringGroupSessions({
+            groupId,
+            firstDate: form.lessonDate,
+            sessionTime: form.lessonTime || null,
+            durationMinutes: parseInt(form.durationMinutes),
+            endDate: untilDate,
+            intervalWeeks,
+            suspendDuringHolidays: suspendHolidays,
+            zone: schoolZone ?? null,
+          })
+          alert(count + ' séance(s) créée(s) !')
+        } else {
+          const { error: insErr } = await supabase.from('group_sessions').insert({
+            group_id: groupId,
+            session_date: form.lessonDate,
+            session_time: form.lessonTime || null,
+            duration_minutes: parseInt(form.durationMinutes) || selectedGroup?.duration_minutes || 60,
+          })
+          if (insErr) throw new Error(insErr.message)
+        }
+        onCreated()
+        onClose()
+      } catch (err) {
+        setError(err.message ?? 'Impossible de sauvegarder.')
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
     if (!form.studentId) { setError('Choisissez un élève.'); return }
     if (!form.lessonDate) { setError('Choisissez une date.'); return }
     if (!form.topic.trim()) { setError('Le thème est obligatoire.'); return }
@@ -264,6 +309,100 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated, 
         ) : (
           /* ── Formulaire principal ───────────────────────────────────────── */
           <form onSubmit={handleSubmit} className="space-y-4">
+
+            {/* Sélecteur de type — individuel / groupe */}
+            {!isEdit && (
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { value: 'individuel', label: 'Cours individuel' },
+                  { value: 'groupe', label: 'Séance de groupe' },
+                ].map((t) => (
+                  <button key={t.value} type="button" onClick={() => setMode(t.value)}
+                    className={`py-2 px-3 rounded-xl border text-sm font-medium transition-colors ${mode === t.value ? 'guitar-gradient text-white border-transparent' : 'border-border-subtle hover:bg-surface-overlay'}`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {mode === 'groupe' && !isEdit ? (
+              /* ── Mode groupe ──────────────────────────────────────────── */
+              <>
+                <div>
+                  <label className="block text-sm text-muted-foreground mb-1.5">Groupe *</label>
+                  <select value={groupId} onChange={(e) => setGroupId(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600"
+                  >
+                    <option value="">-- Choisir un groupe --</option>
+                    {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-muted-foreground mb-1.5">{recurring ? 'Date du 1er cours' : 'Date'}</label>
+                    <input type="date" value={form.lessonDate} onChange={update('lessonDate')} className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted-foreground mb-1.5">Heure</label>
+                    <input type="time" value={form.lessonTime} onChange={update('lessonTime')} className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-muted-foreground mb-1.5">Durée</label>
+                  <select value={form.durationMinutes} onChange={update('durationMinutes')} className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600">
+                    <option value={30}>30 min</option>
+                    <option value={45}>45 min</option>
+                    <option value={60}>1 h</option>
+                    <option value={90}>1 h 30</option>
+                    <option value={120}>2 h</option>
+                  </select>
+                </div>
+
+                <div className="border-t border-border-subtle pt-4">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} className="w-4 h-4 accent-guitar-600" />
+                    <span className="text-sm font-medium">Cours récurrent</span>
+                  </label>
+                  {recurring && (
+                    <div className="mt-3 space-y-3">
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-1.5">Répétition</label>
+                        <select value={intervalWeeks} onChange={(e) => setIntervalWeeks(Number(e.target.value))} className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600">
+                          <option value={1}>Toutes les semaines</option>
+                          <option value={2}>Une semaine sur deux</option>
+                          <option value={3}>Toutes les 3 semaines</option>
+                          <option value={4}>Toutes les 4 semaines</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-1.5">Jusqu'au</label>
+                        <input type="date" value={untilDate} onChange={(e) => setUntilDate(e.target.value)} className="w-full px-3 py-2.5 rounded-xl bg-surface-raised border border-border-subtle text-sm outline-none focus:border-guitar-600" />
+                      </div>
+                      {schoolZone && (
+                        <label className="flex items-center gap-3 cursor-pointer">
+                          <input type="checkbox" checked={suspendHolidays} onChange={(e) => setSuspendHolidays(e.target.checked)} className="w-4 h-4 accent-guitar-600" />
+                          <span className="text-sm">Pas de cours pendant les vacances (zone {schoolZone})</span>
+                        </label>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {error && <p className="text-sm text-guitar-400 bg-guitar-600/10 border border-guitar-600/20 rounded-lg px-3 py-2">{error}</p>}
+                <div className="flex gap-3 pt-2">
+                  <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors">Annuler</button>
+                  <button type="submit" disabled={submitting} className="flex-1 py-2.5 rounded-xl guitar-gradient text-white text-sm font-medium disabled:opacity-60 flex items-center justify-center gap-2">
+                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Créer'}
+                  </button>
+                </div>
+              </>
+            ) : (
+
+            /* ── Mode individuel ──────────────────────────────────────── */
+            <>
             <div className="relative">
               <label className="block text-sm text-muted-foreground mb-1.5">Élève</label>
               <input
@@ -463,6 +602,8 @@ export default function AddLessonModal({ teacherId, lesson, onClose, onCreated, 
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : (isEdit ? 'Enregistrer' : 'Ajouter')}
               </button>
             </div>
+            </>
+            )}
           </form>
         )}
       </div>
