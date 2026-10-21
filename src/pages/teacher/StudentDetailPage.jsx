@@ -4,7 +4,9 @@ import { ArrowLeft, Pencil, Trash2, Phone, Mail, NotebookPen, Send, Plus, X, Che
 import { useAuth } from '../../context/AuthContext'
 import { useFetch } from '../../hooks/useFetch'
 import {
-  fetchTeacherStudents, deleteStudent, fetchSchoolNames,
+  fetchTeacherStudents, deleteStudent, archiveStudent,
+  checkStudentDeletable, countPlanifiéLessonsForStudent,
+  fetchSchoolNames,
   fetchStudentContexts, fetchStudentsPaidByStudent,
   updateStudentContextDuration,
   fetchStudentContacts, addStudentContact, removeStudentContact, setStudentContactPrincipal,
@@ -601,7 +603,8 @@ export default function StudentDetailPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [showEdit, setShowEdit] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const [deleting, setDeleting]   = useState(false)
+  const [archiving, setArchiving] = useState(false)
   // Contextes en état local — mis à jour après reload pour rafraîchir AddStudentModal
   const [contexts, setContexts] = useState([])
 
@@ -690,14 +693,41 @@ export default function StudentDetailPage() {
     if (data?.contexts) setContexts(data.contexts)
   }, [data])
 
-  const handleDelete = async () => {
-    if (!window.confirm('Supprimer cet élève ?')) return
-    setDeleting(true)
+  const handleArchive = async () => {
+    if (!window.confirm('Archiver cet élève ? Il ne sera plus visible dans la liste active, mais ses données et cours sont conservés.')) return
+    setArchiving(true)
     try {
-      await deleteStudent(id)
+      await archiveStudent(id)
       navigate('/professeur/eleves')
     } catch (err) {
       alert('Erreur : ' + err.message)
+      setArchiving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    try {
+      const c = await checkStudentDeletable(id)
+      const bloquants = []
+      if (c.emargé > 0)       bloquants.push(`${c.emargé} cours émargé${c.emargé > 1 ? 's' : ''}`)
+      if (c.attendance > 0)   bloquants.push(`${c.attendance} présence${c.attendance > 1 ? 's' : ''} en séance de groupe`)
+      if (c.declarations > 0) bloquants.push(`${c.declarations} déclaration${c.declarations > 1 ? 's' : ''} d'absence`)
+      if (c.notes > 0)        bloquants.push(`${c.notes} note${c.notes > 1 ? 's' : ''} de cours`)
+      if (bloquants.length > 0) {
+        alert(`Impossible de supprimer cet élève : ${bloquants.join(', ')}.\nArchivez-le pour conserver l'historique.`)
+        setDeleting(false)
+        return
+      }
+      const nPlanifie = await countPlanifiéLessonsForStudent(id)
+      const msg = nPlanifie > 0
+        ? `${nPlanifie} cours prévu${nPlanifie > 1 ? 's' : ''} seront supprimés avec cet élève. C'est définitif. Continuer ?`
+        : 'Supprimer définitivement cet élève ? Cette action est irréversible.'
+      if (!window.confirm(msg)) { setDeleting(false); return }
+      await deleteStudent(id)
+      navigate('/professeur/eleves')
+    } catch (err) {
+      alert(err.message)
       setDeleting(false)
     }
   }
@@ -746,7 +776,11 @@ export default function StudentDetailPage() {
             <Download className="w-4 h-4" />
             Contact
           </button>
-          <button onClick={handleDelete} disabled={deleting} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-guitar-600/40 text-guitar-400 text-sm font-medium hover:bg-guitar-600/10 transition-colors disabled:opacity-60">
+          <button onClick={handleArchive} disabled={archiving} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border-subtle text-sm font-medium hover:bg-surface-overlay transition-colors disabled:opacity-60">
+            <Trash2 className="w-4 h-4 text-muted-foreground" />
+            Archiver
+          </button>
+          <button onClick={handleDelete} disabled={deleting} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-guitar-600/40 text-guitar-400 text-sm font-medium hover:bg-guitar-600/10 transition-colors disabled:opacity-60" title="Suppression définitive — bloquée si l'élève a des cours émargés">
             <Trash2 className="w-4 h-4" />
             Supprimer
           </button>

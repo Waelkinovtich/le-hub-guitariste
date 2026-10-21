@@ -7,6 +7,8 @@ import { isVacances } from '../utils/vacances'
 // Utilisé pour sauter les dates de vacances lors de la génération des séries récurrentes.
 const enVacances = (iso, zone) => zone != null && isVacances(iso, zone) != null
 
+const EMARGE_STATUSES = ['presente', 'absente', 'excuse']
+
 const LESSON_SELECT = `
   id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group, recurrence_interval_weeks, planning_status, context_type, rattrapage_de_lesson_id, students_notified, suspend_during_holidays,
   student:${TABLES.students} (id, first_name, last_name, level, instrument, lesson_type, school_name)
@@ -260,12 +262,13 @@ export async function createRecurringLessons(teacherId, input, untilDate, interv
 export async function updateRecurrenceInterval({ groupId, fromDate, endDate, intervalWeeks, template }) {
   const safeInterval = Math.max(1, Math.round(intervalWeeks))
 
-  // 1. Supprime les occurrences futures de la série — jamais les passées
+  // 1. Supprime les occurrences futures planifiées — jamais les émargées
   const { error: delErr } = await supabase
     .from(TABLES.lessons)
     .delete()
     .eq('recurrence_group', groupId)
     .gte('lesson_date', fromDate)
+    .not('status', 'in', `(${EMARGE_STATUSES.map(s => `"${s}"`).join(',')})`)
   if (delErr) throw new Error(delErr.message)
 
   // 2. Recrée les occurrences selon le nouvel intervalle
@@ -296,15 +299,28 @@ export async function updateRecurrenceInterval({ groupId, fromDate, endDate, int
   return rows.length
 }
 
-export async function deleteRecurrenceGroup(groupId, fromDate) {
+export async function deleteRecurrenceGroup(groupId, fromDate, { includeEmarge = false } = {}) {
   let query = supabase.from(TABLES.lessons).delete().eq('recurrence_group', groupId)
   if (fromDate) query = query.gte('lesson_date', fromDate)
+  if (!includeEmarge) query = query.not('status', 'in', `(${EMARGE_STATUSES.map(s => `"${s}"`).join(',')})`)
   const { error } = await query
   if (error) throw new Error(error.message)
 }
 
 export async function countRecurrenceGroup(groupId, fromDate) {
   let query = supabase.from(TABLES.lessons).select('id', { count: 'exact', head: true }).eq('recurrence_group', groupId)
+  if (fromDate) query = query.gte('lesson_date', fromDate)
+  const { count, error } = await query
+  if (error) throw new Error(error.message)
+  return count ?? 0
+}
+
+export async function countEmargéInGroup(groupId, fromDate) {
+  let query = supabase
+    .from(TABLES.lessons)
+    .select('id', { count: 'exact', head: true })
+    .eq('recurrence_group', groupId)
+    .in('status', EMARGE_STATUSES)
   if (fromDate) query = query.gte('lesson_date', fromDate)
   const { count, error } = await query
   if (error) throw new Error(error.message)

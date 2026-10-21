@@ -119,9 +119,48 @@ export async function updateStudent(studentId, input) {
   return mapStudent(data)
 }
 
+export async function checkStudentDeletable(studentId) {
+  const [emargéRes, attendanceRes, declarationsRes, notesRes] = await Promise.all([
+    supabase.from('lessons').select('id', { count: 'exact', head: true })
+      .eq('student_id', studentId).in('status', ['presente', 'absente', 'excuse']),
+    supabase.from('group_session_attendance').select('id', { count: 'exact', head: true })
+      .eq('student_id', studentId),
+    supabase.from('absence_declarations').select('id', { count: 'exact', head: true })
+      .eq('student_id', studentId),
+    supabase.from('lesson_notes').select('id', { count: 'exact', head: true })
+      .eq('student_id', studentId),
+  ])
+  return {
+    emargé:       emargéRes.count  ?? 0,
+    attendance:   attendanceRes.count ?? 0,
+    declarations: declarationsRes.count ?? 0,
+    notes:        notesRes.count ?? 0,
+  }
+}
+
 export async function deleteStudent(studentId) {
+  const c = await checkStudentDeletable(studentId)
+  const bloquants = []
+  if (c.emargé > 0)       bloquants.push(`${c.emargé} cours émargé${c.emargé > 1 ? 's' : ''}`)
+  if (c.attendance > 0)   bloquants.push(`${c.attendance} présence${c.attendance > 1 ? 's' : ''} en séance de groupe`)
+  if (c.declarations > 0) bloquants.push(`${c.declarations} déclaration${c.declarations > 1 ? 's' : ''} d'absence`)
+  if (c.notes > 0)        bloquants.push(`${c.notes} note${c.notes > 1 ? 's' : ''} de cours`)
+  if (bloquants.length > 0) {
+    throw new Error(
+      `Impossible de supprimer cet élève : ${bloquants.join(', ')}. ` +
+      `Archivez-le pour conserver l'historique.`
+    )
+  }
   const { error } = await supabase.from(TABLES.students).delete().eq('id', studentId)
   if (error) throw new Error(error.message)
+}
+
+export async function countPlanifiéLessonsForStudent(studentId) {
+  const { count, error } = await supabase.from('lessons')
+    .select('id', { count: 'exact', head: true })
+    .eq('student_id', studentId).eq('status', 'planifie')
+  if (error) throw new Error(error.message)
+  return count ?? 0
 }
 
 // Archivage doux : l'élève reste en base, ses données historiques sont intactes

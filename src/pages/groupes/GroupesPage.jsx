@@ -48,7 +48,34 @@ export default function GroupesPage() {
 
   async function deleteGroup(e, id) {
     e.stopPropagation()
-    if (!window.confirm('Supprimer ce groupe ?')) return
+    // Vérifier si le groupe a des séances effectuées ou des présences
+    const { data: effectuees } = await supabase
+      .from('group_sessions').select('id', { count: 'exact', head: true })
+      .eq('group_id', id).eq('status', 'effectuee')
+    const nEffectuees = effectuees?.count ?? effectuees?.length ?? 0
+    if (nEffectuees > 0) {
+      alert(`Ce groupe a ${nEffectuees} séance${nEffectuees > 1 ? 's' : ''} effectuée${nEffectuees > 1 ? 's' : ''} avec des données de présence. Impossible de le supprimer. Annulez les séances à venir individuellement si nécessaire.`)
+      return
+    }
+    const { data: allSessions } = await supabase
+      .from('group_sessions').select('id').eq('group_id', id)
+    const sessionIds = (allSessions ?? []).map(s => s.id)
+    let nAttendance = 0
+    if (sessionIds.length > 0) {
+      const { count } = await supabase
+        .from('group_session_attendance').select('id', { count: 'exact', head: true })
+        .in('session_id', sessionIds)
+      nAttendance = count ?? 0
+    }
+    if (nAttendance > 0) {
+      alert(`Ce groupe a ${nAttendance} enregistrement${nAttendance > 1 ? 's' : ''} de présence. Impossible de le supprimer.`)
+      return
+    }
+    const nSessions = sessionIds.length
+    const msg = nSessions > 0
+      ? `Supprimer ce groupe et ses ${nSessions} séance${nSessions > 1 ? 's' : ''} planifiée${nSessions > 1 ? 's' : ''} ? C'est définitif.`
+      : "Supprimer ce groupe ? C'est définitif."
+    if (!window.confirm(msg)) return
     await supabase.from('music_groups').delete().eq('id', id)
     fetchGroups()
   }

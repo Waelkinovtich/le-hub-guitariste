@@ -1,16 +1,21 @@
 import { useState, useEffect } from 'react'
-import { X, Loader2, Trash2 } from 'lucide-react'
-import { deleteLesson, deleteRecurrenceGroup, countRecurrenceGroup } from '../services/lessons'
+import { X, Loader2, Trash2, AlertTriangle } from 'lucide-react'
+import { deleteLesson, deleteRecurrenceGroup, countRecurrenceGroup, countEmargéInGroup } from '../services/lessons'
 
 export default function DeleteLessonModal({ lesson, onClose, onDeleted }) {
-  const [futureCount, setFutureCount] = useState(null)
-  const [submitting, setSubmitting] = useState(false)
+  const [futureCount, setFutureCount]       = useState(null)
+  const [futureEmarge, setFutureEmarge]     = useState(null)
+  const [allEmarge, setAllEmarge]           = useState(null)
+  const [includeEmargeFuture, setIncludeEmargeFuture] = useState(false)
+  const [includeEmargeAll, setIncludeEmargeAll]       = useState(false)
+  const [submitting, setSubmitting]         = useState(false)
   const isRecurring = Boolean(lesson.recurrenceGroup)
 
   useEffect(() => {
-    if (isRecurring) {
-      countRecurrenceGroup(lesson.recurrenceGroup, lesson.lessonDate).then(setFutureCount).catch(() => {})
-    }
+    if (!isRecurring) return
+    countRecurrenceGroup(lesson.recurrenceGroup, lesson.lessonDate).then(setFutureCount).catch(() => {})
+    countEmargéInGroup(lesson.recurrenceGroup, lesson.lessonDate).then(setFutureEmarge).catch(() => {})
+    countEmargéInGroup(lesson.recurrenceGroup, null).then(setAllEmarge).catch(() => {})
   }, [lesson, isRecurring])
 
   const doDelete = async (mode) => {
@@ -19,9 +24,9 @@ export default function DeleteLessonModal({ lesson, onClose, onDeleted }) {
       if (mode === 'single') {
         await deleteLesson(lesson.id)
       } else if (mode === 'future') {
-        await deleteRecurrenceGroup(lesson.recurrenceGroup, lesson.lessonDate)
+        await deleteRecurrenceGroup(lesson.recurrenceGroup, lesson.lessonDate, { includeEmarge: includeEmargeFuture })
       } else if (mode === 'all') {
-        await deleteRecurrenceGroup(lesson.recurrenceGroup, null)
+        await deleteRecurrenceGroup(lesson.recurrenceGroup, null, { includeEmarge: includeEmargeAll })
       }
       onDeleted()
       onClose()
@@ -44,7 +49,7 @@ export default function DeleteLessonModal({ lesson, onClose, onDeleted }) {
         <p className="text-sm text-muted-foreground mb-6">{lesson.studentName} — {lesson.dateLabel} {lesson.timeLabel}</p>
 
         {submitting ? (
-          <div className="flex items-center jtify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-guitar-400" /></div>
+          <div className="flex items-center justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-guitar-400" /></div>
         ) : (
           <div className="space-y-3">
             <button onClick={() => doDelete('single')} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-border-subtle hover:bg-surface-overlay transition-colors text-left">
@@ -57,20 +62,63 @@ export default function DeleteLessonModal({ lesson, onClose, onDeleted }) {
 
             {isRecurring && (
               <>
-                <button onClick={() => doDelete('future')} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-border-subtle hover:bg-surface-overlay transition-colors text-left">
-                  <Trash2 className="w-4 h-4 text-orange-400 shrink-0" />
-                  <div>
-                  <p className="text-sm font-medium">Supprimer celui-ci et les suivants</p>
-                    <p className="text-xs text-muted-foreground">{futureCount !== null ? futureCount + ' cours à partir de cette date' : '...'}</p>
-                  </div>
-                </button>
-                <button onClick={() => doDelete('all')} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-guitar-600/40 hover:bg-guitar-600/10 transition-colors text-left">
-                  <Trash2 className="w-4 h-4 text-guitar-400 shrink-0" />
-                  <div>
-                    <p className="text-sm font-medium text-guitar-400">Supprimer toute la série</p>
-                    <p className="text-xs text-muted-foreground">Tous les cours récurrents, passés et futurs</p>
-                  </div>
-                </button>
+                <div className="rounded-xl border border-border-subtle overflow-hidden">
+                  <button onClick={() => doDelete('future')} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-overlay transition-colors text-left">
+                    <Trash2 className="w-4 h-4 text-orange-400 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium">Supprimer celui-ci et les suivants</p>
+                      <p className="text-xs text-muted-foreground">
+                        {futureCount !== null ? futureCount + ' cours à partir de cette date' : '…'}
+                        {futureEmarge !== null && futureEmarge > 0 && (
+                          <span className="ml-1 text-amber-500">· {futureEmarge} émargé{futureEmarge > 1 ? 's' : ''} conservé{futureEmarge > 1 ? 's' : ''}</span>
+                        )}
+                      </p>
+                    </div>
+                  </button>
+                  {futureEmarge !== null && futureEmarge > 0 && (
+                    <label className="flex items-start gap-2 px-4 pb-3 cursor-pointer select-none" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={includeEmargeFuture}
+                        onChange={e => setIncludeEmargeFuture(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded border-border accent-guitar-500 shrink-0"
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        <span className="text-amber-500 font-medium flex items-center gap-1"><AlertTriangle className="w-3 h-3 inline" /> Supprimer aussi les {futureEmarge} cours émargé{futureEmarge > 1 ? 's' : ''}</span>
+                        Efface l'historique de présence — définitif.
+                      </span>
+                    </label>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-guitar-600/40 overflow-hidden">
+                  <button onClick={() => doDelete('all')} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-guitar-600/10 transition-colors text-left">
+                    <Trash2 className="w-4 h-4 text-guitar-400 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-guitar-400">Supprimer toute la série</p>
+                      <p className="text-xs text-muted-foreground">
+                        Tous les cours récurrents, passés et futurs
+                        {allEmarge !== null && allEmarge > 0 && (
+                          <span className="ml-1 text-amber-500">· {allEmarge} émargé{allEmarge > 1 ? 's' : ''} conservé{allEmarge > 1 ? 's' : ''}</span>
+                        )}
+                      </p>
+                    </div>
+                  </button>
+                  {allEmarge !== null && allEmarge > 0 && (
+                    <label className="flex items-start gap-2 px-4 pb-3 cursor-pointer select-none" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={includeEmargeAll}
+                        onChange={e => setIncludeEmargeAll(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded border-border accent-guitar-500 shrink-0"
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        <span className="text-amber-500 font-medium flex items-center gap-1"><AlertTriangle className="w-3 h-3 inline" /> Supprimer aussi les {allEmarge} cours émargé{allEmarge > 1 ? 's' : ''}</span>
+                        Efface l'historique de présence — définitif.
+                      </span>
+                    </label>
+                  )}
+                </div>
               </>
             )}
 
