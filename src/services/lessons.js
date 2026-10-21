@@ -11,7 +11,7 @@ const EMARGE_STATUSES = ['presente', 'absente', 'excuse']
 
 const LESSON_SELECT = `
   id, teacher_id, student_id, lesson_date, lesson_time, duration_minutes, topic, notes, status, absence_reason, cancel_reason, recurrence_group, recurrence_interval_weeks, planning_status, context_type, rattrapage_de_lesson_id, students_notified, suspend_during_holidays,
-  student:${TABLES.students} (id, first_name, last_name, level, instrument, lesson_type, school_name)
+  student:${TABLES.students} (id, first_name, last_name, level, instrument, lesson_type, school_name, archived_at)
 `
 
 function mapLesson(row) {
@@ -53,7 +53,7 @@ export async function fetchUpcomingLessons({ teacherId, studentId, limit = 20 } 
   if (limit) query = query.limit(limit)
   const { data, error } = await query
   if (error) throw new Error(error.message)
-  return (data ?? []).map(mapLesson)
+  return (data ?? []).filter((row) => !row.student?.archived_at).map(mapLesson)
 }
 
 export async function fetchPastLessons({ teacherId, studentId, limit = 20 } = {}) {
@@ -86,7 +86,9 @@ export async function fetchLessonsInRange({ teacherId, from, to }) {
     error = fallback.error
   }
   if (error) throw new Error(error.message)
-  const lessons = (data ?? []).map((row) => mapLesson({ ...row, recurrence_interval_weeks: row.recurrence_interval_weeks ?? 1 }))
+  const lessons = (data ?? [])
+    .filter((row) => !row.student?.archived_at)
+    .map((row) => mapLesson({ ...row, recurrence_interval_weeks: row.recurrence_interval_weeks ?? 1 }))
   let groupSessions = []
   try {
     groupSessions = await fetchGroupSessionsInRange({ teacherId, from, to })
@@ -182,7 +184,7 @@ export async function fetchCancelledLessons({ teacherId } = {}) {
     .eq('teacher_id', teacherId)
     .order('lesson_date', { ascending: false })
   if (error) throw new Error(error.message)
-  return (data ?? []).map(mapLesson)
+  return (data ?? []).filter((row) => !row.student?.archived_at).map(mapLesson)
 }
 
 /**
@@ -193,12 +195,13 @@ export async function fetchCancelledLessons({ teacherId } = {}) {
 export async function countRattrapageLessons(teacherId) {
   const { data, error } = await supabase
     .from(TABLES.lessons)
-    .select('id, context_type, cancel_reason, student:' + TABLES.students + '(lesson_type)')
+    .select('id, context_type, cancel_reason, student:' + TABLES.students + '(lesson_type, archived_at)')
     .eq('teacher_id', teacherId)
     .eq('status', 'annule_prof')
   if (error) return 0
   const rows = data ?? []
   return rows.filter((r) => {
+    if (r.student?.archived_at) return false
     if (r.context_type === 'cesu') return false
     if (r.student?.lesson_type === 'cesu') return false
     if (r.cancel_reason === 'rattrapage_annule') return false

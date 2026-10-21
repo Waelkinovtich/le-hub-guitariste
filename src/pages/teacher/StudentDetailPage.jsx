@@ -6,6 +6,7 @@ import { useFetch } from '../../hooks/useFetch'
 import {
   fetchTeacherStudents, deleteStudent, archiveStudent,
   checkStudentDeletable, countPlanifiéLessonsForStudent,
+  fetchUpcomingPlanifiéForArchive, deleteFuturePlanifiéForArchive,
   fetchSchoolNames,
   fetchStudentContexts, fetchStudentsPaidByStudent,
   updateStudentContextDuration,
@@ -694,9 +695,29 @@ export default function StudentDetailPage() {
   }, [data])
 
   const handleArchive = async () => {
-    if (!window.confirm('Archiver cet élève ? Il ne sera plus visible dans la liste active, mais ses données et cours sont conservés.')) return
     setArchiving(true)
     try {
+      const up = await fetchUpcomingPlanifiéForArchive(id)
+      const fmtDate = (iso) => iso ? new Date(iso + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : ''
+      if (up.count > 0) {
+        const range = up.minDate && up.maxDate ? ` (du ${fmtDate(up.minDate)} au ${fmtDate(up.maxDate)})` : ''
+        const choice = window.confirm(
+          `Cet élève a ${up.count} cours à venir${range}.\n\n` +
+          `OK → Archiver sans toucher aux cours à venir\n` +
+          `Annuler → Annuler l'archivage`
+        )
+        if (!choice) { setArchiving(false); return }
+        // Proposer aussi la suppression
+        const withDelete = window.confirm(
+          `Voulez-vous aussi supprimer les ${up.count} cours à venir ?\n` +
+          `C'est définitif. OK → supprimer, Annuler → conserver.`
+        )
+        if (withDelete) await deleteFuturePlanifiéForArchive(id)
+      } else {
+        if (!window.confirm('Archiver cet élève ? Il ne sera plus visible dans la liste active, mais ses données et cours sont conservés.')) {
+          setArchiving(false); return
+        }
+      }
       await archiveStudent(id)
       navigate('/professeur/eleves')
     } catch (err) {

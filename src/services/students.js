@@ -163,6 +163,47 @@ export async function countPlanifiéLessonsForStudent(studentId) {
   return count ?? 0
 }
 
+// Retourne { count, minDate, maxDate } pour les cours planifiés à venir (hors rattrapages)
+export async function fetchUpcomingPlanifiéForArchive(studentId) {
+  const today = new Date().toISOString().slice(0, 10)
+  const { data, error } = await supabase.from('lessons')
+    .select('id, lesson_date')
+    .eq('student_id', studentId)
+    .eq('status', 'planifie')
+    .is('rattrapage_de_lesson_id', null)
+    .gte('lesson_date', today)
+    .order('lesson_date')
+  if (error) throw new Error(error.message)
+  const rows = data ?? []
+  return {
+    count:   rows.length,
+    minDate: rows[0]?.lesson_date ?? null,
+    maxDate: rows[rows.length - 1]?.lesson_date ?? null,
+  }
+}
+
+// Supprime les cours planifiés futurs hors rattrapages (sans déclaration d'absence active, sans émargement)
+export async function deleteFuturePlanifiéForArchive(studentId) {
+  const today = new Date().toISOString().slice(0, 10)
+  const { data: lessons } = await supabase.from('lessons')
+    .select('id')
+    .eq('student_id', studentId)
+    .eq('status', 'planifie')
+    .is('rattrapage_de_lesson_id', null)
+    .gte('lesson_date', today)
+  const ids = (lessons ?? []).map(r => r.id)
+  if (ids.length === 0) return 0
+  // Exclure ceux qui ont une déclaration d'absence active
+  const { data: decls } = await supabase.from('absence_declarations')
+    .select('lesson_id').in('lesson_id', ids).is('cancelled_at', null)
+  const blockedIds = new Set((decls ?? []).map(d => d.lesson_id).filter(Boolean))
+  const deletable = ids.filter(id => !blockedIds.has(id))
+  if (deletable.length === 0) return 0
+  const { error } = await supabase.from('lessons').delete().in('id', deletable)
+  if (error) throw new Error(error.message)
+  return deletable.length
+}
+
 // Archivage doux : l'élève reste en base, ses données historiques sont intactes
 export async function archiveStudent(studentId) {
   const { error } = await supabase

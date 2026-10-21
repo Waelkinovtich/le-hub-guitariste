@@ -8,7 +8,7 @@ import { useAuth } from '../../context/AuthContext'
 import HelpTooltip from '../../components/HelpTooltip'
 import { useFetch } from '../../hooks/useFetch'
 import { useRegisterRefresh } from '../../contexts/RefreshContext'
-import { fetchTeacherStudents, fetchSchoolNames, fetchAllContextsByStudent, archiveStudent, unarchiveStudent } from '../../services/students'
+import { fetchTeacherStudents, fetchSchoolNames, fetchAllContextsByStudent, archiveStudent, unarchiveStudent, fetchUpcomingPlanifiéForArchive, deleteFuturePlanifiéForArchive } from '../../services/students'
 import { fetchUpcomingLessons, buildNextLessonByStudent, formatNextLessonLabel } from '../../services/lessons'
 import { initials } from '../../utils/format'
 import { getSchoolColor } from '../../utils/schoolColors'
@@ -79,7 +79,7 @@ export default function StudentsPage() {
   // showArchived : affiche les élèves archivés au lieu des actifs
   const [showArchived, setShowArchived] = useState(false)
   // pendingArchive : élève en attente de confirmation d'archivage
-  const [pendingArchive, setPendingArchive] = useState(null) // { id, name }
+  const [pendingArchive, setPendingArchive] = useState(null) // { id, name, upcoming: { count, minDate, maxDate } | null }
   const [archiving, setArchiving] = useState(false)
   const [showPdfModal, setShowPdfModal] = useState(false)
   const [pdfCols, setPdfCols] = useState(loadPdfCols)
@@ -166,13 +166,16 @@ export default function StudentsPage() {
 
   // ── Archivage / désarchivage ──────────────────────────────────────────────────
 
-  const handleArchive = async () => {
+  const handleArchive = async (withDeleteFuture = false) => {
     if (!pendingArchive) return
     setArchiving(true)
     try {
+      if (withDeleteFuture) await deleteFuturePlanifiéForArchive(pendingArchive.id)
       await archiveStudent(pendingArchive.id)
       setPendingArchive(null)
       reload()
+    } catch (err) {
+      alert('Erreur : ' + err.message)
     } finally {
       setArchiving(false)
     }
@@ -375,7 +378,12 @@ export default function StudentsPage() {
                         <button
                           type="button"
                           title="Archiver cet élève"
-                          onClick={(e) => { e.stopPropagation(); setPendingArchive({ id: student.id, name: student.name }) }}
+                          onClick={async (e) => {
+                            e.stopPropagation()
+                            let upcoming = null
+                            try { upcoming = await fetchUpcomingPlanifiéForArchive(student.id) } catch {}
+                            setPendingArchive({ id: student.id, name: student.name, upcoming })
+                          }}
                           className="p-1.5 rounded-lg text-muted-foreground hover:text-amber-400 hover:bg-amber-400/10 transition-colors"
                         >
                           <Archive className="w-4 h-4" />
@@ -439,32 +447,49 @@ export default function StudentsPage() {
       )}
 
       {/* Confirmation d'archivage — modal légère, données préservées */}
-      {pendingArchive && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
-          <div className="glass-panel rounded-2xl p-6 max-w-sm w-full shadow-xl">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
-                <Archive className="w-4 h-4 text-amber-400" />
+      {pendingArchive && (() => {
+        const up = pendingArchive.upcoming
+        const fmtDate = (iso) => iso ? new Date(iso + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : ''
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+            <div className="glass-panel rounded-2xl p-6 max-w-sm w-full shadow-xl">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+                  <Archive className="w-4 h-4 text-amber-400" />
+                </div>
+                <p className="text-sm font-semibold text-foreground">Archiver cet élève ?</p>
               </div>
-              <p className="text-sm font-semibold text-foreground">Archiver cet élève ?</p>
-            </div>
-            <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
-              <strong className="text-foreground">{pendingArchive.name}</strong> sera retiré de la liste active.
-              Ses cours, revenus et données historiques restent intacts. Vous pourrez le désarchiver à tout moment.
-            </p>
-            <div className="flex gap-3">
-              <button type="button" onClick={() => setPendingArchive(null)}
-                className="flex-1 py-2.5 rounded-xl border border-border-subtle text-sm text-muted-foreground hover:border-border transition-colors">
-                Annuler
-              </button>
-              <button type="button" onClick={handleArchive} disabled={archiving}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-sm text-amber-400 font-medium hover:bg-amber-500/25 transition-colors disabled:opacity-60">
-                {archiving ? 'Archivage…' : 'Archiver'}
-              </button>
+              <p className="text-sm text-muted-foreground mb-3 leading-relaxed">
+                <strong className="text-foreground">{pendingArchive.name}</strong> sera retiré de la liste active.
+                Ses cours passés, revenus et données historiques restent intacts. Vous pourrez le désarchiver à tout moment.
+              </p>
+              {up && up.count > 0 && (
+                <p className="text-sm text-amber-400 mb-4 leading-relaxed">
+                  Il a <strong>{up.count} cours à venir</strong>
+                  {up.minDate && up.maxDate ? ` (du ${fmtDate(up.minDate)} au ${fmtDate(up.maxDate)})` : ''}.
+                  Choisissez ce que vous souhaitez en faire.
+                </p>
+              )}
+              <div className="flex flex-col gap-2">
+                <button type="button" onClick={() => setPendingArchive(null)}
+                  className="py-2.5 rounded-xl border border-border-subtle text-sm text-muted-foreground hover:border-border transition-colors">
+                  Annuler
+                </button>
+                <button type="button" onClick={() => handleArchive(false)} disabled={archiving}
+                  className="py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-sm text-amber-400 font-medium hover:bg-amber-500/25 transition-colors disabled:opacity-60">
+                  {archiving ? 'Archivage…' : up && up.count > 0 ? `Archiver sans toucher aux ${up.count} cours à venir` : 'Archiver'}
+                </button>
+                {up && up.count > 0 && (
+                  <button type="button" onClick={() => handleArchive(true)} disabled={archiving}
+                    className="py-2.5 rounded-xl border border-guitar-600/40 text-sm text-guitar-400 font-medium hover:bg-guitar-600/10 transition-colors disabled:opacity-60">
+                    Archiver et supprimer les {up.count} cours à venir — définitif
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }
